@@ -112,6 +112,10 @@
     "debugBuild": "passed with warnings treated as errors",
     "releaseSimulatorBuild": "passed with warnings treated as errors",
     "simulator": "iPhone 16 Pro, iOS 18.5",
+    "cleanInstallReleaseSimulator": "passed: empty create-card state with no profile, people, counters, or sync claims",
+    "ordinaryDebugState": "passed: matches clean Release state without YP_SCREENSHOT_STATE",
+    "explicitDebugReviewerState": "passed: YP_SCREENSHOT_STATE=S1 shows deterministic fixture card without persistence",
+    "releaseFixtureBinaryScan": "passed: Debug-only identity literals and symbols absent",
     "purposeStringsExact": "9/9 Info.plist strings plus push pre-prompt",
     "appOwnedPrivacyManifestDataTypes": 12,
     "backendSmoke": {
@@ -119,6 +123,7 @@
       "config": 200,
       "configConditional": 304,
       "sync": 200,
+      "freshInstallationUpdateCount": 0,
       "prohibitedPreciseLocation": 400,
       "unknownRoute": 404,
       "report": 200,

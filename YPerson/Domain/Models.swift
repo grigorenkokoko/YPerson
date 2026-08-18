@@ -35,7 +35,8 @@ struct PersonCard: Codable, Equatable, Identifiable {
     var meetingPlace: String?
     var isBlocked: Bool
 
-    static let sample = PersonCard(
+#if DEBUG
+    static let reviewAlexey = PersonCard(
         id: "person-alexey",
         name: "Алексей Морозов",
         role: "Product Lead",
@@ -48,7 +49,20 @@ struct PersonCard: Codable, Equatable, Identifiable {
         isBlocked: false
     )
 
-    static let own = PersonCard(
+    static let reviewMaria = PersonCard(
+        id: "person-maria",
+        name: "Мария Орлова",
+        role: "Founder",
+        company: "Orlova Studio",
+        phone: "+7 900 555-03-04",
+        email: "maria@example.com",
+        tagline: "Соединяю людей и полезные идеи.",
+        hasAudioGreeting: false,
+        meetingPlace: nil,
+        isBlocked: false
+    )
+
+    static let reviewOwn = PersonCard(
         id: "person-anna",
         name: "Анна Смирнова",
         role: "Product Designer",
@@ -60,6 +74,7 @@ struct PersonCard: Codable, Equatable, Identifiable {
         meetingPlace: nil,
         isBlocked: false
     )
+#endif
 }
 
 struct WidgetSnapshot: Codable, Equatable {

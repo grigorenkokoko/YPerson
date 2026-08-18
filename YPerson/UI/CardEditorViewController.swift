@@ -1,16 +1,26 @@
 import UIKit
 
 final class CardEditorViewController: YPBaseViewController {
+    private let existingCard: PersonCard?
     private let permissions: PermissionCenter
     private let audio: AudioGreetingController
     private let makeAppearance: () -> UIViewController
+    private let onSave: (PersonCard) -> Void
+    private let nameField = CardEditorViewController.makeField(placeholder: "Имя и фамилия")
+    private let roleField = CardEditorViewController.makeField(placeholder: "Роль")
+    private let companyField = CardEditorViewController.makeField(placeholder: "Компания")
+    private let emailField = CardEditorViewController.makeField(placeholder: "Email", keyboardType: .emailAddress)
     private let audioStatus = YPStyle.label("Не записано", style: .footnote)
     private let audioAction = YPStyle.button("Записать до 10 секунд", symbol: "mic.fill", primary: true)
     private let audioSecondary = YPStyle.button("Воспроизвести / остановить", symbol: "play.fill")
     private let audioSave = YPStyle.button("Сохранить запись", symbol: "checkmark")
 
-    init(permissions: PermissionCenter, audio: AudioGreetingController, makeAppearance: @escaping () -> UIViewController) {
-        self.permissions = permissions; self.audio = audio; self.makeAppearance = makeAppearance
+    init(card: PersonCard?, permissions: PermissionCenter, audio: AudioGreetingController, makeAppearance: @escaping () -> UIViewController, onSave: @escaping (PersonCard) -> Void) {
+        self.existingCard = card
+        self.permissions = permissions
+        self.audio = audio
+        self.makeAppearance = makeAppearance
+        self.onSave = onSave
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -22,9 +32,11 @@ final class CardEditorViewController: YPBaseViewController {
         navigationItem.largeTitleDisplayMode = .never
         navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Готово", style: .done, target: self, action: #selector(done))
         sectionTitle("Публичные поля")
-        ["Анна Смирнова", "Product Designer", "YPerson Studio", "hello@example.com"].forEach { value in
-            let field = UITextField(); field.text = value; field.borderStyle = .roundedRect; field.font = .preferredFont(forTextStyle: .body); field.adjustsFontForContentSizeCategory = true; field.heightAnchor.constraint(greaterThanOrEqualToConstant: 50).isActive = true; contentStack.addArrangedSubview(field)
-        }
+        nameField.text = existingCard?.name
+        roleField.text = existingCard?.role
+        companyField.text = existingCard?.company
+        emailField.text = existingCard?.email
+        [nameField, roleField, companyField, emailField].forEach(contentStack.addArrangedSubview)
         sectionTitle("Закрытые поля")
         let unlockButton = YPStyle.button("Открыть с Face ID", symbol: "faceid"); unlockButton.addTarget(self, action: #selector(unlock), for: .touchUpInside); contentStack.addArrangedSubview(unlockButton)
         sectionTitle("Аудиоприветствие")
@@ -37,7 +49,27 @@ final class CardEditorViewController: YPBaseViewController {
         renderAudio(audio.state)
     }
 
-    @objc private func done() { navigationController?.popViewController(animated: true) }
+    @objc private func done() {
+        let name = trimmed(nameField)
+        guard !name.isEmpty else {
+            showMessage("Добавьте имя", "Имя нужно, чтобы создать цифровую визитку.")
+            return
+        }
+        let card = PersonCard(
+            id: existingCard?.id ?? UUID().uuidString.lowercased(),
+            name: name,
+            role: trimmed(roleField),
+            company: trimmed(companyField),
+            phone: existingCard?.phone ?? "",
+            email: trimmed(emailField),
+            tagline: existingCard?.tagline ?? "",
+            hasAudioGreeting: audio.state != .empty,
+            meetingPlace: existingCard?.meetingPlace,
+            isBlocked: existingCard?.isBlocked ?? false
+        )
+        onSave(card)
+        navigationController?.popViewController(animated: true)
+    }
     @objc private func openAppearance() { navigationController?.pushViewController(makeAppearance(), animated: true) }
     @objc private func unlock() { explainPermission(title: "Закрытые поля", message: "Face ID защищает закрытые поля вашей визитки и подтверждает их передачу выбранному человеку.") { [weak self] in self?.permissions.authenticatePrivateFields { result in self?.showMessage((try? result.get()) == nil ? "Остались закрыты" : "Поля открыты", (try? result.get()) == nil ? "Используйте публичные поля или повторите позже." : "Телефон доступен до закрытия этого экрана.") } } }
 
@@ -76,5 +108,22 @@ final class CardEditorViewController: YPBaseViewController {
     private func confirmDelete() {
         let alert = UIAlertController(title: "Удалить аудиоприветствие?", message: "Запись исчезнет из карточки и будет удалена локально.", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Удалить", style: .destructive) { [weak self] _ in self?.audio.delete() }); alert.addAction(UIAlertAction(title: "Отмена", style: .cancel)); present(alert, animated: true)
+    }
+
+    private func trimmed(_ field: UITextField) -> String {
+        field.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private static func makeField(placeholder: String, keyboardType: UIKeyboardType = .default) -> UITextField {
+        let field = UITextField()
+        field.placeholder = placeholder
+        field.keyboardType = keyboardType
+        field.autocapitalizationType = keyboardType == .emailAddress ? .none : .sentences
+        field.autocorrectionType = keyboardType == .emailAddress ? .no : .default
+        field.borderStyle = .roundedRect
+        field.font = .preferredFont(forTextStyle: .body)
+        field.adjustsFontForContentSizeCategory = true
+        field.heightAnchor.constraint(greaterThanOrEqualToConstant: 50).isActive = true
+        return field
     }
 }

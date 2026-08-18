@@ -3,11 +3,21 @@ import WidgetKit
 
 final class AppGroupSnapshotStore {
     private enum Key {
+        static let ownCard = "own_card"
         static let widgetSnapshot = "widget_snapshot"
         static let remoteConfiguration = "remote_configuration"
         static let remoteConfigurationETag = "remote_configuration_etag"
         static let analyticsConsent = "analytics_consent"
         static let profileDeletionPending = "profile_deletion_pending"
+    }
+
+    func readOwnCard() -> PersonCard? {
+        guard let data = defaults.data(forKey: Key.ownCard) else { return nil }
+        return try? decoder.decode(PersonCard.self, from: data)
+    }
+
+    func writeOwnCard(_ card: PersonCard) throws {
+        defaults.set(try encoder.encode(card), forKey: Key.ownCard)
     }
 
     private let defaults: UserDefaults
@@ -52,6 +62,7 @@ final class AppGroupSnapshotStore {
     }
 
     func clearUserData() {
+        defaults.removeObject(forKey: Key.ownCard)
         defaults.removeObject(forKey: Key.widgetSnapshot)
         defaults.removeObject(forKey: Key.remoteConfiguration)
         defaults.removeObject(forKey: Key.remoteConfigurationETag)

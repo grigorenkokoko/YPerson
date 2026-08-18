@@ -82,7 +82,7 @@ function pruneExchangeTokens(now = Date.now()) {
 
 function applySync(payload) {
   pruneExchangeTokens();
-  const existing = profiles.get(payload.installationID) ?? { updateCount: 2, card: null, apnsToken: null, blocked: [] };
+  const existing = profiles.get(payload.installationID) ?? { updateCount: 0, card: null, apnsToken: null, blocked: [] };
   switch (payload.operation) {
     case 'publishCard': existing.card = payload.card ?? null; break;
     case 'claimExchange':

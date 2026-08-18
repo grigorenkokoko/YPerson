@@ -90,7 +90,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     }
 
     private func confirmImportedCard(method: String) {
-        let alert = UIAlertController(title: "Карточка найдена", message: "Алексей Морозов · Product Lead · North Star\n\nИсточник: \(method). Проверьте данные перед сохранением.", preferredStyle: .alert)
+        let alert = UIAlertController(title: "Карточка найдена", message: "Источник: \(method). Проверьте полученные данные перед сохранением.", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Добавить человека", style: .default) { [weak self] _ in self?.showMessage("Человек добавлен", "Карточка сохранена в YPerson. В Контакты она попадёт только по отдельной команде.") })
         alert.addAction(UIAlertAction(title: "Не добавлять", style: .cancel))
         present(alert, animated: true)
@@ -131,11 +131,11 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     }
 
     @objc private func enterCode() {
-        let alert = UIAlertController(title: "Короткий код", message: "Введите тестовый код обмена", preferredStyle: .alert)
+        let alert = UIAlertController(title: "Короткий код", message: "Введите код обмена", preferredStyle: .alert)
         alert.addTextField { $0.placeholder = "YP-1234"; $0.autocapitalizationType = .allCharacters }
         alert.addAction(UIAlertAction(title: "Проверить", style: .default) { [weak self, weak alert] _ in
             let code = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            self?.analytics.report(.cardReceived("manual")); self?.showMessage(code.isEmpty ? "Код не введён" : "Карточка найдена", code.isEmpty ? "Введите код или выберите другой способ." : "Проверьте карточку Алексея Морозова перед сохранением.")
+            self?.analytics.report(.cardReceived("manual")); self?.showMessage(code.isEmpty ? "Код не введён" : "Код принят", code.isEmpty ? "Введите код или выберите другой способ." : "Проверьте полученную карточку перед сохранением.")
         })
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel)); present(alert, animated: true)
     }

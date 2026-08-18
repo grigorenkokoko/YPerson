@@ -6,11 +6,13 @@ final class PersonViewController: YPBaseViewController {
     private let imageSaver: CardImageSaver
     private let apiClient: APIClient
     private let analytics: AppMetricaAnalyticsClient
-    private var card = PersonCard.sample
-    private var summary = CardSummaryView(card: .sample, showPrivate: true)
+    private var card: PersonCard
+    private var summary: CardSummaryView
     private let placeLabel = YPStyle.label("Место знакомства не добавлено", style: .footnote)
 
-    init(permissions: PermissionCenter, imageSaver: CardImageSaver, apiClient: APIClient, analytics: AppMetricaAnalyticsClient) {
+    init(card: PersonCard, permissions: PermissionCenter, imageSaver: CardImageSaver, apiClient: APIClient, analytics: AppMetricaAnalyticsClient) {
+        self.card = card
+        self.summary = CardSummaryView(card: card, showPrivate: true)
         self.permissions = permissions; self.imageSaver = imageSaver; self.apiClient = apiClient; self.analytics = analytics
         super.init(nibName: nil, bundle: nil)
     }
@@ -39,7 +41,7 @@ final class PersonViewController: YPBaseViewController {
         ])
     }
 
-    @objc private func reviewUpdate() { analytics.report(.cardUpdateOpened); showMessage("Изменения", "Роль: Product Lead → Head of Product\nКомпания: North Star → North Star Labs\n\nИзменения применяются только после вашего подтверждения.") }
+    @objc private func reviewUpdate() { analytics.report(.cardUpdateOpened); showMessage("Проверка обновлений", "Новых изменений нет. Если владелец обновит визитку, YPerson покажет разницу перед применением.") }
 
     @objc private func addLocation() {
         explainPermission(title: "Место знакомства", message: "Геопозиция нужна, чтобы по вашему действию сохранить место знакомства рядом с добавленным человеком.") { [weak self] in
@@ -66,8 +68,9 @@ final class PersonViewController: YPBaseViewController {
         explainPermission(title: "Сохранение в Контакты", message: "Контакты нужны, чтобы находить дубликаты, добавлять визитки YPerson в адресную книгу и обновлять их при изменениях владельца.") { [weak self] in
             guard let self else { return }
             let save: () -> Void = { [weak self] in
-                do { try self?.permissions.saveContact(.sample); self?.analytics.report(.contactSaved); self?.showMessage("Сохранено", "Карточка добавлена в Контакты.") }
-                catch { self?.showMessage("Не удалось сохранить", error.localizedDescription) }
+                guard let self else { return }
+                do { try self.permissions.saveContact(self.card); self.analytics.report(.contactSaved); self.showMessage("Сохранено", "Карточка добавлена в Контакты.") }
+                catch { self.showMessage("Не удалось сохранить", error.localizedDescription) }
             }
             switch self.permissions.contactsState() {
             case .authorized, .limited: save()
@@ -81,7 +84,7 @@ final class PersonViewController: YPBaseViewController {
         let alert = UIAlertController(title: "Контакты недоступны", message: "Карточка остаётся в YPerson. Можно открыть системную форму одного контакта без чтения адресной книги.", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Открыть форму", style: .default) { [weak self] _ in
             guard let self else { return }
-            let controller = CNContactViewController(forNewContact: self.permissions.makeContact(.sample))
+            let controller = CNContactViewController(forNewContact: self.permissions.makeContact(self.card))
             self.navigationController?.pushViewController(controller, animated: true)
         })
         alert.addAction(UIAlertAction(title: "Настройки", style: .default) { [weak self] _ in self?.permissions.openSystemSettings() })
@@ -100,7 +103,7 @@ final class PersonViewController: YPBaseViewController {
     }
 
     private func block() {
-        let alert = UIAlertController(title: "Заблокировать Алексея?", message: "Карточка и будущие обновления будут скрыты сразу. Системный контакт не изменится.", preferredStyle: .alert)
+        let alert = UIAlertController(title: "Заблокировать «\(card.name)»?", message: "Карточка и будущие обновления будут скрыты сразу. Системный контакт не изменится.", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Заблокировать", style: .destructive) { [weak self] _ in self?.submitSafety(.block, category: nil); self?.card.isBlocked = true; self?.navigationController?.popViewController(animated: true) })
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel)); present(alert, animated: true)
     }

@@ -31,6 +31,8 @@
 
 YPerson установлен и запущен на iPhone 16 Pro Simulator с iOS 18.5. Сохранены S1–S8, тёмная тема, увеличенный Dynamic Type, камера-предэкран и полный диалог удаления профиля. Accessibility dump включает заголовки, объяснения и действия alert.
 
+Дополнительно проверено разделение первоначального и reviewer-состояния: после удаления приложения и контейнера Release открывает экран `Создайте цифровую визитку` без профиля, людей, счётчиков и sync claims. Обычный Debug-запуск показывает то же состояние. Только отдельный Debug-запуск с `YP_SCREENSHOT_STATE=S1` показывает fixture-карточку Анны; fixture identities и symbols в Release binary отсутствуют, а reviewer mode не сохраняет их как пользовательские данные.
+
 Основные свидетельства:
 
 - `evidence/S1-card.png` — собственная карточка.
@@ -65,6 +67,7 @@ Backend повторно проверен на `127.0.0.1:8080`:
 | `GET /config` | 200 + stable ETag |
 | `GET /config` с `If-None-Match` | 304 |
 | валидный `POST /sync` | 200 |
+| новый installation ID в `POST /sync` | `updateCount: 0` |
 | поле `preciseLocation` в `/sync` | 400 |
 | неизвестный путь | 404 |
 | moderation category `spam` | 200 |
