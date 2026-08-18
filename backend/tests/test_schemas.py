@@ -81,6 +81,29 @@ def test_sync_request_accepts_the_published_person_card_contract() -> None:
     )
 
 
+def test_sync_request_accepts_a_swift_card_without_a_meeting_place() -> None:
+    request = SyncRequest.model_validate(
+        valid_request()
+        | {
+            "operation": "publishCard",
+            "card": {
+                "id": "person-maria",
+                "name": "Maria Orlova",
+                "role": "Founder",
+                "company": "Orlova Studio",
+                "phone": "+79005550304",
+                "email": "maria@example.com",
+                "tagline": "Connecting people and useful ideas",
+                "hasAudioGreeting": False,
+                "isBlocked": False,
+            },
+        }
+    )
+
+    assert request.card is not None
+    assert request.card.meetingPlace is None
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

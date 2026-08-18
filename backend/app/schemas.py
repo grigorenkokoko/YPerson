@@ -47,7 +47,7 @@ class PersonCard(BaseModel):
     email: str
     tagline: str
     hasAudioGreeting: bool
-    meetingPlace: str | None
+    meetingPlace: str | None = None
     isBlocked: bool
 
 
