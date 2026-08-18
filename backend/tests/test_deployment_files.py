@@ -6,8 +6,11 @@ checking README prose or matching authored configuration lines.
 
 from __future__ import annotations
 
+import ast
+import json
 import re
 import shlex
+from fnmatch import fnmatch
 from pathlib import Path
 
 import yaml
@@ -63,11 +66,40 @@ def dockerignore_includes(path: Path, candidate: str) -> bool:
             matches = True
         elif pattern.endswith("/**"):
             matches = candidate.startswith(pattern[:-3])
+        elif "/" in pattern or "*" in pattern or "[" in pattern:
+            matches = fnmatch(
+                candidate, pattern.rstrip("/") + ("/*" if pattern.endswith("/") else "")
+            )
         else:
             matches = candidate == pattern or candidate.startswith(f"{pattern}/")
         if matches:
             included = negated
     return included
+
+
+def json_healthcheck(instructions: list[tuple[str, str]]) -> list[str]:
+    """Return the JSON exec command carried by the Docker HEALTHCHECK instruction."""
+
+    healthchecks = [value for keyword, value in instructions if keyword == "HEALTHCHECK"]
+    assert len(healthchecks) == 1
+    _, separator, payload = healthchecks[0].partition(" CMD ")
+    assert separator, "HEALTHCHECK must use exec-form CMD payload"
+    command = json.loads(payload)
+    assert isinstance(command, list) and all(isinstance(part, str) for part in command)
+    return command
+
+
+def compose_port_pair(mapping: str, environment: dict[str, str]) -> tuple[str, str]:
+    """Resolve the `${PORT:-default}` shorthand used by the Compose port mapping."""
+
+    match = re.fullmatch(
+        r"\$\{PORT:-(?P<host_default>\d+)\}:\$\{PORT:-(?P<container_default>\d+)\}",
+        mapping,
+    )
+    assert match, "API port mapping must derive both endpoints from PORT"
+    port = environment.get("PORT") or match.group("host_default")
+    assert match.group("host_default") == match.group("container_default")
+    return port, port
 
 
 def test_runtime_image_is_immutable_nonroot_and_executable() -> None:
@@ -81,15 +113,58 @@ def test_runtime_image_is_immutable_nonroot_and_executable() -> None:
         assert re.fullmatch(r"python:3\.12-slim-bookworm@sha256:[0-9a-f]{64}", image)
 
     runs = [value for keyword, value in instructions if keyword == "RUN"]
-    assert any("pip install" in value and "--require-hashes" in value for value in runs)
+    install_commands = []
+    for keyword, value in instructions:
+        if keyword != "RUN":
+            continue
+        tokens = shlex.split(value)
+        if tokens[:4] == ["python", "-m", "pip", "install"]:
+            install_commands.append(tokens)
+    assert len(install_commands) == 1
+    install = install_commands[0]
+    assert "--require-hashes" in install
+    requirement_flags = [
+        index for index, token in enumerate(install) if token in {"-r", "--requirement"}
+    ]
+    assert requirement_flags == [install.index("-r")]
+    assert install[install.index("-r") + 1] == "requirements.lock"
     assert any(re.search(r"addgroup.*10001.*adduser.*10001", value) for value in runs)
     assert ("USER", "10001:10001") in instructions
     assert ("EXPOSE", "8080") in instructions
+    healthcheck = json_healthcheck(instructions)
+    assert healthcheck[:2] == ["python", "-c"]
+    health_program = ast.parse(healthcheck[2])
+    getenv_calls = [
+        node
+        for node in ast.walk(health_program)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "getenv"
+        and [getattr(argument, "value", None) for argument in node.args] == ["PORT", "8080"]
+    ]
+    assert getenv_calls
+    health_calls = [
+        node
+        for node in ast.walk(health_program)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "urlopen"
+    ]
+    assert len(health_calls) == 1
+    health_url = health_calls[0].args[0]
+    assert isinstance(health_url, ast.JoinedStr)
     assert any(
-        keyword == "HEALTHCHECK" and "urllib.request.urlopen" in value and "/health" in value
-        for keyword, value in instructions
+        isinstance(value, ast.FormattedValue)
+        and isinstance(value.value, ast.Name)
+        and value.value.id == "port"
+        for value in health_url.values
     )
-    assert ("CMD", '["python", "-m", "app.serve"]') in instructions
+    assert any(
+        isinstance(value, ast.Constant) and value.value in {"http://127.0.0.1:", "/health"}
+        for value in health_url.values
+    )
+    cmd = [value for keyword, value in instructions if keyword == "CMD"]
+    assert [json.loads(value) for value in cmd] == [["python", "-m", "app.serve"]]
 
 
 def test_image_copies_only_runtime_allowlist_and_context_excludes_secrets() -> None:
@@ -104,7 +179,7 @@ def test_image_copies_only_runtime_allowlist_and_context_excludes_secrets() -> N
         if any(part.startswith("--from=") for part in parts):
             continue
         copied_sources.update(part for part in parts[:-1] if not part.startswith("--"))
-    assert copied_sources <= {
+    assert copied_sources == {
         "backend/requirements.lock",
         "backend/app/",
         "backend/migrations/",
@@ -122,6 +197,13 @@ def test_image_copies_only_runtime_allowlist_and_context_excludes_secrets() -> N
         "backend/.env",
         "backend/tests/test_contract.py",
         "backend/__pycache__/main.pyc",
+        "backend/app/__pycache__/main.cpython-312.pyc",
+        "backend/migrations/__pycache__/env.cpython-312.pyc",
+        "backend/migrations/versions/__pycache__/20260818_0001_initial.cpython-312.pyc",
+        "backend/app/.env",
+        "backend/migrations/.env.production",
+        "backend/app/state.sqlite3",
+        "backend/migrations/local.db",
     ):
         assert not dockerignore_includes(dockerignore, unsafe_path)
 
@@ -148,6 +230,10 @@ def test_compose_models_database_migration_gate_and_api_shutdown() -> None:
     assert services["api"]["depends_on"]["migrate"]["condition"] == "service_completed_successfully"
     assert services["api"]["stop_grace_period"] == "20s"
     assert "volumes" not in services["api"]
+    port_mapping = services["api"]["ports"]
+    assert port_mapping == ["${PORT:-8080}:${PORT:-8080}"]
+    assert compose_port_pair(port_mapping[0], {}) == ("8080", "8080")
+    assert compose_port_pair(port_mapping[0], {"PORT": "9000"}) == ("9000", "9000")
 
 
 def test_dotenv_example_is_complete_and_uses_safe_development_values() -> None:
