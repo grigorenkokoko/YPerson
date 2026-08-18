@@ -791,7 +791,7 @@ release_blockers:
   - id: final_apple_identity
     description: assign final bundle identifier, Apple Developer Team, App Group, signing, and provisioning
   - id: production_api
-    description: provide reachable HTTPS API URL, hosting jurisdiction, and processor agreement
+    description: provide approved installation authentication; managed PostgreSQL with tested backup/restore and deletion behavior; a reachable production TLS-protected API domain; hosting jurisdiction; processor agreement; and monitoring/alerting evidence
   - id: privacy_and_support_urls
     description: publish privacy policy, support URL, responsible privacy contact, and moderation contact
   - id: appmetrica_project

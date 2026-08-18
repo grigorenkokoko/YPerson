@@ -165,7 +165,7 @@
   },
   "releaseBlockers": [
     "Assign final Apple bundle identifiers, team, App Group, signing certificates, and provisioning profiles.",
-    "Deploy the production HTTPS API and confirm hosting jurisdiction, persistence, authentication, and processor terms.",
+    "Deploy the production API only after approved installation authentication; managed PostgreSQL with tested backup/restore and deletion behavior; a production TLS-protected domain; hosting jurisdiction; processor agreement; and monitoring/alerting evidence are confirmed.",
     "Publish final privacy-policy and support/moderation URLs and contacts.",
     "Provide the production AppMetrica API key and confirm DPA, retention, deletion, package provenance, privacy manifests, and network domains in the archive.",
     "Configure APNs credentials and a production notification-signing public key, then perform end-to-end remote notification checks.",

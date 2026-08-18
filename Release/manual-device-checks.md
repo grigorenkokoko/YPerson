@@ -25,7 +25,9 @@
 ## Backend, аналитика и расширения
 
 - [ ] На выбранной staging-платформе собрать и запустить уже authored Dockerfile/Compose с PostgreSQL: выполнить explicit `alembic upgrade head`, `/health`, UID non-root и API-restart persistence. Локально разобрана только Compose-конфигурация; image build/run ещё не подтверждены.
-- [ ] Заменить placeholder на production HTTPS API и проверить `/health`, публичный `/config` с ETag/304, last-known-good cache и закрытый `/sync` во всех сетевых состояниях.
+- [ ] Выбрать production TLS-protected domain, подтвердить hosting jurisdiction и processor agreement, заменить placeholder на production API и проверить `/health`, публичный `/config` с ETag/304, last-known-good cache и закрытый `/sync` во всех сетевых состояниях.
+- [ ] Реализовать и проверить утверждённый installation-authentication mechanism; убедиться, что production startup и `/sync` не используют staging unauthenticated behavior.
+- [ ] На выбранной платформе настроить monitoring и alerting для availability, database health, error rate, latency, backup failures и moderation queue; провести и сохранить evidence тестового alert/response.
 - [ ] Проверить, что `/config` может только отключать функции/аналитику и не может добавлять разрешения, категории данных, tracking или retention.
 - [ ] С production AppMetrica key подтвердить: до согласия нет активации/трафика; после согласия есть единственный `launch`; выключение аналитики и remote kill switch останавливают будущую отправку; события не содержат карточки, Контакты, медиа, координаты, токены или свободный текст.
 - [ ] Проверить AppMetrica 6.5.0, его package identity/revision, privacy manifests, подпись/происхождение и фактические сетевые домены в release archive.
@@ -35,7 +37,7 @@
 
 ## Удаление и модерация
 
-- [ ] Удалить профиль онлайн: локальная карточка/аудио/cache очищены, опубликованная карточка отозвана, связи, exchange claims и APNs/auth tokens удалены; проверить заявленные окна backup/moderation retention и выбранную managed PostgreSQL restore policy.
+- [ ] Для выбранной managed PostgreSQL выполнить и задокументировать tested backup/restore; удалить профиль онлайн: локальная карточка/аудио/cache очищены, опубликованная карточка отозвана, связи, exchange claims и APNs/auth tokens удалены; проверить deletion behavior, заявленные окна backup/moderation retention и restore policy.
 - [ ] Удалить профиль офлайн: локальные данные очищены сразу, pending-флаг переживает перезапуск, а серверный запрос успешно повторяется при появлении сети.
 - [ ] Отправить каждую категорию жалобы, заблокировать и удалить связь; подтвердить немедленный локальный эффект, backend SLA и неизменность системных Контактов.
 
