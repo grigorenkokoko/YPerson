@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from time import perf_counter
 from uuid import uuid4
 
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 
@@ -57,10 +58,12 @@ class RequestObservabilityMiddleware:
         scope.setdefault("state", {})["request_id"] = request_id
         started = perf_counter()
         response_status = 500
+        response_started = False
 
         async def send_with_headers(message: Message) -> None:
-            nonlocal response_status
+            nonlocal response_started, response_status
             if message["type"] == "http.response.start":
+                response_started = True
                 response_status = message["status"]
                 headers = list(message.get("headers", []))
                 header_names = {name.lower() for name, _ in headers}
@@ -73,6 +76,18 @@ class RequestObservabilityMiddleware:
 
         try:
             await self.app(scope, receive, send_with_headers)
+        except Exception:  # noqa: BLE001 - the middleware must sanitize every route exception.
+            if not response_started:
+                response_status = 500
+                response = JSONResponse(
+                    status_code=500,
+                    content={
+                        "error": "internal_error",
+                        "message": "internal error",
+                        "requestID": request_id,
+                    },
+                )
+                await response(scope, receive, send_with_headers)
         finally:
             route = _safe_route(scope)
             self.logger.info(

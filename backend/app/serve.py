@@ -2,21 +2,27 @@
 
 import uvicorn
 
-from app.main import create_app
-from app.settings import Settings
+from app.main import app
 
 
-def main() -> None:
-    """Load validated settings once, then run Uvicorn with graceful shutdown settings."""
+def build_config() -> uvicorn.Config:
+    """Configure Uvicorn around the single validated module application."""
 
-    settings = Settings()
-    config = uvicorn.Config(
-        create_app(settings),
+    settings = app.state.settings
+    return uvicorn.Config(
+        app,
         host=settings.host,
         port=settings.port,
         timeout_graceful_shutdown=settings.graceful_shutdown_seconds,
+        access_log=False,
+        log_config=None,
     )
-    uvicorn.Server(config).run()
+
+
+def main() -> None:
+    """Run the one module application and its app-owned lifecycle."""
+
+    uvicorn.Server(build_config()).run()
 
 
 if __name__ == "__main__":

@@ -34,10 +34,6 @@ class InvalidRequestError(Exception):
     """A deliberately generic client error which never echoes submitted data."""
 
 
-class BodyTooLargeError(Exception):
-    """Raised before request JSON parsing when a sync body crosses its limit."""
-
-
 class UnsupportedMediaTypeError(Exception):
     """Raised when `/sync` is sent something other than JSON."""
 
@@ -112,10 +108,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def invalid_request_handler(request: Request, _: InvalidRequestError) -> JSONResponse:
         return _error_response(request, 400, "invalid_request", "invalid request")
 
-    @application.exception_handler(BodyTooLargeError)
-    async def body_too_large_handler(request: Request, _: BodyTooLargeError) -> JSONResponse:
-        return _error_response(request, 413, "invalid_request", "request body exceeds 64 KiB")
-
     @application.exception_handler(UnsupportedMediaTypeError)
     async def unsupported_media_type_handler(
         request: Request, _: UnsupportedMediaTypeError
@@ -133,13 +125,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request, exception: StarletteHTTPException
     ) -> JSONResponse:
         if exception.status_code == 404:
-            return _error_response(request, 404, "not_found", "route not found")
+            return _error_response(request, 404, "not_found")
         if exception.status_code == 405:
             return _error_response(
                 request,
                 405,
                 "method_not_allowed",
-                "method not allowed",
                 headers=exception.headers,
             )
         return _error_response(request, exception.status_code, "invalid_request", "invalid request")
@@ -206,8 +197,8 @@ def _public_config(settings: Settings) -> PublicConfigResponse:
 
 
 def _require_json_content_type(request: Request) -> None:
-    content_type = request.headers.get("content-type", "").lower()
-    if not content_type.startswith("application/json"):
+    media_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
+    if media_type != "application/json":
         raise UnsupportedMediaTypeError()
 
 
@@ -272,14 +263,13 @@ def _error_response(
     request: Request,
     status_code: int,
     error: str,
-    message: str,
+    message: str | None = None,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
-    return JSONResponse(
-        status_code=status_code,
-        content={"error": error, "message": message, "requestID": request.state.request_id},
-        headers=headers,
-    )
+    content: dict[str, str] = {"error": error, "requestID": request.state.request_id}
+    if message is not None:
+        content["message"] = message
+    return JSONResponse(status_code=status_code, content=content, headers=headers)
 
 
 async def _body_too_large_response(scope: Scope, receive: Receive, send: Send) -> None:
