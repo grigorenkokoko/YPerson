@@ -19,7 +19,7 @@
 
 Проверено:
 
-- `xcodegen generate` повторно сгенерировал общий проект в этой проверке. Debug и Release собраны общей схемой `YPerson` для generic iOS Simulator с `CODE_SIGNING_ALLOWED=NO`; предупреждения Swift/Clang настроены как ошибки. Debug завершился `BUILD SUCCEEDED` за 40.726 s (2026-08-18T11:08:35Z), Release — за 46.411 s (2026-08-18T11:09:50Z). Для sandbox использованы worktree-local DerivedData/module/SwiftPM cache paths и существующий resolved SourcePackages checkout; product settings, iOS 15 target и endpoint models не менялись.
+- `xcodegen generate` повторно сгенерировал общий проект без diff. Debug и Release собраны общей схемой `YPerson` для generic iOS Simulator с `CODE_SIGNING_ALLOWED=NO`; предупреждения Swift/Clang настроены как ошибки. Полная Debug-сборка завершилась `BUILD SUCCEEDED` за 39.978 s, после исправления только shell-wrapper подтверждающий повтор завершился с exit 0 за 5.18 s (2026-08-18T12:07:30Z). Release завершился с exit 0 за 42.91 s (2026-08-18T12:08:26Z). Для sandbox использованы worktree-local DerivedData/module/SwiftPM cache paths и существующий resolved SourcePackages checkout с `-disableAutomaticPackageResolution`; product settings, общий scheme, iOS 15 target и endpoint models не менялись.
 - Главный продукт и три embedded extensions присутствуют в Release app bundle.
 - Обработанные Info.plist всех четырёх продуктов содержат minimum OS `15.0`, `UIDeviceFamily = [1]` и ожидаемые bundle identifiers.
 - Release URL: `https://api.example.invalid`; privacy/support URL корректно сохраняют полный `https://...` и остаются явными release blockers.
@@ -61,7 +61,7 @@ YPerson установлен и запущен на iPhone 16 Pro Simulator с i
 
 Backend реализован в `backend/app/main.py` и `backend/app/storage.py`; миграция `backend/migrations/versions/20260818_0001_initial.py` создаёт PostgreSQL persistence. Реализованный iOS wire format остаётся camelCase subset (`installationID`, `bearer`, `apnsToken`, `operation`, `card`, `exchangeToken`, `moderationCategory`); это не означает, что более широкий product-level snake_case inventory уже принят как API. Его расширение требует versioning, iOS changes, privacy reconciliation, tests и renewed approval.
 
-Локальный Uvicorn smoke ранее проверен на `127.0.0.1:8080` с изолированным PostgreSQL:
+Локальный Uvicorn smoke повторно проверен на `127.0.0.1:58080` с изолированным PostgreSQL:
 
 | Проверка | Результат |
 |---|---:|
@@ -72,12 +72,17 @@ Backend реализован в `backend/app/main.py` и `backend/app/storage.py
 | новый installation ID в `POST /sync` | `updateCount: 0` |
 | поле `preciseLocation` в `/sync` | 400 |
 | неизвестный путь | 404 |
-| moderation category `spam` | 200 |
-| подтверждённый 8-символьный exchange claim | 200 |
+| неверный метод `POST /config` | 405 + `Allow: GET` |
+| тело 65,537 bytes | 413 |
+| `text/plain` для `/sync` | 415 |
+| безопасно индуцированная внутренняя ошибка | 500, generic body |
+| недоступная БД в изолированном app instance | 503 |
 
 `/config` не принимает PII и содержит только version/minimum contract, maintenance, три feature flags, display-only sponsored templates, privacy/support URLs, moderation categories и analytics kill switch. Клиент отклоняет неизвестные top-level, feature и template keys, использует ETag и last-known-good cache.
 
-2026-08-18T11:05:24Z свежая проверка против изолированного UTF-8 PostgreSQL 17.11: `alembic upgrade head` и `alembic current` вернули `20260818_0001 (head)`; `pytest -q` — 67 passed, 1 существующее FastAPI TestClient deprecation warning за 2.28 s; Ruff check прошёл, format check — 19 files already formatted. Live Uvicorn smoke вернул health 200, conditional config 304 и sync 200; SIGTERM остановил process в пределах настроенного 15-second allowance. Contract/storage suites подтвердили transactional persistence и profile deletion. Raw exchange token не сохраняется: в PostgreSQL хранится только SHA-256 hash, срок — ровно десять минут. Dockerfile/Compose authored и Compose configuration parsed; Docker image не build/run, поэтому container UID, live container health и restart persistence остаются непроверенными staging blockers.
+2026-08-18T12:10:27Z полная проверка против нового disposable UTF-8 PostgreSQL 17.11 cluster на порту 55433: `alembic upgrade head` и `alembic current` вернули `20260818_0001 (head)`; `pytest -q` — 67 passed, 1 существующее FastAPI TestClient deprecation warning за 2.29 s; Ruff check прошёл, format check — 19 files already formatted; `alembic downgrade base` и повторный upgrade завершились успешно. Live Uvicorn matrix покрыл 200/304/400/404/405/413/415; отдельные безопасные TestClient probes подтвердили sanitized 500, controlled 503, уникальные UUID `X-Request-ID` и `public, max-age=60` только для `/config`, `no-store` для остальных ответов. Карточка и APNs token сохранились в PostgreSQL после остановки и запуска только API process; direct row readback подтвердил оба значения. Два SIGTERM завершили Uvicorn за 0.236 s и 0.176 s, существенно ниже 15-second budget. Contract/storage suites подтвердили transactional persistence и profile deletion. Raw exchange token не сохраняется: в PostgreSQL хранится только SHA-256 hash, срок — ровно десять минут. Docker Compose configuration parsed; Docker client 29.7.2 найден, но daemon socket отсутствует, поэтому image build/run, container UID, live container health и container restart persistence не заявляются.
+
+Installed skill mutation suite прошёл 11/11; custom `validate_skill.py` вернул `Skill validation passed`, system `quick_validate.py` — `Skill is valid!`. Все JSON в `Release/`, а также `AppPrivacy.yml`, `project.yml` и `backend/compose.yaml` повторно разобраны; manifest сохранил `implementation-verified` и `releaseReady = false`.
 
 ## Статический аудит
 

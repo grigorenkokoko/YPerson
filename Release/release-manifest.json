@@ -127,8 +127,8 @@
       "uvicorn": "0.52.3"
     },
     "xcodegen": "generated the shared project during the 2026-08-18 verification",
-    "debugBuild": "passed with warnings treated as errors on 2026-08-18T11:08:35Z; generic iOS Simulator, CODE_SIGNING_ALLOWED=NO, 40.726s",
-    "releaseSimulatorBuild": "passed with warnings treated as errors on 2026-08-18T11:09:50Z; generic iOS Simulator, CODE_SIGNING_ALLOWED=NO, 46.411s",
+    "debugBuild": "passed with warnings treated as errors on 2026-08-18T12:07:30Z; generic iOS Simulator, CODE_SIGNING_ALLOWED=NO; full compile BUILD SUCCEEDED in 39.978s and corrected repeat exited 0 in 5.18s",
+    "releaseSimulatorBuild": "passed with warnings treated as errors on 2026-08-18T12:08:26Z; generic iOS Simulator, CODE_SIGNING_ALLOWED=NO, exit 0 in 42.91s",
     "simulator": "iPhone 16 Pro, iOS 18.5",
     "cleanInstallReleaseSimulator": "passed: empty create-card state with no profile, people, counters, or sync claims",
     "ordinaryDebugState": "passed: matches clean Release state without YP_SCREENSHOT_STATE",
@@ -145,20 +145,28 @@
       "prohibitedPreciseLocation": 400,
       "unknownRoute": 404,
       "report": 200,
-      "confirmedExchangeClaim": 200
+      "confirmedExchangeClaim": 200,
+      "wrongMethod": 405,
+      "wrongMethodAllow": "GET",
+      "oversizedBody": 413,
+      "unsupportedMediaType": 415,
+      "sanitizedInternalError": 500,
+      "unavailableDatabase": 503
     },
     "backendVerification": {
-      "recordedAtUTC": "2026-08-18T11:10:44Z",
+      "recordedAtUTC": "2026-08-18T12:10:27Z",
       "postgresql": "17.11 isolated UTF-8 local cluster",
-      "migration": "alembic upgrade head; current: 20260818_0001 (head)",
-      "pytest": "67 passed, 1 existing FastAPI TestClient deprecation warning in 2.28s",
+      "migration": "alembic upgrade head; current: 20260818_0001 (head); downgrade base and re-upgrade head passed",
+      "pytest": "67 passed, 1 existing FastAPI TestClient deprecation warning in 2.29s; focused 500/503 matrix 3 passed; final all-status invariant 1 passed",
       "ruff": "check passed; 19 files already formatted",
-      "localUvicornSmoke": "health 200, config conditional 304, sync 200",
-      "gracefulShutdown": "SIGTERM stopped the local Uvicorn process within the configured 15-second allowance",
-      "persistence": "contract and storage suites exercised transactional PostgreSQL persistence and profile deletion"
+      "localUvicornSmoke": "live 200/304/400/404/405 with Allow GET/413/415; controlled isolated probes verified sanitized 500 and unavailable-database 503",
+      "gracefulShutdown": "SIGTERM stopped the two local Uvicorn processes in 0.236s and 0.176s, below the 15-second allowance",
+      "persistence": "published card and APNs token survived an API-only restart and direct PostgreSQL readback; contract and storage suites exercised transactional persistence and profile deletion"
     },
+    "skillValidation": "11 mutation tests passed; custom validator passed; system quick_validate passed on 2026-08-18T12:08:59Z",
+    "parserValidation": "all Release JSON plus AppPrivacy.yml, project.yml, and backend/compose.yaml parsed; implementation-verified/releaseReady false invariant held",
     "releasePreparationBackendSmokeAtUTC": "2026-08-18T07:35:18Z",
-    "finalReleaseVerificationAtUTC": "2026-08-18T11:10:04Z",
+    "finalReleaseVerificationAtUTC": "2026-08-18T12:10:27Z",
     "genericDeviceReleaseBuild": "passed unsigned with iOS SDK 26.5",
     "validCodeSigningIdentities": 0,
     "evidenceDirectory": "Release/evidence"
