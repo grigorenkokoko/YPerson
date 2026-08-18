@@ -115,10 +115,10 @@ def test_delete_profile_removes_owned_rows(session_factory) -> None:
 
 
 def test_alembic_accepts_percent_encoded_database_url() -> None:
-    database_url = "postgresql+psycopg://grigornkokoko:p%40ss@127.0.0.1:55432/yperson_test"
+    database_url = "postgresql+psycopg://synthetic:p%40ss@database.invalid:5432/yperson"
     environment = os.environ | {"DATABASE_URL": database_url}
     result = subprocess.run(
-        [sys.executable, "-m", "alembic", "current"],
+        [sys.executable, "-m", "alembic", "upgrade", "head", "--sql"],
         cwd=Path(__file__).parents[1],
         env=environment,
         capture_output=True,
@@ -127,7 +127,7 @@ def test_alembic_accepts_percent_encoded_database_url() -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "20260818_0001 (head)" in result.stdout
+    assert "CREATE TABLE profiles" in result.stdout
 
 
 def test_concurrent_first_profile_creation_succeeds(session_factory) -> None:

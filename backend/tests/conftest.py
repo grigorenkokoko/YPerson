@@ -22,7 +22,9 @@ def session_factory() -> sessionmaker[Session]:
         {"options": f"-csearch_path={schema_name}"}
     )
     config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", str(schema_url).replace("%", "%%"))
+    config.set_main_option(
+        "sqlalchemy.url", schema_url.render_as_string(hide_password=False).replace("%", "%%")
+    )
 
     try:
         with admin_engine.begin() as connection:
