@@ -89,7 +89,7 @@ permissions:
     trigger: "Добавить человека → Сканировать QR"
     screen_location: "S2 Обмен"
     purpose_copy: "Камера нужна, чтобы сканировать QR-код визитки YPerson и добавить человека."
-    authorized_behavior: frames are processed in memory and the decoded card is shown for confirmation
+    authorized_behavior: frames are processed transiently on device and the decoded card is shown for confirmation
     denial_behavior: photo import and manual code remain available; Settings link appears only after another deliberate scanner action
     reviewer_path: scan the supplied test QR, review the confirmation, and save the card
     data_types:
@@ -457,7 +457,20 @@ tracking:
 
 backend:
   storage_model: compact profile snapshots plus connections, short-lived exchange claims, moderation state, and push token
-  prototype_storage: one JSON file is acceptable
+  prototype_storage: PostgreSQL-backed durable storage for the implemented subset; this is not a production-deployment claim
+  implementation:
+    runtime: Python 3.12 with FastAPI, SQLAlchemy, Alembic, PostgreSQL, and Uvicorn
+    wire_format: current iOS-compatible camelCase subset; the broader snake_case product inventory below is not implemented as an alternate request shape
+    sync_request_fields:
+      - installationID
+      - bearer
+      - apnsToken
+      - operation
+      - card
+      - exchangeToken
+      - moderationCategory
+    exchange_token_storage: raw exchange tokens are stored only as SHA-256 hashes and expire after 10 minutes
+    staging_artifacts: Dockerfile, Docker Compose, explicit Alembic migration job, and /health check are authored and configuration-validated; no image build, container run, or production deployment is claimed
   endpoints:
     - method: GET
       path: /health

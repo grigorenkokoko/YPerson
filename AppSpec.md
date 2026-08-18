@@ -188,7 +188,7 @@ WidgetKit-расширение показывает нейтральную по�
 
 ## Минимальный backend
 
-Backend хранит один компактный снимок YPerson-профиля на установку, опубликованную карточку, подтверждённые связи, короткоживущие exchange tokens, блокировки/жалобы и APNs-токен. Контракт ограничен тремя ручками: health, публичная конфигурация и объединённая синхронизация. В прототипе допустим один JSON-файл; production обязан использовать защищённое хранилище и резервное копирование.
+Backend хранит компактный снимок YPerson-профиля на установку, опубликованную карточку, подтверждённые связи, короткоживущие exchange tokens, блокировки/жалобы и APNs-токен. Реализованный subset работает на Python 3.12, FastAPI, SQLAlchemy, Alembic и PostgreSQL: данные сохраняются транзакционно, а migration `20260818_0001` создаёт требуемые таблицы. Контракт ограничен тремя ручками: health, публичная конфигурация и объединённая синхронизация. OCI/Docker Compose артефакты подготовлены и их конфигурация разобрана локально, но образ не собирался и контейнеры не запускались. Это staging-подготовка, а не production deployment: authentication, managed backups/restore, TLS/domain, hosting jurisdiction, processor terms, monitoring и moderation operations остаются release blockers.
 
 ### `GET /health`
 
@@ -221,6 +221,8 @@ Backend хранит один компактный снимок YPerson-проф
 - новые или изменённые карточки подтверждённых связей;
 - отозванные карточки и истёкшие exchange claims;
 - статусы жалоб/блокировок и конфигурация уведомлений.
+
+Этот расширенный snake_case-инвентарь описывает продуктовую модель, а не уже выпущенный wire contract. Реализованный iOS-совместимый subset намеренно остаётся camelCase: `/config` возвращает `version`, `minimumContract`, `maintenance`, `features`, `sponsoredTemplates`, `privacyURL`, `supportURL`, `moderationCategories` и `analyticsKillSwitch`; `/sync` принимает `installationID`, `bearer`, `apnsToken`, `operation`, `card`, `exchangeToken` и `moderationCategory`. Расширять `/sync` до приведённой выше продуктовой модели можно только через версионирование, изменения iOS, повторную privacy reconciliation, backend/iOS tests и новое явное утверждение.
 
 В `/sync` запрещено включать системную адресную книгу, сырые фото/кадры, неподтверждённые результаты сканирования, точные координаты, локальные заметки о встрече, биометрические данные и параметры пользовательского контента в AppMetrica.
 

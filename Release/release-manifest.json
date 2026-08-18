@@ -48,7 +48,19 @@
     }
   ],
   "backend": {
-    "runtime": "Node.js standard library",
+    "runtime": "Python 3.12.14",
+    "framework": "FastAPI 0.141.1",
+    "storage": "PostgreSQL via SQLAlchemy 2.0.52; Alembic 1.19.1 migration 20260818_0001",
+    "process": "Uvicorn 0.52.3",
+    "implementationEvidence": [
+      "backend/app/main.py",
+      "backend/app/storage.py",
+      "backend/migrations/versions/20260818_0001_initial.py",
+      "backend/tests",
+      "backend/Dockerfile",
+      "backend/compose.yaml"
+    ],
+    "containerVerification": "Docker artifacts authored and Compose configuration validated; no image build or container run occurred because Docker runtime access is unavailable.",
     "endpoints": [
       "GET /health",
       "GET /config",
@@ -107,10 +119,16 @@
       "xcode": "26.5 (17F42)",
       "swift": "6.3.2 in Swift 5 language mode",
       "xcodegen": "2.46.0",
-      "node": "25.4.0"
+      "python": "3.12.14",
+      "fastapi": "0.141.1",
+      "sqlalchemy": "2.0.52",
+      "alembic": "1.19.1",
+      "psycopg": "3.3.4",
+      "uvicorn": "0.52.3"
     },
-    "debugBuild": "passed with warnings treated as errors",
-    "releaseSimulatorBuild": "passed with warnings treated as errors",
+    "xcodegen": "generated the shared project during the 2026-08-18 verification",
+    "debugBuild": "passed with warnings treated as errors on 2026-08-18T11:08:35Z; generic iOS Simulator, CODE_SIGNING_ALLOWED=NO, 40.726s",
+    "releaseSimulatorBuild": "passed with warnings treated as errors on 2026-08-18T11:09:50Z; generic iOS Simulator, CODE_SIGNING_ALLOWED=NO, 46.411s",
     "simulator": "iPhone 16 Pro, iOS 18.5",
     "cleanInstallReleaseSimulator": "passed: empty create-card state with no profile, people, counters, or sync claims",
     "ordinaryDebugState": "passed: matches clean Release state without YP_SCREENSHOT_STATE",
@@ -129,8 +147,18 @@
       "report": 200,
       "confirmedExchangeClaim": 200
     },
+    "backendVerification": {
+      "recordedAtUTC": "2026-08-18T11:10:44Z",
+      "postgresql": "17.11 isolated UTF-8 local cluster",
+      "migration": "alembic upgrade head; current: 20260818_0001 (head)",
+      "pytest": "67 passed, 1 existing FastAPI TestClient deprecation warning in 2.28s",
+      "ruff": "check passed; 19 files already formatted",
+      "localUvicornSmoke": "health 200, config conditional 304, sync 200",
+      "gracefulShutdown": "SIGTERM stopped the local Uvicorn process within the configured 15-second allowance",
+      "persistence": "contract and storage suites exercised transactional PostgreSQL persistence and profile deletion"
+    },
     "releasePreparationBackendSmokeAtUTC": "2026-08-18T07:35:18Z",
-    "finalReleaseVerificationAtUTC": "2026-08-18T07:35:18Z",
+    "finalReleaseVerificationAtUTC": "2026-08-18T11:10:04Z",
     "genericDeviceReleaseBuild": "passed unsigned with iOS SDK 26.5",
     "validCodeSigningIdentities": 0,
     "evidenceDirectory": "Release/evidence"

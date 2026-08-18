@@ -14,12 +14,12 @@
 
 - Xcode 26.5 (17F42), Swift 6.3.2 в Swift 5 language mode.
 - XcodeGen 2.46.0.
-- Node.js 25.4.0 без backend-зависимостей.
+- Python 3.12.14; FastAPI 0.141.1, SQLAlchemy 2.0.52, Alembic 1.19.1, psycopg 3.3.4 и Uvicorn 0.52.3 — версии из `backend/pyproject.toml`/locked environment.
 - AppMetrica exact 6.5.0, resolved revision `bac143d2d8a6d427fd901e27bdccb6fc79d02889`; KSCrash 2.5.1 и SwiftProtobuf 1.38.1 разрешены транзитивно.
 
 Проверено:
 
-- Debug и Release собраны общей схемой `YPerson` для generic iOS Simulator с `CODE_SIGNING_ALLOWED=NO`; предупреждения Swift/Clang настроены как ошибки, обе команды завершились с exit code 0.
+- `xcodegen generate` повторно сгенерировал общий проект в этой проверке. Debug и Release собраны общей схемой `YPerson` для generic iOS Simulator с `CODE_SIGNING_ALLOWED=NO`; предупреждения Swift/Clang настроены как ошибки. Debug завершился `BUILD SUCCEEDED` за 40.726 s (2026-08-18T11:08:35Z), Release — за 46.411 s (2026-08-18T11:09:50Z). Для sandbox использованы worktree-local DerivedData/module/SwiftPM cache paths и существующий resolved SourcePackages checkout; product settings, iOS 15 target и endpoint models не менялись.
 - Главный продукт и три embedded extensions присутствуют в Release app bundle.
 - Обработанные Info.plist всех четырёх продуктов содержат minimum OS `15.0`, `UIDeviceFamily = [1]` и ожидаемые bundle identifiers.
 - Release URL: `https://api.example.invalid`; privacy/support URL корректно сохраняют полный `https://...` и остаются явными release blockers.
@@ -59,7 +59,9 @@ YPerson установлен и запущен на iPhone 16 Pro Simulator с i
 
 ## Backend
 
-Backend повторно проверен на `127.0.0.1:8080`:
+Backend реализован в `backend/app/main.py` и `backend/app/storage.py`; миграция `backend/migrations/versions/20260818_0001_initial.py` создаёт PostgreSQL persistence. Реализованный iOS wire format остаётся camelCase subset (`installationID`, `bearer`, `apnsToken`, `operation`, `card`, `exchangeToken`, `moderationCategory`); это не означает, что более широкий product-level snake_case inventory уже принят как API. Его расширение требует versioning, iOS changes, privacy reconciliation, tests и renewed approval.
+
+Локальный Uvicorn smoke ранее проверен на `127.0.0.1:8080` с изолированным PostgreSQL:
 
 | Проверка | Результат |
 |---|---:|
@@ -75,6 +77,8 @@ Backend повторно проверен на `127.0.0.1:8080`:
 
 `/config` не принимает PII и содержит только version/minimum contract, maintenance, три feature flags, display-only sponsored templates, privacy/support URLs, moderation categories и analytics kill switch. Клиент отклоняет неизвестные top-level, feature и template keys, использует ETag и last-known-good cache.
 
+2026-08-18T11:05:24Z свежая проверка против изолированного UTF-8 PostgreSQL 17.11: `alembic upgrade head` и `alembic current` вернули `20260818_0001 (head)`; `pytest -q` — 67 passed, 1 существующее FastAPI TestClient deprecation warning за 2.28 s; Ruff check прошёл, format check — 19 files already formatted. Live Uvicorn smoke вернул health 200, conditional config 304 и sync 200; SIGTERM остановил process в пределах настроенного 15-second allowance. Contract/storage suites подтвердили transactional persistence и profile deletion. Raw exchange token не сохраняется: в PostgreSQL хранится только SHA-256 hash, срок — ровно десять минут. Dockerfile/Compose authored и Compose configuration parsed; Docker image не build/run, поэтому container UID, live container health и restart persistence остаются непроверенными staging blockers.
+
 ## Статический аудит
 
 - Storyboard/XIB и test targets/files отсутствуют по выбранному build-контракту.
@@ -85,4 +89,4 @@ Backend повторно проверен на `127.0.0.1:8080`:
 
 ## Невыполненные внешние проверки
 
-Физическое оборудование, реальный iOS 15 runtime/device, signing/App Groups, production AppMetrica traffic, APNs и signed notification enrichment нельзя честно подтвердить симуляторной неподписанной сборкой. Полный список находится в `manual-device-checks.md`; эти пункты и production placeholders удерживают `releaseReady = false`.
+Физическое оборудование, реальный iOS 15 runtime/device, signing/App Groups, production AppMetrica traffic, APNs и signed notification enrichment нельзя честно подтвердить симуляторной неподписанной сборкой. Кроме того, production authentication, managed backups/restore, TLS/domain, hosting jurisdiction, processor terms, monitoring и moderation operations не подтверждены. Полный список находится в `manual-device-checks.md`; эти пункты и production placeholders удерживают `releaseReady = false`.

@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "checkedAtUTC": "2026-08-18T07:35:18Z",
+  "checkedAtUTC": "2026-08-18T11:10:44Z",
   "sourceStatus": "implementation-verified",
   "approvedNextStage": "release-preparation",
   "matched": [
     {"area": "platform", "result": "match", "evidence": ["project.yml", "Release/release-manifest.json"], "detail": "All four targets are iPhone-only, portrait-only where applicable, and minimum iOS 15.0."},
     {"area": "permissions", "result": "match", "evidence": ["AppPrivacy.yml", "project.yml", "YPerson/Permissions/PermissionCenter.swift"], "detail": "All ten approved authorization categories and denial fallbacks remain represented."},
-    {"area": "backend-contract", "result": "match", "evidence": ["backend/server.mjs", "YPerson/Networking/APIClient.swift"], "detail": "GET /health, public GET /config with ETag/304, and POST /sync are implemented; /config accepts no PII and cannot expand permissions or tracking."},
+    {"area": "backend-contract", "result": "match", "evidence": ["backend/app/main.py", "backend/app/schemas.py", "backend/app/storage.py", "backend/migrations/versions/20260818_0001_initial.py", "backend/tests/test_contract.py", "YPerson/Networking/APIClient.swift"], "detail": "Python/FastAPI preserves GET /health, public GET /config with ETag/304, and POST /sync. The implemented iOS contract is the current camelCase subset; the broader product inventory requires a separately versioned, reapproved expansion. /config accepts no PII and cannot expand permissions or tracking."},
     {"area": "extensions", "result": "match", "evidence": ["YPersonWidget", "YPersonNotificationService", "YPersonNotificationContent"], "detail": "Widget and both notification extensions are embedded product targets with no AppMetrica activation."},
-    {"area": "account-deletion", "result": "match-locally", "evidence": ["YPerson/UI/PrivacyViewController.swift", "backend/server.mjs"], "detail": "In-app full-profile deletion UI and backend operation exist; production persistence and backup purge remain external blockers."},
-    {"area": "ugc-safety", "result": "partial", "evidence": ["YPerson/UI/PersonViewController.swift", "backend/server.mjs"], "detail": "Report and block flows exist; production filtering, public moderation contact, and response operations remain blocked."},
+    {"area": "account-deletion", "result": "match-locally", "evidence": ["YPerson/UI/PrivacyViewController.swift", "backend/app/main.py", "backend/app/storage.py", "backend/tests/test_contract.py"], "detail": "In-app full-profile deletion UI and transactional PostgreSQL backend operation exist; production authentication, managed backups/restore, and backup purge remain external blockers."},
+    {"area": "ugc-safety", "result": "partial", "evidence": ["YPerson/UI/PersonViewController.swift", "backend/app/main.py", "backend/app/storage.py", "backend/tests/test_contract.py"], "detail": "Report and block flows persist fixed categories without report text; production filtering, public moderation contact, queue, retention execution, and response operations remain blocked."},
     {"area": "analytics", "result": "match-locally", "evidence": ["YPerson/Analytics/AppMetricaAnalyticsClient.swift", "AppPrivacy.yml"], "detail": "AppMetrica 6.5.0 Core/Crashes/AdSupport are exact-pinned and gated by consent, valid key, kill switch, and ATT for IDFA."},
     {"area": "app-store-screenshots", "result": "match", "evidence": ["Release/app-store-metadata/screenshots/README.md", "Release/app-store-metadata/screenshots/01-card.jpg"], "detail": "Seven implemented-app screenshots use fictional data, accepted 1320x2868 portrait dimensions, JPEG encoding, and no alpha channel."}
   ],
