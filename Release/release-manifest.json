@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "product": "YPerson",
+  "implementationStatus": "implementation-verified",
+  "releaseReady": false,
+  "platform": {
+    "device": "iPhone only",
+    "orientation": "portrait only",
+    "minimumIOS": "15.0",
+    "unsupported": [
+      "iPad",
+      "macOS",
+      "Mac Catalyst",
+      "Designed for iPhone on Mac",
+      "visionOS",
+      "watchOS",
+      "tvOS"
+    ]
+  },
+  "products": [
+    {
+      "name": "YPerson",
+      "type": "application",
+      "bundleIdentifier": "com.yperson.app",
+      "minimumIOS": "15.0",
+      "deviceFamily": [1]
+    },
+    {
+      "name": "YPersonWidget",
+      "type": "widget-extension",
+      "bundleIdentifier": "com.yperson.app.widget",
+      "minimumIOS": "15.0",
+      "deviceFamily": [1]
+    },
+    {
+      "name": "YPersonNotificationService",
+      "type": "notification-service-extension",
+      "bundleIdentifier": "com.yperson.app.notification-service",
+      "minimumIOS": "15.0",
+      "deviceFamily": [1]
+    },
+    {
+      "name": "YPersonNotificationContent",
+      "type": "notification-content-extension",
+      "bundleIdentifier": "com.yperson.app.notification-content",
+      "minimumIOS": "15.0",
+      "deviceFamily": [1]
+    }
+  ],
+  "backend": {
+    "runtime": "Node.js standard library",
+    "endpoints": [
+      "GET /health",
+      "GET /config",
+      "POST /sync"
+    ],
+    "config": {
+      "public": true,
+      "personalDataAccepted": false,
+      "etag": true,
+      "lastKnownGoodClientCache": true,
+      "mayExpandPermissionsOrCollection": false
+    }
+  },
+  "analytics": {
+    "provider": "AppMetrica",
+    "exactVersion": "6.5.0",
+    "resolvedRevision": "bac143d2d8a6d427fd901e27bdccb6fc79d02889",
+    "products": [
+      "AppMetricaCore",
+      "AppMetricaCrashes",
+      "AppMetricaAdSupport"
+    ],
+    "activationRequiresConsentAndValidKey": true,
+    "locationTracking": false,
+    "idfaRequiresATT": true,
+    "remoteKillSwitch": true,
+    "extensionsActivateAnalytics": false
+  },
+  "releasePreparation": {
+    "approvedAtUTC": "2026-08-18T07:13:02Z",
+    "preparedAtUTC": "2026-08-18T07:35:18Z",
+    "archiveValidated": false,
+    "signedArchiveAttempted": false,
+    "externalUploadAuthorized": false,
+    "structuralDeviceReleaseBuild": "passed unsigned for generic iOS device; does not validate an archive",
+    "appStoreScreenshots": {
+      "count": 7,
+      "device": "iPhone 16 Pro Max simulator, iOS 18.5",
+      "dimensions": "1320x2868",
+      "format": "JPEG without alpha"
+    },
+    "reviewerQR": "Release/reviewer-assets/test-qr.png",
+    "artifacts": [
+      "Release/compliance-sources.json",
+      "Release/reconciliation.json",
+      "Release/archive-validation.json",
+      "Release/app-store-privacy.json",
+      "Release/policy-module-audit.json",
+      "Release/app-store-metadata/ru-RU.json",
+      "Release/review-notes.md",
+      "Release/manual-device-checks.md"
+    ]
+  },
+  "verification": {
+    "toolchain": {
+      "xcode": "26.5 (17F42)",
+      "swift": "6.3.2 in Swift 5 language mode",
+      "xcodegen": "2.46.0",
+      "node": "25.4.0"
+    },
+    "debugBuild": "passed with warnings treated as errors",
+    "releaseSimulatorBuild": "passed with warnings treated as errors",
+    "simulator": "iPhone 16 Pro, iOS 18.5",
+    "purposeStringsExact": "9/9 Info.plist strings plus push pre-prompt",
+    "appOwnedPrivacyManifestDataTypes": 12,
+    "backendSmoke": {
+      "health": 200,
+      "config": 200,
+      "configConditional": 304,
+      "sync": 200,
+      "prohibitedPreciseLocation": 400,
+      "unknownRoute": 404,
+      "report": 200,
+      "confirmedExchangeClaim": 200
+    },
+    "releasePreparationBackendSmokeAtUTC": "2026-08-18T07:35:18Z",
+    "finalReleaseVerificationAtUTC": "2026-08-18T07:35:18Z",
+    "genericDeviceReleaseBuild": "passed unsigned with iOS SDK 26.5",
+    "validCodeSigningIdentities": 0,
+    "evidenceDirectory": "Release/evidence"
+  },
+  "releaseBlockers": [
+    "Assign final Apple bundle identifiers, team, App Group, signing certificates, and provisioning profiles.",
+    "Deploy the production HTTPS API and confirm hosting jurisdiction, persistence, authentication, and processor terms.",
+    "Publish final privacy-policy and support/moderation URLs and contacts.",
+    "Provide the production AppMetrica API key and confirm DPA, retention, deletion, package provenance, privacy manifests, and network domains in the archive.",
+    "Configure APNs credentials and a production notification-signing public key, then perform end-to-end remote notification checks.",
+    "Complete physical-device permission, iOS 15, widget, accessibility, QR, and offline-deletion checks from Release/manual-device-checks.md.",
+    "Finalize moderation operations and App Store Connect privacy/ATT/export-compliance/age-rating answers.",
+    "Provide final owner metadata: SKU, copyright holder, review contact, content-rights attestation, categories, and availability.",
+    "Create, inspect, and validate the signed archive after signing and production configuration become available; obtain new approval immediately before any upload or App Store Connect mutation."
+  ]
+}

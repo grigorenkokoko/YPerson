@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "checkedAtUTC": "2026-08-18T07:15:42Z",
+  "status": "implementation-verified-with-release-blockers",
+  "modules": [
+    {
+      "module": "account-deletion",
+      "applicable": true,
+      "localImplementation": "pass",
+      "path": "Настройки → Данные и конфиденциальность → Удалить профиль",
+      "scope": "published card/assets, connections, exchange claims, APNs/auth tokens, and local data; active data immediately, backups within 30 days; restricted closed abuse report up to 180 days",
+      "productionResult": "blocking",
+      "blocker": "Durable production deletion, backup purge, retry idempotency, and disclosed legal exception are not yet evidenced."
+    },
+    {
+      "module": "user-generated-content",
+      "applicable": true,
+      "localImplementation": "partial-pass",
+      "controls": ["structured field limits", "report from received card", "fixed report categories", "immediate local block", "notification block action", "no public feed", "no anonymous/random chat"],
+      "productionResult": "blocking",
+      "blocker": "Publish moderation contact and rules; confirm prohibited-content filtering, operational queue, responder, removal/response SLA, appeals, and 180-day retention execution."
+    },
+    {
+      "module": "third-party-login",
+      "applicable": false,
+      "result": "not-applicable",
+      "reason": "No third-party/social login and no login is required; the cloud profile is installation-scoped."
+    },
+    {
+      "module": "digital-goods-and-subscriptions",
+      "applicable": false,
+      "result": "not-applicable",
+      "reason": "No purchases, subscriptions, donations, paid unlocks, or external payments; sponsored templates are free and remain available after ATT denial."
+    },
+    {
+      "module": "children-and-age-sensitive-content",
+      "applicable": false,
+      "result": "not-kids-category",
+      "reason": "General-audience app with no child-directed positioning or age collection. Final age rating must be generated from truthful UGC, advertising, and social-capability answers."
+    },
+    {
+      "module": "regulated-domain",
+      "applicable": false,
+      "result": "not-applicable",
+      "reason": "No health, financial, gambling, alcohol, legal, or other regulated service or claim."
+    },
+    {
+      "module": "encryption-export-compliance",
+      "applicable": true,
+      "result": "local-pass-external-confirmation-required",
+      "evidence": "URLSession TLS, CryptoKit Curve25519 verification, Security/SecKey, and CommonCrypto used by AppMetrica are Apple platform cryptography; no bundled custom crypto implementation was found.",
+      "infoPlist": {"ITSAppUsesNonExemptEncryption": false},
+      "blocker": "Confirm the final archive dependency inventory and answer the current App Store Connect export-compliance questionnaire."
+    },
+    {
+      "module": "special-hardware-review",
+      "applicable": false,
+      "result": "not-applicable",
+      "reason": "Only standard iPhone capabilities are used; two-device BLE is optional for review because QR and manual-code fallbacks cover the same card-add flow."
+    }
+  ],
+  "overallResult": "blocking-before-release-ready",
+  "sources": "Release/compliance-sources.json"
+}

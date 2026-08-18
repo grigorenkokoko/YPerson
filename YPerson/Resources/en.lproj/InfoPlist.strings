@@ -1,0 +1,9 @@
+"NSBluetoothAlwaysUsageDescription" = "Bluetooth is used to find another nearby iPhone with YPerson exchange open and securely send your selected card.";
+"NSCameraUsageDescription" = "Camera access is used to scan a YPerson card QR code and add the person.";
+"NSContactsUsageDescription" = "Contacts access is used to find duplicates, add YPerson cards, and apply updates you confirm.";
+"NSFaceIDUsageDescription" = "Face ID protects private card fields and confirms sharing them with a selected person.";
+"NSLocationWhenInUseUsageDescription" = "Location is used only when you choose to save where you met a person.";
+"NSMicrophoneUsageDescription" = "Microphone access is used to record a short audio greeting for your YPerson card.";
+"NSPhotoLibraryUsageDescription" = "Photo access is used on your command to find saved card images and import people into YPerson.";
+"NSPhotoLibraryAddUsageDescription" = "Photo add access is used to save an image of your own or a received card.";
+"NSUserTrackingUsageDescription" = "Allow tracking so YPerson can measure ad campaigns that support free sponsored card templates.";

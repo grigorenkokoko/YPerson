@@ -1,0 +1,18 @@
+YPerson accessibility hierarchy
+                        UILabel: Передайте карточку конкретному человеку. Обмен завершается только после подтверждения.
+                          UILabel: Показать мой QR
+                          UILabel: Сканировать QR
+                          UILabel: Рядом по Bluetooth
+                          UILabel: Найти визитки в Фото
+                          UILabel: Ввести короткий код
+                          UILabel: Закрытые поля · Face ID
+                  UILabel: Обмен
+                      UILabel: Обмен
+                UITabBarButtonLabel: Карточка
+            UITabBarButtonLabel: Обмен
+                UITabBarButtonLabel: Люди
+                UITabBarButtonLabel: Настройки
+                UILabel: Сканирование QR
+                UILabel: Камера нужна, чтобы сканировать QR-код визитки YPerson и добавить человека.
+                        UILabel: Продолжить
+                        UILabel: Не сейчас

@@ -1,0 +1,191 @@
+name: YPerson
+options:
+  createIntermediateGroups: true
+  groupSortPosition: top
+  deploymentTarget:
+    iOS: "15.0"
+configs:
+  Debug: debug
+  Release: release
+packages:
+  AppMetrica:
+    url: https://github.com/appmetrica/appmetrica-sdk-ios
+    exactVersion: 6.5.0
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+    SUPPORTS_MACCATALYST: NO
+    SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+    SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""
+    CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED: YES
+    GCC_TREAT_WARNINGS_AS_ERRORS: YES
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+targets:
+  YPerson:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: YPerson
+    configFiles:
+      Debug: Config/Debug.xcconfig
+      Release: Config/Release.xcconfig
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+        PRODUCT_BUNDLE_IDENTIFIER: $(YP_PRODUCT_BUNDLE_IDENTIFIER)
+        PRODUCT_NAME: YPerson
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        OTHER_LDFLAGS: $(inherited) -ObjC
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+      configs:
+        Debug:
+          INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking: YES
+    info:
+      path: YPerson/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: YPerson
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIApplicationSupportsIndirectInputEvents: false
+        NSBluetoothAlwaysUsageDescription: "Bluetooth нужен, чтобы находить поблизости другой iPhone с открытым экраном обмена YPerson и безопасно передавать выбранную визитку."
+        NSCameraUsageDescription: "Камера нужна, чтобы сканировать QR-код визитки YPerson и добавить человека."
+        NSContactsUsageDescription: "Контакты нужны, чтобы находить дубликаты, добавлять визитки YPerson в адресную книгу и обновлять их при изменениях владельца."
+        NSFaceIDUsageDescription: "Face ID защищает закрытые поля вашей визитки и подтверждает их передачу выбранному человеку."
+        NSLocationWhenInUseUsageDescription: "Геопозиция нужна, чтобы по вашему действию сохранить место знакомства рядом с добавленным человеком."
+        NSMicrophoneUsageDescription: "Микрофон нужен, чтобы записать короткое аудиоприветствие для вашей визитки YPerson."
+        NSPhotoLibraryUsageDescription: "Доступ к фото нужен, чтобы по вашей команде находить сохранённые изображения визиток и импортировать людей в YPerson."
+        NSPhotoLibraryAddUsageDescription: "Добавление в Фото нужно, чтобы сохранить изображение вашей или полученной визитки в медиатеку."
+        NSUserTrackingUsageDescription: "Разрешите отслеживание, чтобы YPerson мог оценивать рекламные кампании и поддерживать бесплатные спонсорские шаблоны."
+        ITSAppUsesNonExemptEncryption: false
+        API_BASE_URL: $(API_BASE_URL)
+        PRIVACY_POLICY_URL: $(PRIVACY_POLICY_URL)
+        SUPPORT_URL: $(SUPPORT_URL)
+        APP_GROUP_IDENTIFIER: $(APP_GROUP_IDENTIFIER)
+        APPMETRICA_API_KEY: $(APPMETRICA_API_KEY)
+        CFBundleURLTypes:
+          - CFBundleURLName: com.yperson.app
+            CFBundleURLSchemes:
+              - yperson
+    entitlements:
+      path: YPerson/YPerson.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - $(APP_GROUP_IDENTIFIER)
+        aps-environment: development
+    dependencies:
+      - package: AppMetrica
+        product: AppMetricaCore
+      - package: AppMetrica
+        product: AppMetricaCrashes
+      - package: AppMetrica
+        product: AppMetricaAdSupport
+      - target: YPersonWidget
+        embed: true
+      - target: YPersonNotificationService
+        embed: true
+      - target: YPersonNotificationContent
+        embed: true
+  YPersonWidget:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: YPersonWidget
+    configFiles:
+      Debug: Config/Debug.xcconfig
+      Release: Config/Release.xcconfig
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+        PRODUCT_BUNDLE_IDENTIFIER: $(YP_PRODUCT_BUNDLE_IDENTIFIER).widget
+        PRODUCT_NAME: YPersonWidget
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+    info:
+      path: YPersonWidget/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: YPerson Widget
+        APP_GROUP_IDENTIFIER: $(APP_GROUP_IDENTIFIER)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: YPersonWidget/YPersonWidget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - $(APP_GROUP_IDENTIFIER)
+  YPersonNotificationService:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: YPersonNotificationService
+    configFiles:
+      Debug: Config/Debug.xcconfig
+      Release: Config/Release.xcconfig
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+        PRODUCT_BUNDLE_IDENTIFIER: $(YP_PRODUCT_BUNDLE_IDENTIFIER).notification-service
+        PRODUCT_NAME: YPersonNotificationService
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+    info:
+      path: YPersonNotificationService/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: YPerson Notification Service
+        NOTIFICATION_SIGNING_PUBLIC_KEY: $(NOTIFICATION_SIGNING_PUBLIC_KEY)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+  YPersonNotificationContent:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: YPersonNotificationContent
+    configFiles:
+      Debug: Config/Debug.xcconfig
+      Release: Config/Release.xcconfig
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+        PRODUCT_BUNDLE_IDENTIFIER: $(YP_PRODUCT_BUNDLE_IDENTIFIER).notification-content
+        PRODUCT_NAME: YPersonNotificationContent
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+    info:
+      path: YPersonNotificationContent/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: YPerson Notification
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.content-extension
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationViewController
+          NSExtensionAttributes:
+            UNNotificationExtensionCategory: YPERSON_CARD_UPDATE
+            UNNotificationExtensionDefaultContentHidden: false
+            UNNotificationExtensionInitialContentSizeRatio: 0.45

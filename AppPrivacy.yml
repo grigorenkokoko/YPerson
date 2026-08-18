@@ -1,0 +1,789 @@
+schema_version: 1
+status: implementation-verified
+approval_log:
+  - stage: idea-and-policy
+    decision: approved
+    timestamp_utc: "2026-08-17T21:23:10Z"
+    actor: user
+    authorized_next_stage: design
+    evidence_summary: approved YPerson concept with iOS 15+ compatibility and public GET /config after the idea gate summary
+  - stage: design
+    decision: approved
+    timestamp_utc: "2026-08-17T21:36:51Z"
+    actor: user
+    authorized_next_stage: implementation
+    evidence_summary: approved eight-screen UIKit structure, permission states, visual system, widget, notifications, and app icon after the design gate summary
+  - stage: implementation
+    decision: approved
+    timestamp_utc: "2026-08-18T07:13:02Z"
+    actor: user
+    authorized_next_stage: release-preparation
+    evidence_summary: approved the implementation-verified YPerson build and explicitly authorized preparation of the release package
+
+implementation_verification:
+  timestamp_utc: "2026-08-17T22:17:46Z"
+  result: implementation-verified
+  authorized_next_stage: release-preparation-approved
+  evidence: Release/implementation-verification.md
+  manual_checks: Release/manual-device-checks.md
+  release_manifest: Release/release-manifest.json
+  release_ready: false
+
+release_preparation:
+  approved_at_utc: "2026-08-18T07:13:02Z"
+  prepared_at_utc: "2026-08-18T07:30:51Z"
+  highest_supported_status: implementation-verified
+  archive_validated: false
+  release_ready: false
+  external_upload_authorized: false
+  evidence:
+    - Release/compliance-sources.json
+    - Release/reconciliation.json
+    - Release/archive-validation.json
+    - Release/app-store-privacy.json
+    - Release/policy-module-audit.json
+    - Release/app-store-metadata/ru-RU.json
+    - Release/review-notes.md
+    - Release/reviewer-assets/test-qr.png
+  reason_status_cannot_advance: final Apple identity/signing, production services and keys, live policy/support/moderation, owner metadata, physical-device evidence, and signed archive validation are missing
+
+product:
+  name: YPerson
+  name_expansion: Your Person
+  bundle_identifier: "release-blocker: final bundle identifier not assigned"
+  app_spec: AppSpec.md
+  platform: iPhone-only
+  orientation: portrait-only
+  minimum_ios: "15.0"
+  audience: general-audience
+  app_review_risk: high
+
+permissions:
+  bluetooth:
+    required: true
+    usage_key: NSBluetoothAlwaysUsageDescription
+    feature: mutual nearby exchange of a selected digital card using an ephemeral rotating token
+    trigger: "Обмен → Рядом по Bluetooth → Начать поиск"
+    screen_location: "S2 Обмен"
+    purpose_copy: "Bluetooth нужен, чтобы находить поблизости другой iPhone с открытым экраном обмена YPerson и безопасно передавать выбранную визитку."
+    authorized_behavior: both users confirm before the short-lived exchange token is claimed
+    denial_behavior: QR and manual exchange code remain fully available; no repeated prompt loop
+    reviewer_path: open nearby exchange on two iPhones, start discovery on both, select a public test card, and confirm on both devices; QR is the fallback
+    data_types:
+      - ephemeral_ble_token
+      - exchange_token
+    storage: ephemeral BLE state on device; exchange token on backend for at most 10 minutes
+    transmission: BLE peer and YPerson backend only after confirmation
+    app_store_privacy_implication: exchange token is pseudonymous app-functionality data; no device name or hardware address is retained
+
+  camera:
+    required: true
+    usage_key: NSCameraUsageDescription
+    feature: scan YPerson QR codes and compatible vCards
+    trigger: "Добавить человека → Сканировать QR"
+    screen_location: "S2 Обмен"
+    purpose_copy: "Камера нужна, чтобы сканировать QR-код визитки YPerson и добавить человека."
+    authorized_behavior: frames are processed in memory and the decoded card is shown for confirmation
+    denial_behavior: photo import and manual code remain available; Settings link appears only after another deliberate scanner action
+    reviewer_path: scan the supplied test QR, review the confirmation, and save the card
+    data_types:
+      - camera_frames_local_only
+      - confirmed_exchange_token
+    storage: raw frames are not persisted
+    transmission: only the confirmed token or decoded card is sent to backend
+    app_store_privacy_implication: raw frames are not collected; confirmed card fields map to Contact Info and User Content
+
+  contacts:
+    required: true
+    usage_key: NSContactsUsageDescription
+    feature: whole-address-book duplicate detection and user-confirmed updates for saved YPerson cards
+    trigger: "Люди → Синхронизация с Контактами → Проверить и включить обновления"
+    screen_location: "S3 Люди"
+    purpose_copy: "Контакты нужны, чтобы находить дубликаты, добавлять визитки YPerson в адресную книгу и обновлять их при изменениях владельца."
+    authorized_behavior: normalize locally, show a change plan, and apply only explicitly confirmed add/update actions
+    limited_behavior: on iOS 18+, inspect only selected contacts and offer the system access manager; iOS 15-17 have no limited state; internal YPerson storage remains available on every version
+    denial_behavior: cards remain usable in YPerson and a single card can be exported through the system contact UI
+    reviewer_path: use the supplied duplicate test contacts, run reconciliation, inspect the proposed diff, and approve one update
+    data_types:
+      - system_contacts_local_only
+      - published_yperson_contact_info
+    storage: system address book and match keys remain on device
+    transmission: the system address book is never transmitted; only explicitly published/received YPerson card fields sync
+    app_store_privacy_implication: system Contacts are not collected; published name/email/phone are Contact Info linked to identity for App Functionality
+
+  face_id:
+    required: true
+    usage_key: NSFaceIDUsageDescription
+    feature: protect private card fields and authorize sharing them with a selected recipient
+    trigger: "Моя карточка → Закрытые поля → Открыть либо включить закрытые поля перед обменом"
+    screen_location: "S5 Редактор карточки и S2 Обмен"
+    purpose_copy: "Face ID защищает закрытые поля вашей визитки и подтверждает их передачу выбранному человеку."
+    authorized_behavior: unlock private fields for a short session and permit explicit private-card sharing
+    denial_behavior: device passcode fallback is offered; the public card and exchange remain available
+    reviewer_path: create a private test field, lock the section, test successful and cancelled authentication
+    data_types:
+      - local_authentication_result_local_only
+    storage: no biometric template or result log is stored by YPerson
+    transmission: none
+    app_store_privacy_implication: biometric data is not collected and authentication result is not sent to analytics
+
+  location_when_in_use:
+    required: true
+    usage_key: NSLocationWhenInUseUsageDescription
+    feature: save a local meeting-place label beside a received person
+    trigger: "Карточка человека → Контекст знакомства → Добавить текущее место"
+    screen_location: "S4 Карточка человека"
+    purpose_copy: "Геопозиция нужна, чтобы по вашему действию сохранить место знакомства рядом с добавленным человеком."
+    authorized_behavior: convert the current location to a local human-readable label; approximate authorization stores only area/city
+    denial_behavior: manual place label and skip remain available; no other function is blocked
+    reviewer_path: add a location to the test card and verify approximate and manual alternatives
+    data_types:
+      - precise_location_local_only
+      - meeting_place_label_local_only
+    storage: on device until the note or card is deleted
+    transmission: excluded from card, sync, push, and AppMetrica
+    app_store_privacy_implication: Core Location data is not collected; AppMetrica network-derived coarse country is declared separately
+
+  microphone:
+    required: true
+    usage_key: NSMicrophoneUsageDescription
+    feature: record an optional audio greeting up to 10 seconds for the user's card
+    trigger: "Моя карточка → Аудиоприветствие → Записать"
+    screen_location: "S5 Редактор карточки"
+    purpose_copy: "Микрофон нужен, чтобы записать короткое аудиоприветствие для вашей визитки YPerson."
+    authorized_behavior: allow preview, replace, delete, and explicit public/private publication selection
+    denial_behavior: text tagline remains available and card exchange is not blocked
+    reviewer_path: record, preview, publish, then delete a test greeting and verify recipient sync
+    data_types:
+      - audio_greeting
+    storage: local draft; backend only after explicit publication
+    transmission: backend and confirmed recipients after publication; never AppMetrica
+    app_store_privacy_implication: published greeting is Audio Data linked to identity for App Functionality
+
+  photo_library_read:
+    required: true
+    usage_key: NSPhotoLibraryUsageDescription
+    feature: user-triggered on-device scan of accessible photos for saved QR/vCard/YPerson business cards
+    trigger: "Добавить человека → Найти визитки в Фото → Сканировать доступную медиатеку"
+    screen_location: "S2 Обмен"
+    purpose_copy: "Доступ к фото нужен, чтобы по вашей команде находить сохранённые изображения визиток и импортировать людей в YPerson."
+    authorized_behavior: scan on device, present candidates, and require confirmation for every import
+    limited_behavior: scan only selected photos and offer the system access manager; single-image picker always remains available
+    denial_behavior: camera, QR, manual code, and single-image system picker remain available
+    reviewer_path: add supplied test images, confirm one candidate, reject another, and repeat with limited access
+    data_types:
+      - photo_library_images_local_only
+      - scan_candidates_local_only
+      - confirmed_card_payload
+      - selected_avatar
+    storage: raw library and rejected candidates remain on device; selected avatar/card follows published-card retention
+    transmission: only a confirmed card payload or explicitly selected published avatar
+    app_store_privacy_implication: raw library is not collected; uploaded avatar is Photos or Videos linked to identity for App Functionality
+
+  photo_library_add:
+    required: true
+    usage_key: NSPhotoLibraryAddUsageDescription
+    feature: save a rendered image of the selected own or received card to Photos
+    trigger: "Меню карточки → Сохранить изображение в Фото"
+    screen_location: "S1 Карточка и S4 Карточка человека"
+    purpose_copy: "Добавление в Фото нужно, чтобы сохранить изображение вашей или полученной визитки в медиатеку."
+    authorized_behavior: save only the selected rendered card and show confirmation
+    denial_behavior: system Share Sheet remains available without re-prompting
+    reviewer_path: save a test card image, verify it in Photos, and test Share Sheet fallback
+    data_types:
+      - rendered_card_image_local_only
+    storage: user's photo library
+    transmission: none beyond a user-selected Share Sheet destination
+    app_store_privacy_implication: writing to Photos adds no collected data
+
+  app_tracking_transparency:
+    required: true
+    usage_key: NSUserTrackingUsageDescription
+    feature: AppMetrica advertising attribution for campaigns that support free sponsored card templates
+    trigger: "Моя карточка → Оформление → Спонсорские шаблоны → Помочь оценивать рекламу"
+    screen_location: "S6 Оформление"
+    purpose_copy: "Разрешите отслеживание, чтобы YPerson мог оценивать рекламные кампании и поддерживать бесплатные спонсорские шаблоны."
+    authorized_behavior: AppMetricaAdSupport may use IDFA and partner attribution only to measure campaign effectiveness
+    denial_behavior: no IDFA or cross-company tracking; the same free templates and core app remain available, with SKAdNetwork aggregation only
+    reviewer_path: open sponsored templates, read the pre-prompt, request ATT, and verify both authorized and denied modes
+    data_types:
+      - device_id
+      - advertising_data
+      - sponsored_template_interaction
+    storage: AppMetrica under its DPA and the approved retention contract
+    transmission: AppMetrica tracking domains only when ATT authorizes tracking
+    app_store_privacy_implication: Device ID and Advertising Data are linked and used for tracking when ATT is authorized
+
+  push_notifications:
+    required: true
+    usage_key: null
+    feature: notify about confirmed card updates and completed confirmed exchanges
+    trigger: "Настройки → Обновления визиток → Включить уведомления либо контекстное предложение после первой сохранённой связи"
+    screen_location: "S7 Данные и конфиденциальность"
+    purpose_copy: "Включите уведомления, чтобы узнавать об обновлениях сохранённых визиток и завершении подтверждённого обмена."
+    authorized_behavior: register APNs token and support review/update and block notification actions
+    denial_behavior: updates appear in the in-app sync indicator; Settings is offered only after a deliberate action
+    reviewer_path: enable notifications, publish a test card update, and verify enriched notification plus the in-app fallback
+    data_types:
+      - apns_token
+      - installation_id
+      - notification_event_type
+      - public_display_name
+      - public_avatar_thumbnail
+    storage: backend and Apple APNs until replaced, disabled, or deleted
+    transmission: backend and Apple APNs; no private fields or meeting note in payload
+    app_store_privacy_implication: APNs token and installation ID are Device ID linked to profile for App Functionality
+
+data_inventory:
+  - id: own_card_fields
+    apple_data_types: [name, email_address, phone_number, other_user_contact_info, other_user_content]
+    source: user entry
+    location: [device, yperson_backend, confirmed_recipients]
+    purpose: app_functionality
+    linked_to_identity: true
+    used_for_tracking: false
+    retention: active profile lifetime or 24 months of inactivity; backup deletion within 30 days
+    deletion: delete field, revoke card, or delete profile
+
+  - id: published_avatar
+    apple_data_types: [photos_or_videos]
+    source: camera or user-selected photo
+    location: [device, yperson_backend, confirmed_recipients]
+    purpose: app_functionality
+    linked_to_identity: true
+    used_for_tracking: false
+    retention: same as published card
+    deletion: replace/delete asset or delete profile; backup deletion within 30 days
+
+  - id: published_audio_greeting
+    apple_data_types: [audio_data]
+    source: microphone after explicit action
+    location: [device, yperson_backend, confirmed_recipients]
+    purpose: app_functionality
+    linked_to_identity: true
+    used_for_tracking: false
+    retention: same as published card
+    deletion: delete recording or profile; backup deletion within 30 days
+
+  - id: system_contacts
+    apple_data_types: [contacts]
+    source: iOS Contacts
+    location: [device_only]
+    purpose: duplicate_detection_and_user_confirmed_updates
+    linked_to_identity: local_only
+    used_for_tracking: false
+    retention: until the contact/app is deleted
+    deletion: system Contacts controls and app deletion
+    collected_off_device: false
+
+  - id: raw_photos_camera_and_scan_candidates
+    apple_data_types: [photos_or_videos]
+    source: camera and Photos
+    location: [device_only]
+    purpose: card_recognition
+    linked_to_identity: local_only
+    used_for_tracking: false
+    retention: memory/session only unless user explicitly publishes an asset
+    deletion: automatic after session or user deletion
+    collected_off_device: false
+
+  - id: meeting_location
+    apple_data_types: [precise_location]
+    source: Core Location
+    location: [device_only]
+    purpose: local_meeting_context
+    linked_to_identity: local_only
+    used_for_tracking: false
+    retention: until note/card/app deletion
+    deletion: delete meeting note/card/app
+    collected_off_device: false
+
+  - id: installation_auth_and_push
+    apple_data_types: [user_id, device_id]
+    source: app and APNs
+    location: [device_keychain, yperson_backend, apple_apns]
+    purpose: app_functionality
+    linked_to_identity: true
+    used_for_tracking: false
+    retention: profile lifetime; stale APNs token removed within 30 days
+    deletion: in-app profile deletion; backup deletion within 30 days
+
+  - id: connection_and_exchange_state
+    apple_data_types: [user_id, other_user_content]
+    source: confirmed exchange
+    location: [device, yperson_backend]
+    purpose: app_functionality
+    linked_to_identity: true
+    used_for_tracking: false
+    retention: exchange token 10 minutes; connection until deleted
+    deletion: delete connection/profile; backup deletion within 30 days
+
+  - id: moderation_report
+    apple_data_types: [user_id, other_user_content, customer_support]
+    source: report/block action
+    location: [yperson_backend, moderation_support]
+    purpose: safety_and_app_functionality
+    linked_to_identity: true
+    used_for_tracking: false
+    retention: block until removed; closed report 180 days
+    deletion: anonymize/delete after retention; limited security exception disclosed
+
+  - id: backend_security_logs
+    apple_data_types: [device_id, other_diagnostic_data, coarse_location]
+    source: network request metadata including IP
+    location: [backend_hosting]
+    purpose: security_and_diagnostics
+    linked_to_identity: pseudonymous
+    used_for_tracking: false
+    retention: 7 days
+    deletion: automatic rotation
+
+  - id: appmetrica_analytics
+    apple_data_types: [device_id, product_interaction, purchase_history, advertising_data, crash_data, performance_data, other_diagnostic_data, other_data_types, coarse_location]
+    source: AppMetrica SDK
+    location: [appmetrica_yandex]
+    purpose: [analytics, app_functionality, developer_advertising, third_party_advertising]
+    linked_to_identity: device_id_only_when_applicable
+    used_for_tracking: device_id_and_advertising_data_only_after_att_authorized
+    retention: target maximum 12 months; contractual and technical confirmation is a release blocker
+    deletion: stop future sending on consent withdrawal; documented provider deletion process required before release
+
+third_party_sdks:
+  - name: AppMetrica
+    required: true
+    provider: Yandex
+    version: "6.5.0"
+    version_decision: exact Swift Package pin confirmed against the official AppMetrica platform catalog and Quick Start on 2026-08-18
+    modules:
+      - AppMetricaCore
+      - AppMetricaCrashes
+      - AppMetricaAdSupport
+    excluded_modules:
+      - AppMetricaWebKit
+      - AppMetricaProductFlow
+      - AppMetricaPush
+      - Profiles
+      - Revenue
+      - ECommerce
+    configuration:
+      data_sending_before_analytics_consent: false
+      location_tracking: false
+      accurate_location_tracking: false
+      background_location_updates: false
+      custom_location: null
+      user_profile_id: null
+      revenue_auto_tracking: false
+      sensitive_event_parameters: prohibited
+    collected_data:
+      - device_information
+      - session_information
+      - product_interaction
+      - purchase_history_declared_by_sdk_manifest_but_revenue_and_ecommerce_apis_not_used
+      - crash_data
+      - performance_data
+      - other_diagnostic_data
+      - coarse_country_from_network_metadata
+      - device_id_and_advertising_attribution_only_after_att_authorized
+    custom_events:
+      - launch
+      - card_created
+      - exchange_started_method_enum
+      - card_received_method_enum
+      - contact_saved
+      - card_update_opened
+      - sponsored_template_viewed_anonymous_category
+      - sponsored_template_selected_anonymous_category
+    prohibited_event_data:
+      - names
+      - phones
+      - emails
+      - company_or_role
+      - profile_connection_or_exchange_ids
+      - free_text
+      - audio_or_photo_data
+      - contact_book_data
+      - core_location_data
+      - qr_payloads
+      - apns_tokens
+      - report_text
+    tracking_behavior: AppMetricaAdSupport may use IDFA and attribution only after ATT authorization; otherwise cross-company tracking is disabled
+    privacy_manifest_status: bundled by AppMetrica 5.1.0+; verify resolved 6.x manifest against actual modules and app contract
+    signature_status: verify official signed package during dependency resolution and again in the release archive
+    domains:
+      - tracking.appmetrica.yandex.net
+      - tracking.reserve.appmetrica.yandex.net
+
+  - name: KSCrash
+    required: true
+    provider: KSCrash project, included transitively by AppMetricaCrashes
+    version: "2.5.1"
+    direct_dependency: false
+    included_products:
+      - KSCrashCore
+      - KSCrashRecording
+      - KSCrashRecordingCore
+    collected_data:
+      - device_id_unlinked
+      - crash_data
+      - performance_data
+      - other_diagnostic_data
+    purposes:
+      - app_functionality
+    tracking: false
+    required_reason_apis:
+      - category: FileTimestamp
+        reason: C617.1
+    network_domains: []
+    transmission: crash material is transported by AppMetricaCrashes to AppMetrica/Yandex after analytics consent; KSCrash has no independent recipient or network domain in this integration
+    privacy_manifest_status: KSCrashCore, Recording, and RecordingCore manifests are present in the structural Release product; recheck the signed archive privacy report
+
+tracking:
+  att_required: true
+  pre_prompt_context: user explicitly opens sponsored templates and chooses to help measure advertising
+  behavior_when_authorized: AppMetricaAdSupport may use IDFA to measure advertising attribution for campaigns supporting free sponsored templates
+  behavior_when_denied: no IDFA or cross-company tracking; the same templates, core app, and SKAdNetwork aggregation remain
+  behavior_when_restricted: same as denied
+  cross_company_tracking: only after ATT authorization and only for advertising measurement
+  advertising_identifier_use: IDFA is prohibited before authorization and after denial/restriction
+  tracking_data_types:
+    - device_id
+    - advertising_data
+
+backend:
+  storage_model: compact profile snapshots plus connections, short-lived exchange claims, moderation state, and push token
+  prototype_storage: one JSON file is acceptable
+  endpoints:
+    - method: GET
+      path: /health
+      purpose: service and contract health only
+      personal_data: none
+    - method: GET
+      path: /config
+      purpose: public versioned feature, sponsored-template, support, moderation, compatibility, and analytics kill-switch configuration
+      authentication: none
+      personal_data: none
+      response_fields:
+        - config_version
+        - minimum_supported_contract_version
+        - maintenance_state
+        - feature_availability
+        - sponsored_templates
+        - privacy_policy_url
+        - support_url
+        - moderation_categories
+        - analytics_kill_switch
+      caching: ETag with last-known-good local fallback
+    - method: POST
+      path: /sync
+      purpose: profile/card sync, exchange claims, connection decisions, APNs token, moderation actions, and profile deletion
+      request_fields:
+        - installation_id
+        - auth_token
+        - cursor
+        - config_version
+        - apns_token
+        - own_card_snapshot
+        - exchange_claims
+        - connection_decisions
+        - moderation_actions
+        - delete_profile
+      response_fields:
+        - next_cursor
+        - required_config_version
+        - own_card_version_ack
+        - new_or_updated_confirmed_cards
+        - revoked_cards
+        - expired_claims
+        - moderation_status
+        - notification_configuration
+  config_constraints:
+    - may disable features or analytics but may not enable undisclosed collection
+    - may not change static purpose strings or add permission categories
+    - may not enable IDFA or cross-company tracking before ATT authorization
+    - may not deliver executable code or secrets
+  prohibited_payloads:
+    - system_address_book
+    - raw_photos_or_camera_frames
+    - unconfirmed_scan_candidates
+    - precise_location
+    - local_meeting_notes
+    - biometric_data
+
+extensions:
+  lock_screen_widget:
+    role: show a neutral My Card shortcut and unread update count on the iPhone Lock Screen
+    availability: iOS 16+
+    ios_15_fallback: equivalent systemSmall WidgetKit widget on the Home Screen
+    private_data_on_lock_screen: false
+    activity_kit: false
+  notification_service_extension:
+    role: validate signed card-update ID, fetch a small public avatar over HTTPS, remove technical token from visible payload, and attach the image
+    fallback: deliver original text without attachment
+    appmetrica_activation: false
+  notification_content_extension:
+    role: show public owner identity and changed field categories with review/update and block actions
+    direct_contacts_mutation: false
+
+domains:
+  api: "release-blocker: production HTTPS API URL"
+  privacy_policy: "release-blocker: public privacy policy URL"
+  support: "release-blocker: public support URL and moderation contact"
+  analytics:
+    - tracking.appmetrica.yandex.net
+    - tracking.reserve.appmetrica.yandex.net
+  analytics_domain_note: final resolved AppMetrica network/domain inventory must be captured from the built app and SDK privacy manifest
+
+privacy_policy:
+  in_app_entry_required: true
+  in_app_entry_location: "S7 Данные и конфиденциальность → Политика конфиденциальности"
+  secondary_entry: analytics and ATT pre-prompt
+  public_url: "release-blocker: public privacy policy URL"
+  disclosures:
+    collection:
+      - published card contact fields
+      - explicitly published avatar and audio greeting
+      - installation and APNs identifiers
+      - connection and moderation state
+      - short-lived exchange tokens
+      - backend network/security logs
+      - AppMetrica usage, device, advertising, and diagnostic data
+    local_only:
+      - system address book
+      - raw photo library and camera frames
+      - unconfirmed scan candidates
+      - precise meeting location and note
+      - Face ID biometric information and authentication result
+    purposes:
+      - card exchange and synchronization
+      - user-confirmed Contacts updates
+      - push notifications
+      - safety and moderation
+      - analytics and diagnostics
+      - ATT-dependent advertising attribution for campaigns supporting free sponsored templates
+    recipients:
+      - explicitly confirmed card recipients
+      - YPerson backend and hosting operator
+      - Apple APNs
+      - AppMetrica/Yandex
+      - moderation support staff
+    retention:
+      - profile/card until deletion or 24 months inactivity
+      - exchange token 10 minutes
+      - backend logs 7 days
+      - stale push token and backups at most 30 days
+      - closed moderation report 180 days
+      - AppMetrica target maximum 12 months pending release confirmation
+    deletion:
+      - per-field asset and connection deletion
+      - card publication revocation
+      - in-app profile deletion
+      - backup deletion within 30 days
+      - disclosed limited security/moderation retention exception
+    consent_withdrawal:
+      - iOS Settings for system permissions and ATT
+      - in-app analytics disable switch stops future SDK sending
+      - in-app push disable flow removes backend token
+      - revoke publication or delete profile
+    contact: "release-blocker: responsible entity, privacy contact, and moderation contact"
+
+app_store_privacy:
+  collected_data_types:
+    - name
+    - email_address
+    - phone_number
+    - other_user_contact_info
+    - photos_or_videos
+    - audio_data
+    - other_user_content
+    - user_id
+    - device_id
+    - product_interaction
+    - purchase_history
+    - advertising_data
+    - crash_data
+    - performance_data
+    - other_diagnostic_data
+    - other_data_types
+    - coarse_location
+    - customer_support
+  local_only_not_collected:
+    - system_contacts
+    - raw_photo_library
+    - camera_frames
+    - precise_location
+    - face_id_biometrics
+    - local_meeting_note
+  linked_to_identity:
+    - name
+    - email_address
+    - phone_number
+    - other_user_contact_info
+    - published_photos_or_videos
+    - published_audio_data
+    - other_user_content
+    - user_id
+    - installation_and_apns_device_id
+    - moderation_report
+    - appmetrica_device_id_when_applicable
+  used_for_tracking:
+    - appmetrica_device_id_after_att_authorized
+    - advertising_data_after_att_authorized
+  collection_purposes:
+    - app_functionality
+    - analytics
+    - developer_advertising_or_marketing
+    - third_party_advertising
+
+policy_modules:
+  account_deletion:
+    status: selected
+    reason: installation-scoped cloud profile is created
+    in_app_path: "Настройки → Данные и конфиденциальность → Удалить профиль"
+    scope: published card/assets, connections, exchange claims, APNs/auth tokens, and local data
+    timing: active storage immediately; backups within 30 days
+    exception: closed abuse/security report may remain restricted for up to 180 days
+    ui_evidence: "S7 Данные и конфиденциальность → Удалить профиль → подтверждение полного scope и сроков"
+  third_party_login:
+    status: not-applicable
+    reason: no third-party, social, or Apple login and no login is required
+  digital_goods_and_subscriptions:
+    status: not-applicable
+    reason: no paid unlocks, subscriptions, donations, or external payments; sponsored templates are free
+  user_generated_content:
+    status: selected
+    reason: users exchange structured card text, avatar, and audio greeting
+    controls:
+      - structured field length limits and prohibited-content filtering before publish
+      - report from received card and notification content
+      - block immediately stops future updates and hides content
+      - published support contact
+      - moderation response SLA required before release
+    public_feed: false
+    anonymous_random_exchange: false
+    ui_evidence: "S4 Карточка человека → меню ••• → Пожаловаться, Заблокировать или Удалить связь; review/block actions also appear in Notification Content Extension"
+  children_or_age_sensitive_content:
+    status: not-applicable
+    reason: general-audience app, not Kids Category, no age-sensitive feature or age collection
+  regulated_domain:
+    status: not-applicable
+    reason: no health, financial, gambling, alcohol, or other regulated service or claim
+  encryption_export_compliance:
+    status: not-applicable
+    reason: standard TLS, Keychain, and Apple platform cryptography only; no custom encryption beyond platform baseline
+    release_check: current export-compliance answer must be verified at release
+  special_hardware_review:
+    status: not-applicable
+    reason: standard second iPhone only; QR and manual test code provide full reviewer fallback
+
+feasibility_gate:
+  lasting_utility:
+    status: pass
+    evidence: updateable cards, persistent confirmed connections, and Contacts reconciliation provide recurring value
+  capability_coherence:
+    status: pass
+    evidence: all ten authorizations serve card creation, protected exchange, import, saving, or ongoing updates; ATT is tied to sponsored card templates
+  data_minimization:
+    status: pass_with_high_residual_risk
+    evidence: full Contacts supports whole-book dedup/update and full Photos supports explicit on-device library scan; source data never leaves device and picker alternatives remain
+  consent_integrity:
+    status: pass
+    evidence: every prompt follows a specific user action; denial preserves a functional alternative and ATT denial preserves the core app
+  extension_value:
+    status: pass
+    evidence: iOS 16+ Lock Screen widget with iOS 15 Home Screen fallback, safe notification enrichment, and review/block content actions expose real product behavior
+  backend_value:
+    status: pass
+    evidence: sync provides updateable cards, confirmed connection claims, moderation, and push token handling
+  privacy_consistency:
+    status: pass_subject_to_release_blockers
+    evidence: local-only, backend, APNs, and AppMetrica datasets and deletion rules are separated consistently
+  review_access:
+    status: pass
+    evidence: deterministic sample cards, QR codes, photos, contacts, two-iPhone BLE steps, an iOS 16+ Lock Screen widget review path, and QR/manual fallbacks are defined
+  conditional_policy_coverage:
+    status: pass
+    evidence: account deletion and UGC are selected with paths; all remaining modules are explicitly not-applicable
+  overall_status: pass
+  blocking_conflicts: []
+  residual_review_risk: high
+  most_questionable_permissions:
+    - full Contacts
+    - full Photo Library read
+    - App Tracking Transparency
+    - Bluetooth and microphone in a business-card app
+  smallest_risk_reduction_if_brief_can_change:
+    - replace whole-library card discovery and whole-address-book reconciliation with system pickers
+    - remove AppMetricaAdSupport, ATT, and sponsored-template advertising attribution
+
+current_documentation_checks:
+  - title: Apple App Review Guidelines
+    url: https://developer.apple.com/app-store/review/guidelines/
+    checked_on: "2026-08-17"
+    decisions:
+      - implement UGC filtering, report, block, and published support contact
+      - preserve lasting utility beyond API demonstrations
+      - provide accessible privacy policy, clear purpose strings, data minimization, alternatives, and in-app account deletion
+  - title: Apple App Privacy Details
+    url: https://developer.apple.com/app-store/app-privacy-details/
+    checked_on: "2026-08-17"
+    decisions:
+      - disclose first-party and third-party off-device collection
+      - exclude truly on-device-only Contacts, media, Face ID, and precise location from collected-data answers
+      - declare linkage, purposes, and ATT-dependent tracking conservatively
+  - title: Apple App Tracking Transparency
+    url: https://developer.apple.com/documentation/apptrackingtransparency
+    checked_on: "2026-08-17"
+    decisions:
+      - prohibit IDFA and cross-company tracking until ATT authorization
+      - preserve full core utility after denial or restriction
+  - title: Apple Bring widgets to new places
+    url: https://developer.apple.com/videos/play/wwdc2023/10027/
+    checked_on: "2026-08-18"
+    decisions:
+      - set the main app minimum deployment target to iOS 15.0
+      - provide a Home Screen systemSmall widget on iOS 15 and the required Lock Screen accessory widget on iOS 16+
+  - title: Apple ContactsUI updates
+    url: https://developer.apple.com/documentation/updates/contactsui?changes=_1_9
+    checked_on: "2026-08-18"
+    decisions:
+      - handle limited Contacts access only on iOS 18+
+      - preserve authorized, denied, restricted, and single-contact fallback behavior on iOS 15-17
+  - title: AppMetrica iOS Quick Start
+    url: https://appmetrica.yandex.com/docs/en/sdk/ios/analytics/quick-start
+    checked_on: "2026-08-18"
+    decisions:
+      - exact SDK version 6.5.0 from the official platform catalog
+      - include Core, Crashes, and AdSupport only
+  - title: AppMetrica App Store privacy guidance
+    url: https://appmetrica.yandex.com/docs/en/data-security/app-privacy-apple
+    checked_on: "2026-08-17"
+    decisions:
+      - declare SDK privacy manifest and tracking domains
+      - disable AppMetrica location and user profile collection
+      - treat Device ID as linked/tracking when ATT authorizes AdSupport
+  - title: AppMetrica Terms and DPA
+    url: https://yandex.com/legal/metrica_termsofuse/en/
+    checked_on: "2026-08-17"
+    decisions:
+      - identify AppMetrica/Yandex as processor/recipient
+      - require contractual retention and deletion confirmation before release
+
+release_blockers:
+  - id: final_apple_identity
+    description: assign final bundle identifier, Apple Developer Team, App Group, signing, and provisioning
+  - id: production_api
+    description: provide reachable HTTPS API URL, hosting jurisdiction, and processor agreement
+  - id: privacy_and_support_urls
+    description: publish privacy policy, support URL, responsible privacy contact, and moderation contact
+  - id: appmetrica_project
+    description: provide production AppMetrica API key/project without committing secrets and execute the applicable DPA
+  - id: appmetrica_retention
+    description: confirm a maximum 12-month analytics retention and an end-user deletion/withdrawal process, or revise the disclosed policy before release
+  - id: appmetrica_version_integrity
+    description: verify the resolved AppMetrica 6.5.0 package signature, privacy manifest, and actual domains again in the Release archive
+  - id: apns_production
+    description: configure production APNs credentials and verify end-to-end push without storing secrets in the repository
+  - id: moderation_operations
+    description: approve report categories, filtering rules, published contact, and response SLA
+  - id: app_store_answers
+    description: derive and verify current App Store privacy, age rating, export compliance, and reviewer-contact answers at release

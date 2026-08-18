@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "checkedAtUTC": "2026-08-18T07:35:18Z",
+  "sourceStatus": "implementation-verified",
+  "approvedNextStage": "release-preparation",
+  "matched": [
+    {"area": "platform", "result": "match", "evidence": ["project.yml", "Release/release-manifest.json"], "detail": "All four targets are iPhone-only, portrait-only where applicable, and minimum iOS 15.0."},
+    {"area": "permissions", "result": "match", "evidence": ["AppPrivacy.yml", "project.yml", "YPerson/Permissions/PermissionCenter.swift"], "detail": "All ten approved authorization categories and denial fallbacks remain represented."},
+    {"area": "backend-contract", "result": "match", "evidence": ["backend/server.mjs", "YPerson/Networking/APIClient.swift"], "detail": "GET /health, public GET /config with ETag/304, and POST /sync are implemented; /config accepts no PII and cannot expand permissions or tracking."},
+    {"area": "extensions", "result": "match", "evidence": ["YPersonWidget", "YPersonNotificationService", "YPersonNotificationContent"], "detail": "Widget and both notification extensions are embedded product targets with no AppMetrica activation."},
+    {"area": "account-deletion", "result": "match-locally", "evidence": ["YPerson/UI/PrivacyViewController.swift", "backend/server.mjs"], "detail": "In-app full-profile deletion UI and backend operation exist; production persistence and backup purge remain external blockers."},
+    {"area": "ugc-safety", "result": "partial", "evidence": ["YPerson/UI/PersonViewController.swift", "backend/server.mjs"], "detail": "Report and block flows exist; production filtering, public moderation contact, and response operations remain blocked."},
+    {"area": "analytics", "result": "match-locally", "evidence": ["YPerson/Analytics/AppMetricaAnalyticsClient.swift", "AppPrivacy.yml"], "detail": "AppMetrica 6.5.0 Core/Crashes/AdSupport are exact-pinned and gated by consent, valid key, kill switch, and ATT for IDFA."},
+    {"area": "app-store-screenshots", "result": "match", "evidence": ["Release/app-store-metadata/screenshots/README.md", "Release/app-store-metadata/screenshots/01-card.jpg"], "detail": "Seven implemented-app screenshots use fictional data, accepted 1320x2868 portrait dimensions, JPEG encoding, and no alpha channel."}
+  ],
+  "driftResolvedDuringReleasePreparation": [
+    {"area": "export-compliance-plist", "resolution": "Added ITSAppUsesNonExemptEncryption=false after confirming only TLS, CryptoKit/Security/CommonCrypto platform APIs are used; final dependency questionnaire still requires confirmation.", "evidence": ["project.yml"]},
+    {"area": "appmetrica-purchase-history", "resolution": "Added purchase_history to the conservative disclosure source because AppMetricaCore 6.5.0 declares it, while noting YPerson does not use Revenue or ECommerce APIs.", "evidence": ["AppPrivacy.yml", "DerivedData/SourcePackages/checkouts/appmetrica-sdk-ios/AppMetricaCore/Sources/Resources/PrivacyInfo.xcprivacy"]}
+  ],
+  "blockers": [
+    {"id": "apple-identity-signing", "owner": "developer-account", "severity": "blocking", "fact": "Bundle IDs and App Group are provisional, DEVELOPMENT_TEAM is empty, and zero valid code-signing identities are visible.", "requiredEvidence": "Registered explicit App IDs and App Group, Apple Team ID, distribution certificate/profile or working automatic signing, and a successfully validated signed archive."},
+    {"id": "production-api", "owner": "backend-operations", "severity": "blocking", "fact": "Release API_BASE_URL is api.example.invalid.", "requiredEvidence": "Reachable production HTTPS /health, /config, and /sync plus hosting region, durable storage, backup/deletion behavior, authentication, and processor agreement."},
+    {"id": "public-policy-support", "owner": "privacy-legal", "severity": "blocking", "fact": "Privacy and support URLs use example.invalid and responsible contacts are missing.", "requiredEvidence": "Public live policy/support pages naming the responsible entity, privacy contact, support contact, and moderation contact."},
+    {"id": "appmetrica-production", "owner": "privacy-legal", "severity": "blocking", "fact": "Production AppMetrica API key/project, applicable DPA, retention, deletion workflow, and provider configuration are not confirmed.", "requiredEvidence": "Secret supplied outside version control; project settings, applicable terms/DPA, maximum retention, deletion/withdrawal operations, and final archive privacy report reviewed."},
+    {"id": "apns-production", "owner": "release-engineering", "severity": "blocking", "fact": "Production APNs credentials and notification signing public key are absent; current entitlement is development.", "requiredEvidence": "Production provisioning/APNs configuration, public verification key, signed payload flow, and successful device delivery/content/service-extension fallback evidence."},
+    {"id": "moderation-operations", "owner": "backend-operations", "severity": "blocking", "fact": "Prototype categories/report/block exist, but content filtering policy, published contact, queue, retention execution, and response SLA are not operationally confirmed.", "requiredEvidence": "Approved rules/categories, working queue and contact, named responder, response/removal SLA, and production report test."},
+    {"id": "review-metadata-owner-fields", "owner": "user", "severity": "blocking", "fact": "Copyright owner, SKU, review contact, content-rights attestation, final categories, availability, and generated age rating are not supplied/confirmed.", "requiredEvidence": "Final owner-provided App Store Connect values and truthful questionnaire result."},
+    {"id": "physical-device-matrix", "owner": "release-engineering", "severity": "blocking", "fact": "Simulator evidence cannot verify BLE, APNs, real permission prompts, iOS 15 behavior, Face ID/passcode, Contacts/Photos, microphone, or archive installation.", "requiredEvidence": "Completed Release/manual-device-checks.md on required physical devices and supported OS versions."}
+  ],
+  "highestSupportedStatus": "implementation-verified"
+}

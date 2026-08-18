@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>API_BASE_URL</key>
+	<string>$(API_BASE_URL)</string>
+	<key>APPMETRICA_API_KEY</key>
+	<string>$(APPMETRICA_API_KEY)</string>
+	<key>APP_GROUP_IDENTIFIER</key>
+	<string>$(APP_GROUP_IDENTIFIER)</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>YPerson</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.yperson.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>yperson</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Bluetooth нужен, чтобы находить поблизости другой iPhone с открытым экраном обмена YPerson и безопасно передавать выбранную визитку.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Камера нужна, чтобы сканировать QR-код визитки YPerson и добавить человека.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Контакты нужны, чтобы находить дубликаты, добавлять визитки YPerson в адресную книгу и обновлять их при изменениях владельца.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Face ID защищает закрытые поля вашей визитки и подтверждает их передачу выбранному человеку.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Геопозиция нужна, чтобы по вашему действию сохранить место знакомства рядом с добавленным человеком.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Микрофон нужен, чтобы записать короткое аудиоприветствие для вашей визитки YPerson.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Добавление в Фото нужно, чтобы сохранить изображение вашей или полученной визитки в медиатеку.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Доступ к фото нужен, чтобы по вашей команде находить сохранённые изображения визиток и импортировать людей в YPerson.</string>
+	<key>NSUserTrackingUsageDescription</key>
+	<string>Разрешите отслеживание, чтобы YPerson мог оценивать рекламные кампании и поддерживать бесплатные спонсорские шаблоны.</string>
+	<key>PRIVACY_POLICY_URL</key>
+	<string>$(PRIVACY_POLICY_URL)</string>
+	<key>SUPPORT_URL</key>
+	<string>$(SUPPORT_URL)</string>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<false/>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIRequiresFullScreen</key>
+	<true/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+</dict>
+</plist>

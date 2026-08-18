@@ -1,0 +1,6 @@
+YP_PRODUCT_BUNDLE_IDENTIFIER = com.yperson.app
+APP_GROUP_IDENTIFIER = group.com.yperson.app
+APPMETRICA_API_KEY =
+PRIVACY_POLICY_URL = https:/$()/example.invalid/yperson/privacy
+SUPPORT_URL = https:/$()/example.invalid/yperson/support
+NOTIFICATION_SIGNING_PUBLIC_KEY =

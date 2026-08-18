@@ -1,0 +1,195 @@
+{
+  "schemaVersion": 1,
+  "checkedAtUTC": "2026-08-18T07:13:02Z",
+  "scope": "YPerson release preparation; current primary Apple and AppMetrica sources only",
+  "sources": [
+    {
+      "authority": "Apple",
+      "title": "App Review Guidelines",
+      "url": "https://developer.apple.com/app-store/review/guidelines/",
+      "checkedOn": "2026-08-18",
+      "decisions": [
+        "Keep metadata, URLs, backend, reviewer access, and review notes complete and accurate.",
+        "Treat YPerson cards and audio as user-generated content requiring filtering, reporting, blocking, a public contact, and timely moderation responses.",
+        "Use fictional people in screenshots and answer age-rating questions honestly."
+      ],
+      "affectedArtifacts": ["Release/reconciliation.json", "Release/policy-module-audit.json", "Release/review-notes.md", "Release/app-store-metadata/ru-RU.json"]
+    },
+    {
+      "authority": "Apple",
+      "title": "App Review",
+      "url": "https://developer.apple.com/app-store/review/",
+      "checkedOn": "2026-08-18",
+      "decisions": ["Broken support/privacy links, placeholder content, incomplete submissions, and inaccessible backends remain release blockers."],
+      "affectedArtifacts": ["Release/reconciliation.json", "Release/release-manifest.json"]
+    },
+    {
+      "authority": "Apple",
+      "title": "SDK minimum requirements for App Store submissions",
+      "url": "https://developer.apple.com/news/?id=ueeok6yw",
+      "checkedOn": "2026-08-18",
+      "decisions": ["From April 28, 2026, iOS uploads must use the iOS 26 SDK or later; installed Xcode 26.5 provides iOS SDK 26.5."],
+      "affectedArtifacts": ["Release/archive-validation.json"]
+    },
+    {
+      "authority": "Apple",
+      "title": "Upload builds",
+      "url": "https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds",
+      "checkedOn": "2026-08-18",
+      "decisions": ["A build upload must use registered bundle identifiers and unique version/build metadata; no upload is authorized in this stage."],
+      "affectedArtifacts": ["Release/archive-validation.json", "Release/release-manifest.json"]
+    },
+    {
+      "authority": "Apple",
+      "title": "Distributing your app for beta testing and releases",
+      "url": "https://developer.apple.com/documentation/xcode/distributing-your-app-for-beta-testing-and-releases",
+      "checkedOn": "2026-08-18",
+      "decisions": ["Archive validation requires a real signed generic-device archive and Xcode Validate App; simulator or unsigned compilation cannot advance status."],
+      "affectedArtifacts": ["Release/archive-validation.json", "Release/release-manifest.json"]
+    },
+    {
+      "authority": "Apple",
+      "title": "Create an App Store provisioning profile",
+      "url": "https://developer.apple.com/help/account/provisioning-profiles/create-an-app-store-provisioning-profile/",
+      "checkedOn": "2026-08-18",
+      "decisions": ["Final explicit App IDs, distribution signing, entitlements, and profiles are required before archive validation."],
+      "affectedArtifacts": ["Release/reconciliation.json", "Release/archive-validation.json"]
+    },
+    {
+      "authority": "Apple",
+      "title": "Configuring App Groups",
+      "url": "https://developer.apple.com/documentation/xcode/configuring-app-groups",
+      "checkedOn": "2026-08-18",
+      "decisions": ["The registered App Group must match the main app and widget provisioning entitlements."],
+      "affectedArtifacts": ["Release/reconciliation.json", "Release/archive-validation.json"]
+    },
+    {
+      "authority": "Apple",
+      "title": "Privacy manifest files",
+      "url": "https://developer.apple.com/documentation/bundleresources/privacy-manifest-files",
+      "checkedOn": "2026-08-18",
+      "decisions": ["Inspect each target and included SDK manifest, tracking domains, collected data, and required-reason APIs in the signed archive."],
+      "affectedArtifacts": ["Release/app-store-privacy.json", "Release/archive-validation.json"]
+    },
+    {
+      "authority": "Apple",
+      "title": "Adding a privacy manifest to your app or third-party SDK",
+      "url": "https://developer.apple.com/documentation/bundleresources/adding-a-privacy-manifest-to-your-app-or-third-party-sdk",
+      "checkedOn": "2026-08-18",
+      "decisions": ["Invalid manifests can block submission; generate and inspect Xcode's privacy report from the final archive."],
+      "affectedArtifacts": ["Release/app-store-privacy.json", "Release/archive-validation.json"]
+    },
+    {
+      "authority": "Apple",
+      "title": "Describing use of required reason API",
+      "url": "https://developer.apple.com/documentation/bundleresources/describing-use-of-required-reason-api",
+      "checkedOn": "2026-08-18",
+      "decisions": ["Validate UserDefaults CA92.1 and AppMetrica FileTimestamp C617.1 declarations in their owning bundles."],
+      "affectedArtifacts": ["Release/app-store-privacy.json", "Release/archive-validation.json"]
+    },
+    {
+      "authority": "Apple",
+      "title": "Third-party SDK requirements",
+      "url": "https://developer.apple.com/support/third-party-SDK-requirements/",
+      "checkedOn": "2026-08-18",
+      "decisions": ["Use Xcode dependency validation and inspect privacy manifests/signature continuity for all embedded third-party code in the final archive."],
+      "affectedArtifacts": ["Release/archive-validation.json", "Release/app-store-privacy.json"]
+    },
+    {
+      "authority": "Apple",
+      "title": "Manage app privacy",
+      "url": "https://developer.apple.com/help/app-store-connect/manage-app-information/manage-app-privacy",
+      "checkedOn": "2026-08-18",
+      "decisions": ["A public privacy-policy URL and disclosures covering first- and third-party collection are mandatory."],
+      "affectedArtifacts": ["Release/app-store-privacy.json", "Release/reconciliation.json"]
+    },
+    {
+      "authority": "Apple",
+      "title": "App privacy details",
+      "url": "https://developer.apple.com/app-store/app-privacy-details/",
+      "checkedOn": "2026-08-18",
+      "decisions": ["Exclude truly device-only data; conservatively map off-device collection, purpose, linkage, and ATT-dependent tracking for YPerson and AppMetrica."],
+      "affectedArtifacts": ["Release/app-store-privacy.json"]
+    },
+    {
+      "authority": "Apple",
+      "title": "Offering account deletion in your app",
+      "url": "https://developer.apple.com/support/offering-account-deletion-in-your-app",
+      "checkedOn": "2026-08-18",
+      "decisions": ["The installation-scoped cloud profile requires an in-app full account deletion flow covering associated user-generated content."],
+      "affectedArtifacts": ["Release/policy-module-audit.json", "Release/review-notes.md"]
+    },
+    {
+      "authority": "Apple",
+      "title": "Screenshot specifications",
+      "url": "https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications",
+      "checkedOn": "2026-08-18",
+      "decisions": ["Provide 1-10 PNG/JPEG screenshots without alpha; current 6.9-inch portrait sizes include 1260x2736, 1290x2796, and 1320x2868."],
+      "affectedArtifacts": ["Release/app-store-metadata/screenshots/README.md"]
+    },
+    {
+      "authority": "Apple",
+      "title": "Platform version information",
+      "url": "https://developer.apple.com/help/app-store-connect/reference/app-information/platform-version-information",
+      "checkedOn": "2026-08-18",
+      "decisions": ["Respect current limits for description, promotional text, keywords, support URL, review contact, and review notes."],
+      "affectedArtifacts": ["Release/app-store-metadata/ru-RU.json", "Release/review-notes.md"]
+    },
+    {
+      "authority": "Apple",
+      "title": "Age rating values and definitions",
+      "url": "https://developer.apple.com/help/app-store-connect/reference/app-information/age-ratings-values-and-definitions",
+      "checkedOn": "2026-08-18",
+      "decisions": ["Answer current user-generated-content, advertising, and social-capability questions truthfully; record the generated rating only after App Store Connect calculates it."],
+      "affectedArtifacts": ["Release/app-store-metadata/ru-RU.json", "Release/policy-module-audit.json"]
+    },
+    {
+      "authority": "Apple",
+      "title": "Export compliance documentation for encryption",
+      "url": "https://developer.apple.com/help/app-store-connect/reference/export-compliance-documentation-for-encryption/",
+      "checkedOn": "2026-08-18",
+      "decisions": ["YPerson uses TLS and Apple platform cryptography; set ITSAppUsesNonExemptEncryption to false, subject to confirming the final dependency inventory and App Store Connect questionnaire."],
+      "affectedArtifacts": ["project.yml", "Release/policy-module-audit.json", "Release/archive-validation.json"]
+    },
+    {
+      "authority": "AppMetrica",
+      "title": "iOS Quick Start",
+      "url": "https://appmetrica.yandex.com/docs/en/sdk/ios/analytics/quick-start",
+      "checkedOn": "2026-08-18",
+      "decisions": ["Keep exact SDK 6.5.0 and only Core, Crashes, and AdSupport products."],
+      "affectedArtifacts": ["Release/app-store-privacy.json", "Release/archive-validation.json"]
+    },
+    {
+      "authority": "AppMetrica",
+      "title": "App privacy in Apple services",
+      "url": "https://appmetrica.yandex.com/docs/en/data-security/app-privacy-apple",
+      "checkedOn": "2026-08-18",
+      "decisions": ["Account for SDK privacy manifests, UserDefaults CA92.1, FileTimestamp C617.1, and AdSupport tracking domains; keep IDFA use behind ATT."],
+      "affectedArtifacts": ["Release/app-store-privacy.json", "Release/archive-validation.json"]
+    },
+    {
+      "authority": "AppMetrica",
+      "title": "iOS SDK changelog",
+      "url": "https://appmetrica.yandex.com/docs/en/sdk/ios/changelog-ios",
+      "checkedOn": "2026-08-18",
+      "decisions": ["Version 6.5.0 supports privacy manifests and disabling data sending; verify the exact resolved revision again in the final archive."],
+      "affectedArtifacts": ["Release/app-store-privacy.json", "Release/archive-validation.json"]
+    },
+    {
+      "authority": "Yandex",
+      "title": "AppMetrica Terms of Use",
+      "url": "https://yandex.com/legal/metrica_termsofuse/en/",
+      "checkedOn": "2026-08-18",
+      "decisions": ["Production operator must confirm applicable consent, controller, credential-security, retention, and deletion obligations before release."],
+      "affectedArtifacts": ["Release/reconciliation.json", "Release/app-store-privacy.json"]
+    },
+    {
+      "authority": "Yandex",
+      "title": "AppMetrica Data Processing Agreement",
+      "url": "https://yandex.com/legal/metrica_agreement/en/",
+      "checkedOn": "2026-08-18",
+      "decisions": ["Do not invent entity or territorial applicability; production privacy/legal owner must confirm the applicable DPA."],
+      "affectedArtifacts": ["Release/reconciliation.json", "Release/app-store-privacy.json"]
+    }
+  ]
+}

@@ -1,0 +1,1029 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		052F7348711D22B1253A7A1E /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 6D22DD8D5C703D5A0EB4117E /* InfoPlist.strings */; };
+		13CCCAFA15AD9B93B570C5A2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F5EFCA26B0528FD85942ED0E /* PrivacyInfo.xcprivacy */; };
+		1616764F166B74ACAEAB5862 /* AppMetricaAnalyticsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A82460406C63E9A3C7FA221 /* AppMetricaAnalyticsClient.swift */; };
+		245F6C0FB5C326CC2DEB3B73 /* PersonViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAC46C8858C0D992879AF1C4 /* PersonViewController.swift */; };
+		30D248296C4E2B2438218310 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010FD9E77B5F99A011428182 /* AppDelegate.swift */; };
+		33F0F5281B41F42F0A562F9B /* AppMetricaCore in Frameworks */ = {isa = PBXBuildFile; productRef = 3A96293805F4AC31A97C6F0F /* AppMetricaCore */; };
+		41A7BFE6BA842AA9211E4B36 /* AppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB1404B21FE58EB813AF60A /* AppConfiguration.swift */; };
+		48B8935AECD4A25733526E34 /* QRCodeScannerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD1799F52DDF1E713B76582 /* QRCodeScannerViewController.swift */; };
+		52717EBD27E93DC80BA5D866 /* YPersonWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0713886AFFF02F8B18A0E405 /* YPersonWidget.swift */; };
+		56307796A09DEA57FBCDE1C7 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 1E7F0A5C4BE5C51180C7B46D /* PrivacyInfo.xcprivacy */; };
+		62E75CC79906A07A1ECF6537 /* YPersonNotificationContent.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 26B16DC13ECBE2DC6B708901 /* YPersonNotificationContent.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		6633BEE8A465A05C91D7C507 /* CardImageSaver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F5BA513D189A26885B9C8C8 /* CardImageSaver.swift */; };
+		7003A8F439D23CDAE3BA20D9 /* AppGroupSnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D4EC9F123380A9A82AAC30E /* AppGroupSnapshotStore.swift */; };
+		75033FFC1C035C8D77463E91 /* PeopleViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3337EAFEF3B0198BB5BA9D44 /* PeopleViewController.swift */; };
+		825E97AB9DE3077A7A1FB3B3 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6506B9BE77BAB21F35300A5A /* APIClient.swift */; };
+		8BA7E80D97F1A2A25B7864E9 /* YPersonWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 85FF1494661E949011B6F874 /* YPersonWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		8DAEE38A487807265E664A0A /* PhotoCardScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D51EBF735785D82AF276EA87 /* PhotoCardScanner.swift */; };
+		9E469F546766DFDAB04A4660 /* AppFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95235915DA13A07330BC207D /* AppFactory.swift */; };
+		A0A6331485D058047FAC74D2 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38A55AA34CCEEB53EC48D024 /* NotificationService.swift */; };
+		A0FC157A713AA27C3B7E8D9D /* NearbyExchangeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D938FC5C6EE5391F7920B405 /* NearbyExchangeController.swift */; };
+		B20D697B2111A0880896340F /* CardEditorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CDBA4E3382BD6229B260BBB /* CardEditorViewController.swift */; };
+		B30EF3E75B860EFE6064BC68 /* AppearanceViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C86F699B3F01C82FEE91E99 /* AppearanceViewController.swift */; };
+		B54A900AEB613F80AE957785 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 8DBF242EE59E958AF301277F /* PrivacyInfo.xcprivacy */; };
+		B693AA8921AC2A6EB7B328D8 /* AudioGreetingController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E01C3165DEB1E0F164958CE /* AudioGreetingController.swift */; };
+		BCF5B3D11955856E41BD532E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 982CA5FB80AC4B6B03E1D4C2 /* PrivacyInfo.xcprivacy */; };
+		C02851E90F20E280723EB095 /* AppMetricaAdSupport in Frameworks */ = {isa = PBXBuildFile; productRef = E5C0346077E98EC229CFD87F /* AppMetricaAdSupport */; };
+		C0748217A794E891A06A7CCC /* YPersonNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5F679A09D3A27784F01799C3 /* YPersonNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		C1147F7D0E3CC883DB19DAB6 /* MainTabBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B05DF4272FF693CA8C7E28F4 /* MainTabBarController.swift */; };
+		C7F0484158BF86CE1B2D6328 /* NotificationViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A13996E6F0278470DBD08AA /* NotificationViewController.swift */; };
+		D1A9937B73944A0E814FA5EB /* AppMetricaCrashes in Frameworks */ = {isa = PBXBuildFile; productRef = ADEE88F4EC0C36A4E9868199 /* AppMetricaCrashes */; };
+		D91A4ED9BE788718888C6405 /* YPStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28094E2B2A847979C3FC21FB /* YPStyle.swift */; };
+		DCAB22468D62AE11C281CFE1 /* PrivacyViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 301DC0A1CD1DC7CEAA7DA940 /* PrivacyViewController.swift */; };
+		DCAE8E00CC6FEF2E6744D77C /* PermissionCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AAC508E043FF6F8B0B457A5 /* PermissionCenter.swift */; };
+		E0007B3B0432DF5036E2720E /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11D3A37C6321DE925FB87955 /* Models.swift */; };
+		E5F6880399DC6E3FE9AC0671 /* CardViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E4D3824E61DD322CFCA7D61 /* CardViewController.swift */; };
+		EE076FB1C42375DADCAD282A /* ExchangeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3E533DAB9E006DADF68EA10 /* ExchangeViewController.swift */; };
+		F25CFF2C916D6A78065CF02C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4742F7034AB58645F7946864 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		3798091BB56B75E14236B47F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B828E836D2EFFE2A1B8AB563 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 674F7087931BFA269DEEED74;
+			remoteInfo = YPersonNotificationContent;
+		};
+		91FB9F5D23F0712FE6E300E4 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B828E836D2EFFE2A1B8AB563 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EDB3B652154CEFB99E54BBD1;
+			remoteInfo = YPersonNotificationService;
+		};
+		98F19422068B4F727097366F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B828E836D2EFFE2A1B8AB563 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 17C62CA828B0153971CC509E;
+			remoteInfo = YPersonWidget;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A9B497F38367AB44A8BA38E6 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				8BA7E80D97F1A2A25B7864E9 /* YPersonWidget.appex in Embed Foundation Extensions */,
+				C0748217A794E891A06A7CCC /* YPersonNotificationService.appex in Embed Foundation Extensions */,
+				62E75CC79906A07A1ECF6537 /* YPersonNotificationContent.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		010FD9E77B5F99A011428182 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		0713886AFFF02F8B18A0E405 /* YPersonWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YPersonWidget.swift; sourceTree = "<group>"; };
+		11D3A37C6321DE925FB87955 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		12B135352DA88316B839F315 /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		1E7F0A5C4BE5C51180C7B46D /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		208993AD3E8746016DEFD75F /* YPerson.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = YPerson.entitlements; sourceTree = "<group>"; };
+		26B16DC13ECBE2DC6B708901 /* YPersonNotificationContent.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = YPersonNotificationContent.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		28094E2B2A847979C3FC21FB /* YPStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YPStyle.swift; sourceTree = "<group>"; };
+		2A82460406C63E9A3C7FA221 /* AppMetricaAnalyticsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMetricaAnalyticsClient.swift; sourceTree = "<group>"; };
+		2F50AA88F3C6CDCB4EC57C73 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		301DC0A1CD1DC7CEAA7DA940 /* PrivacyViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyViewController.swift; sourceTree = "<group>"; };
+		3337EAFEF3B0198BB5BA9D44 /* PeopleViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeopleViewController.swift; sourceTree = "<group>"; };
+		38A55AA34CCEEB53EC48D024 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
+		3948D64362AB0AC2C1303CBA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		3E01C3165DEB1E0F164958CE /* AudioGreetingController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioGreetingController.swift; sourceTree = "<group>"; };
+		3E26B216E894AF52F079DC3D /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		4742F7034AB58645F7946864 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		4AAC508E043FF6F8B0B457A5 /* PermissionCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionCenter.swift; sourceTree = "<group>"; };
+		4F5BA513D189A26885B9C8C8 /* CardImageSaver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardImageSaver.swift; sourceTree = "<group>"; };
+		5E4D3824E61DD322CFCA7D61 /* CardViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardViewController.swift; sourceTree = "<group>"; };
+		5F679A09D3A27784F01799C3 /* YPersonNotificationService.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = YPersonNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		6506B9BE77BAB21F35300A5A /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		6532043854455B0ECB9711D7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		66A9319A79DAA44B02E60A99 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		6AB1404B21FE58EB813AF60A /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfiguration.swift; sourceTree = "<group>"; };
+		6CDBA4E3382BD6229B260BBB /* CardEditorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardEditorViewController.swift; sourceTree = "<group>"; };
+		6D4EC9F123380A9A82AAC30E /* AppGroupSnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupSnapshotStore.swift; sourceTree = "<group>"; };
+		7A13996E6F0278470DBD08AA /* NotificationViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationViewController.swift; sourceTree = "<group>"; };
+		85FF1494661E949011B6F874 /* YPersonWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = YPersonWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		89A99344CEF5B9D4A1670A7F /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+		8DBF242EE59E958AF301277F /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		95235915DA13A07330BC207D /* AppFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFactory.swift; sourceTree = "<group>"; };
+		982CA5FB80AC4B6B03E1D4C2 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		9C5A1EBF234ED2265F80D10C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		9C86F699B3F01C82FEE91E99 /* AppearanceViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceViewController.swift; sourceTree = "<group>"; };
+		A1CE5299D0A8AF20539CCD18 /* YPersonWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = YPersonWidget.entitlements; sourceTree = "<group>"; };
+		ABD1799F52DDF1E713B76582 /* QRCodeScannerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeScannerViewController.swift; sourceTree = "<group>"; };
+		AEE237F9A1DF69B6E996CF21 /* YPerson.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = YPerson.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B05DF4272FF693CA8C7E28F4 /* MainTabBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabBarController.swift; sourceTree = "<group>"; };
+		CAC46C8858C0D992879AF1C4 /* PersonViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonViewController.swift; sourceTree = "<group>"; };
+		D51EBF735785D82AF276EA87 /* PhotoCardScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCardScanner.swift; sourceTree = "<group>"; };
+		D938FC5C6EE5391F7920B405 /* NearbyExchangeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearbyExchangeController.swift; sourceTree = "<group>"; };
+		F3E533DAB9E006DADF68EA10 /* ExchangeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExchangeViewController.swift; sourceTree = "<group>"; };
+		F5EFCA26B0528FD85942ED0E /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		8F2436F444C3F841729D08C6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				33F0F5281B41F42F0A562F9B /* AppMetricaCore in Frameworks */,
+				D1A9937B73944A0E814FA5EB /* AppMetricaCrashes in Frameworks */,
+				C02851E90F20E280723EB095 /* AppMetricaAdSupport in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		2A97283EA24CE6DE44E397EA /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				3E01C3165DEB1E0F164958CE /* AudioGreetingController.swift */,
+				4F5BA513D189A26885B9C8C8 /* CardImageSaver.swift */,
+				D938FC5C6EE5391F7920B405 /* NearbyExchangeController.swift */,
+				D51EBF735785D82AF276EA87 /* PhotoCardScanner.swift */,
+				ABD1799F52DDF1E713B76582 /* QRCodeScannerViewController.swift */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		2F12DA7DDF294DA0AF1F7546 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AEE237F9A1DF69B6E996CF21 /* YPerson.app */,
+				26B16DC13ECBE2DC6B708901 /* YPersonNotificationContent.appex */,
+				5F679A09D3A27784F01799C3 /* YPersonNotificationService.appex */,
+				85FF1494661E949011B6F874 /* YPersonWidget.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		335112BC36B2C40D0B6A38C5 /* YPersonWidget */ = {
+			isa = PBXGroup;
+			children = (
+				87F3BF095E18A8E3BF44470C /* Resources */,
+				A1CE5299D0A8AF20539CCD18 /* YPersonWidget.entitlements */,
+				0713886AFFF02F8B18A0E405 /* YPersonWidget.swift */,
+			);
+			path = YPersonWidget;
+			sourceTree = "<group>";
+		};
+		416B6259A69F2BCB900888FB /* Analytics */ = {
+			isa = PBXGroup;
+			children = (
+				2A82460406C63E9A3C7FA221 /* AppMetricaAnalyticsClient.swift */,
+			);
+			path = Analytics;
+			sourceTree = "<group>";
+		};
+		47819F5D171D102448D72AC3 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				6506B9BE77BAB21F35300A5A /* APIClient.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
+		4807C6E9F40F40DA3E1D9F53 /* YPerson */ = {
+			isa = PBXGroup;
+			children = (
+				416B6259A69F2BCB900888FB /* Analytics */,
+				9D7855FE30E7984779865AE0 /* App */,
+				6AD3CE69784BFE996AC3FD40 /* Domain */,
+				2A97283EA24CE6DE44E397EA /* Features */,
+				47819F5D171D102448D72AC3 /* Networking */,
+				F786F2AC17B9CFCB64515902 /* Permissions */,
+				536BC01DCBE5D104CFCA0899 /* Resources */,
+				8AD7B9DA77FDE8FEEA314A6B /* Storage */,
+				5B2C8340BB81DAE33A3C0177 /* Support */,
+				B2CF411AF81045E9CFE98B39 /* UI */,
+				208993AD3E8746016DEFD75F /* YPerson.entitlements */,
+			);
+			path = YPerson;
+			sourceTree = "<group>";
+		};
+		536BC01DCBE5D104CFCA0899 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				6D22DD8D5C703D5A0EB4117E /* InfoPlist.strings */,
+				4742F7034AB58645F7946864 /* Assets.xcassets */,
+				9C5A1EBF234ED2265F80D10C /* Info.plist */,
+				F5EFCA26B0528FD85942ED0E /* PrivacyInfo.xcprivacy */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		5B2C8340BB81DAE33A3C0177 /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				6AB1404B21FE58EB813AF60A /* AppConfiguration.swift */,
+			);
+			path = Support;
+			sourceTree = "<group>";
+		};
+		6AD3CE69784BFE996AC3FD40 /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				11D3A37C6321DE925FB87955 /* Models.swift */,
+			);
+			path = Domain;
+			sourceTree = "<group>";
+		};
+		7182BB4E33602FC0541DD3FC /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				66A9319A79DAA44B02E60A99 /* Debug.xcconfig */,
+				89A99344CEF5B9D4A1670A7F /* Release.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		7EF2E891B0C676C7338D1ECA = {
+			isa = PBXGroup;
+			children = (
+				7182BB4E33602FC0541DD3FC /* Config */,
+				4807C6E9F40F40DA3E1D9F53 /* YPerson */,
+				F4ECDF85FB14F91797DCAE5C /* YPersonNotificationContent */,
+				94DFE148B9F9EB58C3FC5AA0 /* YPersonNotificationService */,
+				335112BC36B2C40D0B6A38C5 /* YPersonWidget */,
+				2F12DA7DDF294DA0AF1F7546 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		87F3BF095E18A8E3BF44470C /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				3948D64362AB0AC2C1303CBA /* Info.plist */,
+				982CA5FB80AC4B6B03E1D4C2 /* PrivacyInfo.xcprivacy */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		8AD7B9DA77FDE8FEEA314A6B /* Storage */ = {
+			isa = PBXGroup;
+			children = (
+				6D4EC9F123380A9A82AAC30E /* AppGroupSnapshotStore.swift */,
+			);
+			path = Storage;
+			sourceTree = "<group>";
+		};
+		94DFE148B9F9EB58C3FC5AA0 /* YPersonNotificationService */ = {
+			isa = PBXGroup;
+			children = (
+				E67933B585C2E53B0ECE6ED0 /* Resources */,
+				38A55AA34CCEEB53EC48D024 /* NotificationService.swift */,
+			);
+			path = YPersonNotificationService;
+			sourceTree = "<group>";
+		};
+		9D7855FE30E7984779865AE0 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				010FD9E77B5F99A011428182 /* AppDelegate.swift */,
+				95235915DA13A07330BC207D /* AppFactory.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		B2CF411AF81045E9CFE98B39 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				9C86F699B3F01C82FEE91E99 /* AppearanceViewController.swift */,
+				6CDBA4E3382BD6229B260BBB /* CardEditorViewController.swift */,
+				5E4D3824E61DD322CFCA7D61 /* CardViewController.swift */,
+				F3E533DAB9E006DADF68EA10 /* ExchangeViewController.swift */,
+				B05DF4272FF693CA8C7E28F4 /* MainTabBarController.swift */,
+				3337EAFEF3B0198BB5BA9D44 /* PeopleViewController.swift */,
+				CAC46C8858C0D992879AF1C4 /* PersonViewController.swift */,
+				301DC0A1CD1DC7CEAA7DA940 /* PrivacyViewController.swift */,
+				28094E2B2A847979C3FC21FB /* YPStyle.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		B7A5435A9CE7F5E33D8A74FF /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				2F50AA88F3C6CDCB4EC57C73 /* Info.plist */,
+				1E7F0A5C4BE5C51180C7B46D /* PrivacyInfo.xcprivacy */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		E67933B585C2E53B0ECE6ED0 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				6532043854455B0ECB9711D7 /* Info.plist */,
+				8DBF242EE59E958AF301277F /* PrivacyInfo.xcprivacy */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		F4ECDF85FB14F91797DCAE5C /* YPersonNotificationContent */ = {
+			isa = PBXGroup;
+			children = (
+				B7A5435A9CE7F5E33D8A74FF /* Resources */,
+				7A13996E6F0278470DBD08AA /* NotificationViewController.swift */,
+			);
+			path = YPersonNotificationContent;
+			sourceTree = "<group>";
+		};
+		F786F2AC17B9CFCB64515902 /* Permissions */ = {
+			isa = PBXGroup;
+			children = (
+				4AAC508E043FF6F8B0B457A5 /* PermissionCenter.swift */,
+			);
+			path = Permissions;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		17C62CA828B0153971CC509E /* YPersonWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 092832071DC9B88D70384099 /* Build configuration list for PBXNativeTarget "YPersonWidget" */;
+			buildPhases = (
+				B8E235F554542FC11D2F9AA6 /* Sources */,
+				309648EB231BA2EF54F22280 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = YPersonWidget;
+			packageProductDependencies = (
+			);
+			productName = YPersonWidget;
+			productReference = 85FF1494661E949011B6F874 /* YPersonWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		670D6567BA2AF654115FE1A9 /* YPerson */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 415A0D6D810F6C40D2533D49 /* Build configuration list for PBXNativeTarget "YPerson" */;
+			buildPhases = (
+				D2B89EE5064A4BFA6BB33715 /* Sources */,
+				B2FDE2CC1FCCD50E796765A2 /* Resources */,
+				8F2436F444C3F841729D08C6 /* Frameworks */,
+				A9B497F38367AB44A8BA38E6 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				3D07E5C6DC100E3CE81BFA95 /* PBXTargetDependency */,
+				876D811A370549AA78A9F728 /* PBXTargetDependency */,
+				D2FEB05EB3E909575CD7181F /* PBXTargetDependency */,
+			);
+			name = YPerson;
+			packageProductDependencies = (
+				3A96293805F4AC31A97C6F0F /* AppMetricaCore */,
+				ADEE88F4EC0C36A4E9868199 /* AppMetricaCrashes */,
+				E5C0346077E98EC229CFD87F /* AppMetricaAdSupport */,
+			);
+			productName = YPerson;
+			productReference = AEE237F9A1DF69B6E996CF21 /* YPerson.app */;
+			productType = "com.apple.product-type.application";
+		};
+		674F7087931BFA269DEEED74 /* YPersonNotificationContent */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 95B9E5D5B22D5BF1919FE579 /* Build configuration list for PBXNativeTarget "YPersonNotificationContent" */;
+			buildPhases = (
+				9018CB98CD1B348DCDF88FD4 /* Sources */,
+				A6345D634C58F1E87CAEE71D /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = YPersonNotificationContent;
+			packageProductDependencies = (
+			);
+			productName = YPersonNotificationContent;
+			productReference = 26B16DC13ECBE2DC6B708901 /* YPersonNotificationContent.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		EDB3B652154CEFB99E54BBD1 /* YPersonNotificationService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6DE0E6B90716A8BE5C82EBBE /* Build configuration list for PBXNativeTarget "YPersonNotificationService" */;
+			buildPhases = (
+				47480C7A8593F69B2F3744B6 /* Sources */,
+				A796490CF27AE42C98939B4B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = YPersonNotificationService;
+			packageProductDependencies = (
+			);
+			productName = YPersonNotificationService;
+			productReference = 5F679A09D3A27784F01799C3 /* YPersonNotificationService.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B828E836D2EFFE2A1B8AB563 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					17C62CA828B0153971CC509E = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					670D6567BA2AF654115FE1A9 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					674F7087931BFA269DEEED74 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					EDB3B652154CEFB99E54BBD1 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 5E2BE7B38C302BD7FBFCAA35 /* Build configuration list for PBXProject "YPerson" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+				ru,
+			);
+			mainGroup = 7EF2E891B0C676C7338D1ECA;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				92C2C30DD234A2792326041C /* XCRemoteSwiftPackageReference "appmetrica-sdk-ios" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 2F12DA7DDF294DA0AF1F7546 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				670D6567BA2AF654115FE1A9 /* YPerson */,
+				17C62CA828B0153971CC509E /* YPersonWidget */,
+				EDB3B652154CEFB99E54BBD1 /* YPersonNotificationService */,
+				674F7087931BFA269DEEED74 /* YPersonNotificationContent */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		309648EB231BA2EF54F22280 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BCF5B3D11955856E41BD532E /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A6345D634C58F1E87CAEE71D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				56307796A09DEA57FBCDE1C7 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A796490CF27AE42C98939B4B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B54A900AEB613F80AE957785 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B2FDE2CC1FCCD50E796765A2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F25CFF2C916D6A78065CF02C /* Assets.xcassets in Resources */,
+				052F7348711D22B1253A7A1E /* InfoPlist.strings in Resources */,
+				13CCCAFA15AD9B93B570C5A2 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		47480C7A8593F69B2F3744B6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A0A6331485D058047FAC74D2 /* NotificationService.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9018CB98CD1B348DCDF88FD4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C7F0484158BF86CE1B2D6328 /* NotificationViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B8E235F554542FC11D2F9AA6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				52717EBD27E93DC80BA5D866 /* YPersonWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D2B89EE5064A4BFA6BB33715 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				825E97AB9DE3077A7A1FB3B3 /* APIClient.swift in Sources */,
+				41A7BFE6BA842AA9211E4B36 /* AppConfiguration.swift in Sources */,
+				30D248296C4E2B2438218310 /* AppDelegate.swift in Sources */,
+				9E469F546766DFDAB04A4660 /* AppFactory.swift in Sources */,
+				7003A8F439D23CDAE3BA20D9 /* AppGroupSnapshotStore.swift in Sources */,
+				1616764F166B74ACAEAB5862 /* AppMetricaAnalyticsClient.swift in Sources */,
+				B30EF3E75B860EFE6064BC68 /* AppearanceViewController.swift in Sources */,
+				B693AA8921AC2A6EB7B328D8 /* AudioGreetingController.swift in Sources */,
+				B20D697B2111A0880896340F /* CardEditorViewController.swift in Sources */,
+				6633BEE8A465A05C91D7C507 /* CardImageSaver.swift in Sources */,
+				E5F6880399DC6E3FE9AC0671 /* CardViewController.swift in Sources */,
+				EE076FB1C42375DADCAD282A /* ExchangeViewController.swift in Sources */,
+				C1147F7D0E3CC883DB19DAB6 /* MainTabBarController.swift in Sources */,
+				E0007B3B0432DF5036E2720E /* Models.swift in Sources */,
+				A0FC157A713AA27C3B7E8D9D /* NearbyExchangeController.swift in Sources */,
+				75033FFC1C035C8D77463E91 /* PeopleViewController.swift in Sources */,
+				DCAE8E00CC6FEF2E6744D77C /* PermissionCenter.swift in Sources */,
+				245F6C0FB5C326CC2DEB3B73 /* PersonViewController.swift in Sources */,
+				8DAEE38A487807265E664A0A /* PhotoCardScanner.swift in Sources */,
+				DCAB22468D62AE11C281CFE1 /* PrivacyViewController.swift in Sources */,
+				48B8935AECD4A25733526E34 /* QRCodeScannerViewController.swift in Sources */,
+				D91A4ED9BE788718888C6405 /* YPStyle.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		3D07E5C6DC100E3CE81BFA95 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 17C62CA828B0153971CC509E /* YPersonWidget */;
+			targetProxy = 98F19422068B4F727097366F /* PBXContainerItemProxy */;
+		};
+		876D811A370549AA78A9F728 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EDB3B652154CEFB99E54BBD1 /* YPersonNotificationService */;
+			targetProxy = 91FB9F5D23F0712FE6E300E4 /* PBXContainerItemProxy */;
+		};
+		D2FEB05EB3E909575CD7181F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 674F7087931BFA269DEEED74 /* YPersonNotificationContent */;
+			targetProxy = 3798091BB56B75E14236B47F /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		6D22DD8D5C703D5A0EB4117E /* InfoPlist.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				3E26B216E894AF52F079DC3D /* en */,
+				12B135352DA88316B839F315 /* ru */,
+			);
+			name = InfoPlist.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		2E8C4C57B1DAAA65CD54F17A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		308772CDF5665C4BDE6AC96F /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 89A99344CEF5B9D4A1670A7F /* Release.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				INFOPLIST_FILE = YPersonNotificationService/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(YP_PRODUCT_BUNDLE_IDENTIFIER).notification-service";
+				PRODUCT_NAME = YPersonNotificationService;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		4D3448DE9C1C4D8162B49EF3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 66A9319A79DAA44B02E60A99 /* Debug.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				INFOPLIST_FILE = YPersonNotificationService/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(YP_PRODUCT_BUNDLE_IDENTIFIER).notification-service";
+				PRODUCT_NAME = YPersonNotificationService;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		7FDDE67DEE5686BEC762999E /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 89A99344CEF5B9D4A1670A7F /* Release.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = YPerson/YPerson.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				INFOPLIST_FILE = YPerson/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = "$(inherited) -ObjC";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(YP_PRODUCT_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = YPerson;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		9C93BF54FA43352243392FE5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 66A9319A79DAA44B02E60A99 /* Debug.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = YPersonWidget/YPersonWidget.entitlements;
+				INFOPLIST_FILE = YPersonWidget/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(YP_PRODUCT_BUNDLE_IDENTIFIER).widget";
+				PRODUCT_NAME = YPersonWidget;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		AAFD61FA86ADF83A0A82638F /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 89A99344CEF5B9D4A1670A7F /* Release.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = YPersonWidget/YPersonWidget.entitlements;
+				INFOPLIST_FILE = YPersonWidget/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(YP_PRODUCT_BUNDLE_IDENTIFIER).widget";
+				PRODUCT_NAME = YPersonWidget;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		C2AD01C5F97D1C96CB074806 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 89A99344CEF5B9D4A1670A7F /* Release.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				INFOPLIST_FILE = YPersonNotificationContent/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(YP_PRODUCT_BUNDLE_IDENTIFIER).notification-content";
+				PRODUCT_NAME = YPersonNotificationContent;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		CFE6131F0F248905485CE281 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		D6A5A59164F920C7BD8CD67D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 66A9319A79DAA44B02E60A99 /* Debug.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = YPerson/YPerson.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				INFOPLIST_FILE = YPerson/Resources/Info.plist;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = "$(inherited) -ObjC";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(YP_PRODUCT_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = YPerson;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		DE269A21B8871B06DE944273 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 66A9319A79DAA44B02E60A99 /* Debug.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				INFOPLIST_FILE = YPersonNotificationContent/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(YP_PRODUCT_BUNDLE_IDENTIFIER).notification-content";
+				PRODUCT_NAME = YPersonNotificationContent;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		092832071DC9B88D70384099 /* Build configuration list for PBXNativeTarget "YPersonWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9C93BF54FA43352243392FE5 /* Debug */,
+				AAFD61FA86ADF83A0A82638F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		415A0D6D810F6C40D2533D49 /* Build configuration list for PBXNativeTarget "YPerson" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D6A5A59164F920C7BD8CD67D /* Debug */,
+				7FDDE67DEE5686BEC762999E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		5E2BE7B38C302BD7FBFCAA35 /* Build configuration list for PBXProject "YPerson" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2E8C4C57B1DAAA65CD54F17A /* Debug */,
+				CFE6131F0F248905485CE281 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6DE0E6B90716A8BE5C82EBBE /* Build configuration list for PBXNativeTarget "YPersonNotificationService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4D3448DE9C1C4D8162B49EF3 /* Debug */,
+				308772CDF5665C4BDE6AC96F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		95B9E5D5B22D5BF1919FE579 /* Build configuration list for PBXNativeTarget "YPersonNotificationContent" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DE269A21B8871B06DE944273 /* Debug */,
+				C2AD01C5F97D1C96CB074806 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		92C2C30DD234A2792326041C /* XCRemoteSwiftPackageReference "appmetrica-sdk-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/appmetrica/appmetrica-sdk-ios";
+			requirement = {
+				kind = exactVersion;
+				version = 6.5.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		3A96293805F4AC31A97C6F0F /* AppMetricaCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 92C2C30DD234A2792326041C /* XCRemoteSwiftPackageReference "appmetrica-sdk-ios" */;
+			productName = AppMetricaCore;
+		};
+		ADEE88F4EC0C36A4E9868199 /* AppMetricaCrashes */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 92C2C30DD234A2792326041C /* XCRemoteSwiftPackageReference "appmetrica-sdk-ios" */;
+			productName = AppMetricaCrashes;
+		};
+		E5C0346077E98EC229CFD87F /* AppMetricaAdSupport */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 92C2C30DD234A2792326041C /* XCRemoteSwiftPackageReference "appmetrica-sdk-ios" */;
+			productName = AppMetricaAdSupport;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = B828E836D2EFFE2A1B8AB563 /* Project object */;
+}

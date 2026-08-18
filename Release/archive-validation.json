@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "checkedAtUTC": "2026-08-18T07:35:18Z",
+  "status": "implementation-verified",
+  "archiveValidated": false,
+  "releaseReady": false,
+  "archivePath": null,
+  "archiveAttempted": false,
+  "archiveAttemptRationale": "A signed archive was not attempted because final Apple identifiers, Team ID, App Group registration, signing identity/profiles, production URLs, and production secrets are missing.",
+  "toolchain": {
+    "xcodeVersion": "26.5",
+    "xcodeBuild": "17F42",
+    "iphoneOSSDK": "26.5",
+    "currentUploadRequirementResult": "pass: iOS 26 SDK or later",
+    "resolvedPackages": [
+      {"name": "AppMetrica", "version": "6.5.0", "revision": "bac143d2d8a6d427fd901e27bdccb6fc79d02889"},
+      {"name": "SwiftProtobuf", "version": "1.38.1"},
+      {"name": "KSCrash", "version": "2.5.1"}
+    ]
+  },
+  "signingInspection": {
+    "developmentTeam": null,
+    "validCodeSigningIdentities": 0,
+    "codeSignStyle": "Automatic",
+    "distributionIdentityAvailable": false,
+    "matchingProvisioningProfilesConfirmed": false,
+    "result": "blocking"
+  },
+  "structuralDeviceBuild": {
+    "signed": false,
+    "validatesArchive": false,
+    "configuration": "Release",
+    "destination": "generic/platform=iOS",
+    "sdk": "iphoneos26.5",
+    "architecture": ["arm64"],
+    "result": "passed",
+    "buildCompletedAtUTC": "2026-08-18T07:35:18Z",
+    "command": "xcodebuild -project YPerson.xcodeproj -scheme YPerson -configuration Release -destination generic/platform=iOS -derivedDataPath DerivedData/ReleaseDevice -clonedSourcePackagesDirPath DerivedData/SourcePackages CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build -quiet",
+    "productPath": "DerivedData/ReleaseDevice/Build/Products/Release-iphoneos/YPerson.app",
+    "warningsAsErrors": true
+  },
+  "productInspection": {
+    "bundleIdentifier": {"value": "com.yperson.app", "status": "provisional-blocker"},
+    "version": "1.0",
+    "build": "1",
+    "minimumIOS": "15.0",
+    "deviceFamily": [1],
+    "supportedPlatform": ["iPhoneOS"],
+    "orientation": ["UIInterfaceOrientationPortrait"],
+    "encryptionInfoPlist": {"ITSAppUsesNonExemptEncryption": false, "finalQuestionnaireConfirmationRequired": true},
+    "purposeStrings": {"expected": 9, "processed": 9, "result": "pass"},
+    "appIcon": {"compiled": true, "alpha": false, "result": "pass"},
+    "embeddedExtensions": [
+      {"name": "YPersonWidget", "bundleIdentifier": "com.yperson.app.widget", "minimumIOS": "15.0", "result": "pass-provisional-id"},
+      {"name": "YPersonNotificationService", "bundleIdentifier": "com.yperson.app.notification-service", "minimumIOS": "15.0", "result": "pass-provisional-id"},
+      {"name": "YPersonNotificationContent", "bundleIdentifier": "com.yperson.app.notification-content", "minimumIOS": "15.0", "result": "pass-provisional-id"}
+    ],
+    "privacyManifestFilesFound": 25,
+    "appPrivacyManifestPresent": true,
+    "extensionPrivacyManifestsPresent": true,
+    "appMetricaManifestsPresent": true,
+    "unexpectedDynamicFrameworks": [],
+    "placeholderScan": [
+      {"key": "API_BASE_URL", "value": "https://api.example.invalid", "result": "blocking"},
+      {"key": "PRIVACY_POLICY_URL", "value": "https://example.invalid/yperson/privacy", "result": "blocking"},
+      {"key": "SUPPORT_URL", "value": "https://example.invalid/yperson/support", "result": "blocking"},
+      {"key": "APPMETRICA_API_KEY", "value": "empty", "result": "blocking"},
+      {"key": "NOTIFICATION_SIGNING_PUBLIC_KEY", "value": "empty", "result": "blocking"},
+      {"key": "APP_GROUP_IDENTIFIER", "value": "group.com.yperson.app", "result": "provisional-blocker"}
+    ]
+  },
+  "privacyArchiveChecks": {
+    "appMetricaRequiredReasonAPIsObserved": [
+      {"category": "UserDefaults", "reason": "CA92.1"},
+      {"category": "FileTimestamp", "reason": "C617.1"}
+    ],
+    "trackingDomainsObserved": ["tracking.appmetrica.yandex.net", "tracking.reserve.appmetrica.yandex.net"],
+    "finalXcodePrivacyReportGenerated": false,
+    "finalSDKSignatureContinuityValidated": false,
+    "result": "blocking-until-signed-archive"
+  },
+  "requiredNextArchiveCommand": "xcodebuild -project YPerson.xcodeproj -scheme YPerson -configuration Release -destination generic/platform=iOS -archivePath <approved-output>/YPerson.xcarchive archive",
+  "requiredAfterArchive": [
+    "Run Xcode Validate App using the final Apple team and registered identifiers.",
+    "Generate and inspect the Xcode privacy report for the archive.",
+    "Verify signatures, entitlements, App Group, APNs environment, embedded extensions, architectures, dSYMs, SDK manifests/signatures, URLs, and absence of secrets/placeholders.",
+    "Do not upload without a fresh explicit external-action approval."
+  ],
+  "blockingEvidence": ["Release/reconciliation.json", "Config/Base.xcconfig", "Config/Release.xcconfig"]
+}

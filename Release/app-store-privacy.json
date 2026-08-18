@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "checkedAtUTC": "2026-08-18T07:15:42Z",
+  "status": "draft-requires-production-and-archive-confirmation",
+  "doesAppOrThirdPartiesCollectData": true,
+  "tracking": {
+    "occurs": "only if the user authorizes App Tracking Transparency",
+    "dataTypes": ["device_id", "advertising_data"],
+    "purpose": "measure advertising attribution for campaigns supporting free sponsored card templates",
+    "deniedOrRestrictedBehavior": "No IDFA or cross-company tracking; all templates and core features remain available.",
+    "sdk": "AppMetricaAdSupport 6.5.0",
+    "domains": ["tracking.appmetrica.yandex.net", "tracking.reserve.appmetrica.yandex.net"]
+  },
+  "collectedDataTypes": [
+    {"appleCategory": "Contact Info", "appleType": "Name", "internalType": "name", "sources": ["published YPerson card"], "purposes": ["App Functionality"], "linkedToIdentity": true, "usedForTracking": false},
+    {"appleCategory": "Contact Info", "appleType": "Email Address", "internalType": "email_address", "sources": ["published YPerson card"], "purposes": ["App Functionality"], "linkedToIdentity": true, "usedForTracking": false},
+    {"appleCategory": "Contact Info", "appleType": "Phone Number", "internalType": "phone_number", "sources": ["published YPerson card"], "purposes": ["App Functionality"], "linkedToIdentity": true, "usedForTracking": false},
+    {"appleCategory": "Contact Info", "appleType": "Other User Contact Info", "internalType": "other_user_contact_info", "sources": ["published company, role, and contact methods"], "purposes": ["App Functionality"], "linkedToIdentity": true, "usedForTracking": false},
+    {"appleCategory": "User Content", "appleType": "Photos or Videos", "internalType": "photos_or_videos", "sources": ["explicitly published avatar"], "purposes": ["App Functionality"], "linkedToIdentity": true, "usedForTracking": false},
+    {"appleCategory": "User Content", "appleType": "Audio Data", "internalType": "audio_data", "sources": ["explicitly published audio greeting"], "purposes": ["App Functionality"], "linkedToIdentity": true, "usedForTracking": false},
+    {"appleCategory": "User Content", "appleType": "Other User Content", "internalType": "other_user_content", "sources": ["card text, confirmed connections, exchange state, moderation report"], "purposes": ["App Functionality"], "linkedToIdentity": true, "usedForTracking": false},
+    {"appleCategory": "Identifiers", "appleType": "User ID", "internalType": "user_id", "sources": ["installation-scoped profile and confirmed connections"], "purposes": ["App Functionality"], "linkedToIdentity": true, "usedForTracking": false},
+    {"appleCategory": "Identifiers", "appleType": "Device ID", "internalType": "device_id", "sources": ["installation ID", "APNs token", "AppMetrica identifiers", "IDFA only after ATT authorization"], "purposes": ["App Functionality", "Analytics", "Developer's Advertising or Marketing", "Third-Party Advertising"], "linkedToIdentity": true, "usedForTracking": "only after ATT authorization"},
+    {"appleCategory": "Purchases", "appleType": "Purchase History", "internalType": "purchase_history", "sources": ["declared by AppMetricaCore 6.5.0 privacy manifest"], "purposes": ["Analytics"], "linkedToIdentity": false, "usedForTracking": false, "qualification": "YPerson does not use AppMetrica Revenue or ECommerce APIs; retain conservative answer until the final privacy report and provider configuration are confirmed."},
+    {"appleCategory": "Usage Data", "appleType": "Product Interaction", "internalType": "product_interaction", "sources": ["allowlisted AppMetrica events"], "purposes": ["Analytics"], "linkedToIdentity": false, "usedForTracking": false},
+    {"appleCategory": "Usage Data", "appleType": "Advertising Data", "internalType": "advertising_data", "sources": ["sponsored-template interactions and ATT-authorized attribution"], "purposes": ["Analytics", "Developer's Advertising or Marketing", "Third-Party Advertising"], "linkedToIdentity": "only when applicable", "usedForTracking": "only after ATT authorization"},
+    {"appleCategory": "Diagnostics", "appleType": "Crash Data", "internalType": "crash_data", "sources": ["AppMetricaCrashes"], "purposes": ["App Functionality"], "linkedToIdentity": false, "usedForTracking": false},
+    {"appleCategory": "Diagnostics", "appleType": "Performance Data", "internalType": "performance_data", "sources": ["AppMetricaCrashes"], "purposes": ["App Functionality"], "linkedToIdentity": false, "usedForTracking": false},
+    {"appleCategory": "Diagnostics", "appleType": "Other Diagnostic Data", "internalType": "other_diagnostic_data", "sources": ["AppMetricaCrashes", "seven-day backend security logs"], "purposes": ["Analytics", "App Functionality"], "linkedToIdentity": false, "usedForTracking": false},
+    {"appleCategory": "Other", "appleType": "Other Data Types", "internalType": "other_data_types", "sources": ["AppMetricaCore and AppMetricaCrashes manifests"], "purposes": ["Analytics", "App Functionality"], "linkedToIdentity": false, "usedForTracking": false},
+    {"appleCategory": "Location", "appleType": "Coarse Location", "internalType": "coarse_location", "sources": ["AppMetrica network-derived country", "backend IP security metadata"], "purposes": ["Analytics", "App Functionality"], "linkedToIdentity": false, "usedForTracking": false},
+    {"appleCategory": "Other", "appleType": "Customer Support", "internalType": "customer_support", "sources": ["report/block and support requests"], "purposes": ["App Functionality"], "linkedToIdentity": true, "usedForTracking": false}
+  ],
+  "localOnlyNotCollected": [
+    {"data": "system address book", "reason": "processed on device for duplicate matching and confirmed updates"},
+    {"data": "raw photo library, camera frames, and rejected scan candidates", "reason": "processed in memory/on device"},
+    {"data": "precise Core Location and meeting note", "reason": "stored only on the user's iPhone and excluded from sync/analytics"},
+    {"data": "Face ID biometric information and authentication result", "reason": "handled by LocalAuthentication and never transmitted"},
+    {"data": "rendered card written to Photos", "reason": "written to the user's library without collection by YPerson"}
+  ],
+  "appMetrica": {
+    "version": "6.5.0",
+    "includedProducts": ["AppMetricaCore", "AppMetricaCrashes", "AppMetricaAdSupport"],
+    "excludedProducts": ["AppMetricaWebKit", "AppMetricaProductFlow", "AppMetricaPush", "Profiles", "Revenue", "ECommerce"],
+    "activation": "valid production API key plus in-app analytics consent; remote /config kill switch may disable sending",
+    "locationTracking": false,
+    "accurateLocationTracking": false,
+    "revenueAutoTracking": false,
+    "userProfileID": null,
+    "customEventDataPolicy": "Only fixed event names and anonymous enum/category parameters; names, phones, emails, company/role, IDs, free text, media, contacts, location, QR/APNs/report payloads are prohibited.",
+    "manifestDeclaredData": ["coarse_location", "product_interaction", "purchase_history", "other_data_types", "performance_data", "crash_data", "other_diagnostic_data", "device_id"],
+    "requiredReasonAPIs": [{"category": "UserDefaults", "reason": "CA92.1"}, {"category": "FileTimestamp", "reason": "C617.1"}],
+    "archivePrivacyReportRequired": true
+  },
+  "transitiveCrashDependency": {
+    "name": "KSCrash",
+    "version": "2.5.1",
+    "includedBy": "AppMetricaCrashes 6.5.0",
+    "directNetworkRecipient": false,
+    "manifestDeclaredData": ["device_id", "crash_data", "performance_data", "other_diagnostic_data"],
+    "linkedToIdentity": false,
+    "usedForTracking": false,
+    "purposes": ["App Functionality"],
+    "requiredReasonAPIs": [{"category": "FileTimestamp", "reason": "C617.1"}],
+    "embeddedManifestBundlesObserved": ["KSCrash_KSCrashCore.bundle", "KSCrash_KSCrashRecording.bundle", "KSCrash_KSCrashRecordingCore.bundle"]
+  },
+  "retentionSummary": {
+    "profileAndCard": "until deletion or 24 months of inactivity",
+    "exchangeToken": "10 minutes",
+    "backendSecurityLogs": "7 days",
+    "stalePushTokenAndBackups": "up to 30 days",
+    "closedModerationReport": "180 days restricted exception",
+    "AppMetrica": "target maximum 12 months; production contract and technical configuration remain blocking"
+  },
+  "finalConfirmationBlockers": [
+    "Publish and review the final privacy policy URL and responsible privacy contact.",
+    "Confirm production backend processors, jurisdiction, retention, deletion, and security logging.",
+    "Confirm the applicable AppMetrica terms/DPA, project settings, retention, deletion workflow, and final privacy report.",
+    "Reconcile these answers with the signed archive's Xcode privacy report before entering App Store Connect."
+  ],
+  "sourceOfTruth": "AppPrivacy.yml",
+  "sources": "Release/compliance-sources.json"
+}

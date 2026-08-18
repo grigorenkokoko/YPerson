@@ -1,0 +1,24 @@
+.DS_Store
+
+# Local Xcode and Swift build products
+DerivedData/
+.build/
+.swiftpm/
+xcuserdata/
+*.xcuserstate
+*.xcarchive
+*.ipa
+*.dSYM
+
+# Local Codex worktrees and unrelated nested repositories
+.worktrees/
+Blodden-skills/
+
+# Secrets and signing assets
+.env
+.env.*
+!.env.example
+Config/Secrets.xcconfig
+*.p8
+*.p12
+*.mobileprovision
