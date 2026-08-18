@@ -22,3 +22,9 @@ Config/Secrets.xcconfig
 *.p8
 *.p12
 *.mobileprovision
+
+# Local Python environment and tooling artifacts
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
