@@ -64,6 +64,10 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["reporter_installation_id"], ["profiles.installation_id"], ondelete="CASCADE"
         ),
+        sa.CheckConstraint(
+            "category IS NULL OR category IN ('spam', 'abusive_content', 'impersonation')",
+            name="ck_moderation_actions_category",
+        ),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_table(

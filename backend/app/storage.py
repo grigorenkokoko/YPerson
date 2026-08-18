@@ -6,8 +6,18 @@ from hashlib import sha256
 from typing import cast
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, create_engine, delete, func, select
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    create_engine,
+    delete,
+    func,
+    select,
+)
+from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
@@ -15,6 +25,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 from app.settings import Settings
 
 EXCHANGE_TOKEN_LIFETIME = timedelta(minutes=10)
+MODERATION_CATEGORIES = frozenset({"spam", "abusive_content", "impersonation"})
 
 
 class Base(DeclarativeBase):
@@ -60,6 +71,12 @@ class ModerationAction(Base):
     """A report recorded without free-form local notes."""
 
     __tablename__ = "moderation_actions"
+    __table_args__ = (
+        CheckConstraint(
+            "category IS NULL OR category IN ('spam', 'abusive_content', 'impersonation')",
+            name="ck_moderation_actions_category",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     reporter_installation_id: Mapped[str] = mapped_column(
@@ -117,11 +134,14 @@ def create_session_factory(settings: Settings) -> tuple[Engine, sessionmaker[Ses
 def ensure_profile(session: Session, installation_id: str) -> ProfileSnapshot:
     """Create an empty profile when absent and return its public storage snapshot."""
 
-    profile = session.get(Profile, installation_id)
-    if profile is None:
-        profile = Profile(installation_id=installation_id)
-        session.add(profile)
-        session.flush()
+    session.execute(
+        insert(Profile)
+        .values(installation_id=installation_id)
+        .on_conflict_do_nothing(index_elements=[Profile.installation_id])
+    )
+    session.flush()
+    profile = session.scalar(select(Profile).where(Profile.installation_id == installation_id))
+    assert profile is not None
     return _snapshot(profile)
 
 
@@ -144,20 +164,24 @@ def store_exchange_claim(session: Session, installation_id: str, token: str, now
     prune_expired_exchange_tokens(session, current_time)
     _profile(session, installation_id)
     token_hash = sha256(token.encode()).hexdigest()
-    claim = session.get(ExchangeToken, token_hash)
-    if claim is None:
-        session.add(
-            ExchangeToken(
-                token_hash=token_hash,
-                owner_installation_id=installation_id,
-                expires_at=current_time + EXCHANGE_TOKEN_LIFETIME,
-                claimed_at=current_time,
-            )
+    expires_at = current_time + EXCHANGE_TOKEN_LIFETIME
+    session.execute(
+        insert(ExchangeToken)
+        .values(
+            token_hash=token_hash,
+            owner_installation_id=installation_id,
+            expires_at=expires_at,
+            claimed_at=current_time,
         )
-    else:
-        claim.owner_installation_id = installation_id
-        claim.expires_at = current_time + EXCHANGE_TOKEN_LIFETIME
-        claim.claimed_at = current_time
+        .on_conflict_do_update(
+            index_elements=[ExchangeToken.token_hash],
+            set_={
+                "owner_installation_id": installation_id,
+                "expires_at": expires_at,
+                "claimed_at": current_time,
+            },
+        )
+    )
     session.flush()
 
 
@@ -174,6 +198,8 @@ def set_push_token(session: Session, installation_id: str, token: str | None) ->
 def record_report(session: Session, installation_id: str, category: str | None) -> None:
     """Record a fixed moderation category without retaining report text."""
 
+    if category is not None and category not in MODERATION_CATEGORIES:
+        raise ValueError("unsupported moderation category")
     _profile(session, installation_id)
     session.add(
         ModerationAction(
@@ -244,6 +270,8 @@ def _snapshot(profile: Profile) -> ProfileSnapshot:
 
 
 def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("datetime must be timezone-aware")
     return value.astimezone(UTC)
 
 
