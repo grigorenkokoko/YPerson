@@ -1,0 +1,10 @@
+# Send only the runtime sources needed by the multi-stage image build.
+**
+!backend
+backend/**
+!backend/requirements.lock
+!backend/app
+!backend/app/**
+!backend/migrations
+!backend/migrations/**
+!backend/alembic.ini
