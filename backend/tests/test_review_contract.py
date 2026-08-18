@@ -152,6 +152,16 @@ def test_all_sync_operations_have_exact_messages_and_durable_effects(
             "updateCount": 0,
             "message": f"{operation} accepted",
         }
+        if operation == "updatePushToken":
+            with session_factory() as session:
+                profile = session.get(Profile, installation_id)
+            assert profile is not None
+            assert profile.apns_token == "apns-review-token"
+        if operation == "removePushToken":
+            with session_factory() as session:
+                profile = session.get(Profile, installation_id)
+            assert profile is not None
+            assert profile.apns_token is None
 
     with session_factory() as session:
         profile = session.get(Profile, installation_id)
@@ -229,7 +239,7 @@ def test_unexpected_route_failure_is_sanitized_headered_and_not_logged(
     logger.addHandler(handler)
     monkeypatch.setattr(main_module, "database_is_ready", explode)
     try:
-        with TestClient(create_app(settings), raise_server_exceptions=False) as client:
+        with TestClient(create_app(settings)) as client:
             response = client.get("/health?query-sentinel=private")
     finally:
         logger.removeHandler(handler)
