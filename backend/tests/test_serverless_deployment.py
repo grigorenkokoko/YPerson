@@ -6,6 +6,7 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,6 +40,24 @@ FORBIDDEN_SECRET_KEY_PARTS = (
     "apns",
 )
 DEPLOY_SCRIPT = ROOT / "deploy" / "yandex" / "serverless" / "deploy.sh"
+TEST_IAM_TOKEN = "test-iam-token"
+ACTIVE_REVISION_JSON = (
+    '[{"id":"inactive-revision","status":"INACTIVE"},'
+    '{"id":"previous-revision","status":"ACTIVE"}]'
+)
+ACTIVE_REVISION_FILTER = 'map(select(.status == "ACTIVE")) | first | .id // empty'
+REQUIRED_DEPLOYMENT_VALUES = (
+    "YC_FOLDER_ID",
+    "YC_HTTP_CONTAINER_ID",
+    "YC_RUNTIME_SA_ID",
+    "YC_HEALTH_URL",
+    "YPERSON_CONFIG_VERSION",
+    "YPERSON_PRIVACY_URL",
+    "YPERSON_SUPPORT_URL",
+    "IMAGE_URL",
+    "GITHUB_SHA",
+    "YC_IAM_TOKEN",
+)
 
 
 def write_fake_commands(bin_dir: Path) -> None:
@@ -50,15 +69,25 @@ def write_fake_commands(bin_dir: Path) -> None:
 printf '%s ' \"$@\" >> \"$COMMAND_LOG\"
 printf '\\n' >> \"$COMMAND_LOG\"
 case \" $* \" in
-  *" serverless container revision list "*) printf '%s\\n' '[]' ;;
+  *" serverless container revision list "*) printf '%s\\n' \"$FAKE_REVISION_JSON\" ;;
 esac
 """,
         "curl": """#!/bin/sh
+printf '%s ' \"$@\" >> \"$CURL_COMMAND_LOG\"
+printf '\\n' >> \"$CURL_COMMAND_LOG\"
 exit \"${FAKE_CURL_EXIT:-0}\"
 """,
         "jq": """#!/bin/sh
-/bin/cat >/dev/null
-printf '%s\\n' \"${FAKE_PREVIOUS_REVISION:-}\"
+input=$(/bin/cat)
+printf '%s' \"$input\" > \"$JQ_INPUT_LOG\"
+printf '%s' \"${2:-}\" > \"$JQ_FILTER_LOG\"
+if [ \"${1:-}\" != '-r' ] || [ \"${2:-}\" != 'map(select(.status == \"ACTIVE\")) | first | .id // empty' ]; then
+  exit 9
+fi
+case \"$input\" in
+  *'\"id\":\"previous-revision\",\"status\":\"ACTIVE\"'*) printf '%s\\n' previous-revision ;;
+  *) printf '\\n' ;;
+esac
 """,
     }
     for name, contents in commands.items():
@@ -77,6 +106,10 @@ def deployment_environment(tmp_path: Path, sha: str = "a" * 40) -> tuple[dict[st
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "COMMAND_LOG": str(command_log),
+        "CURL_COMMAND_LOG": str(tmp_path / "curl-command.log"),
+        "JQ_INPUT_LOG": str(tmp_path / "jq-input.log"),
+        "JQ_FILTER_LOG": str(tmp_path / "jq-filter.log"),
+        "FAKE_REVISION_JSON": ACTIVE_REVISION_JSON,
         "YC_FOLDER_ID": "folder-id",
         "YC_HTTP_CONTAINER_ID": "http-container-id",
         "YC_RUNTIME_SA_ID": "runtime-sa-id",
@@ -86,7 +119,7 @@ def deployment_environment(tmp_path: Path, sha: str = "a" * 40) -> tuple[dict[st
         "YPERSON_SUPPORT_URL": "https://yperson.ru/support",
         "IMAGE_URL": f"cr.yandex/registry/backend:{sha}",
         "GITHUB_SHA": sha,
-        "YC_IAM_TOKEN": "test-iam-token",
+        "YC_IAM_TOKEN": TEST_IAM_TOKEN,
     }
     return environment, command_log
 
@@ -110,6 +143,19 @@ def logged_yc_commands(command_log: Path) -> list[list[str]]:
     if not command_log.exists():
         return []
     return [line.split() for line in command_log.read_text().splitlines()]
+
+
+def logged_command(command_log: Path) -> list[str]:
+    """Read one whitespace-safe controlled command invocation."""
+
+    return command_log.read_text().split()
+
+
+def assert_token_is_not_printed(result: subprocess.CompletedProcess[str]) -> None:
+    """Deployment diagnostics must not expose the controlled IAM token."""
+
+    assert TEST_IAM_TOKEN not in result.stdout
+    assert TEST_IAM_TOKEN not in result.stderr
 
 
 def parse_env_pairs(contents: str) -> dict[str, str]:
@@ -255,36 +301,67 @@ def test_config_local_values_are_ignored_without_ignoring_the_template() -> None
     assert template.returncode == 1
 
 
-def test_deploy_script_rejects_invalid_or_missing_full_sha_before_yc(tmp_path: Path) -> None:
-    """Invalid immutable image input must not reach the cloud CLI."""
-
-    for sha, image_url in (("short-sha", "cr.yandex/registry/backend:short-sha"), ("", "")):
-        environment, command_log = deployment_environment(tmp_path / (sha or "missing"))
-        environment["GITHUB_SHA"] = sha
-        environment["IMAGE_URL"] = image_url
-
-        result = run_deploy(environment)
-
-        assert result.returncode == 2
-        assert logged_yc_commands(command_log) == []
-        assert "test-iam-token" not in result.stdout
-        assert "test-iam-token" not in result.stderr
-
-
-def test_deploy_script_rejects_missing_command_before_cloud_calls(tmp_path: Path) -> None:
-    """Validated inputs still fail safely when a required local command is absent."""
+@pytest.mark.parametrize("missing_name", REQUIRED_DEPLOYMENT_VALUES)
+def test_deploy_script_rejects_each_missing_required_value_before_yc(
+    tmp_path: Path, missing_name: str
+) -> None:
+    """Every required deployment value is rejected before a cloud call."""
 
     environment, command_log = deployment_environment(tmp_path)
-    (tmp_path / "bin" / "jq").unlink()
+    environment.pop(missing_name)
+
+    result = run_deploy(environment)
+
+    assert result.returncode == 2
+    assert logged_yc_commands(command_log) == []
+    assert f"Missing required deployment value: {missing_name}" in result.stderr
+    assert_token_is_not_printed(result)
+
+
+@pytest.mark.parametrize(
+    ("sha", "image_url"),
+    (
+        ("short-sha", "cr.yandex/registry/backend:short-sha"),
+        ("A" * 40, f"cr.yandex/registry/backend:{'A' * 40}"),
+        ("g" * 40, f"cr.yandex/registry/backend:{'g' * 40}"),
+        ("a" * 39, f"cr.yandex/registry/backend:{'a' * 39}"),
+        ("a" * 41, f"cr.yandex/registry/backend:{'a' * 41}"),
+        ("a" * 40, f"cr.yandex/registry/backend:{'b' * 40}"),
+    ),
+)
+def test_deploy_script_rejects_invalid_sha_or_image_tag_before_yc(
+    tmp_path: Path, sha: str, image_url: str
+) -> None:
+    """The image tag must be the same lowercase, full commit SHA."""
+
+    environment, command_log = deployment_environment(tmp_path)
+    environment["GITHUB_SHA"] = sha
+    environment["IMAGE_URL"] = image_url
+
+    result = run_deploy(environment)
+
+    assert result.returncode == 2
+    assert logged_yc_commands(command_log) == []
+    assert "IMAGE_URL must use the full Git commit SHA tag" in result.stderr
+    assert_token_is_not_printed(result)
+
+
+@pytest.mark.parametrize("missing_command", ("yc", "curl", "jq"))
+def test_deploy_script_rejects_each_missing_command_before_cloud_calls(
+    tmp_path: Path, missing_command: str
+) -> None:
+    """The three local executables are all validated before cloud calls."""
+
+    environment, command_log = deployment_environment(tmp_path)
+    (tmp_path / "bin" / missing_command).unlink()
     environment["PATH"] = str(tmp_path / "bin")
 
     result = run_deploy(environment)
 
     assert result.returncode == 2
     assert logged_yc_commands(command_log) == []
-    assert "Required deployment command is unavailable: jq" in result.stderr
-    assert "test-iam-token" not in result.stdout
-    assert "test-iam-token" not in result.stderr
+    assert f"Required deployment command is unavailable: {missing_command}" in result.stderr
+    assert_token_is_not_printed(result)
 
 
 def test_deploy_script_deploys_http_revision_without_database_era_options(tmp_path: Path) -> None:
@@ -296,16 +373,68 @@ def test_deploy_script_deploys_http_revision_without_database_era_options(tmp_pa
 
     assert result.returncode == 0
     commands = logged_yc_commands(command_log)
-    deployments = [command for command in commands if "revision" in command and "deploy" in command]
-    assert len(deployments) == 1
-    deployment = deployments[0]
-    assert ["--runtime", "http"] == deployment[deployment.index("--runtime") : deployment.index("--runtime") + 2]
-    assert "--network-id" not in deployment
-    assert "--secret" not in deployment
-    assert "task" not in deployment
-    assert not any("anonymous" in argument for command in commands for argument in command)
-    assert "test-iam-token" not in result.stdout
-    assert "test-iam-token" not in result.stderr
+    prefix = ["--folder-id", "folder-id", "--token", TEST_IAM_TOKEN]
+    assert commands == [
+        prefix
+        + [
+            "serverless",
+            "container",
+            "revision",
+            "list",
+            "--container-id",
+            "http-container-id",
+            "--format",
+            "json",
+        ],
+        prefix
+        + [
+            "serverless",
+            "container",
+            "revision",
+            "deploy",
+            "--container-id",
+            "http-container-id",
+            "--image",
+            f"cr.yandex/registry/backend:{'a' * 40}",
+            "--runtime",
+            "http",
+            "--memory",
+            "512MB",
+            "--cores",
+            "1",
+            "--concurrency",
+            "4",
+            "--execution-timeout",
+            "30s",
+            "--min-instances",
+            "0",
+            "--service-account-id",
+            "runtime-sa-id",
+            "--environment",
+            (
+                "YPERSON_ENV=staging,YPERSON_CONFIG_VERSION=2026-08-19.1,"
+                "YPERSON_PRIVACY_URL=https://yperson.ru/privacy,"
+                "YPERSON_SUPPORT_URL=https://yperson.ru/support,"
+                "YPERSON_ANALYTICS_KILL_SWITCH=false,GRACEFUL_SHUTDOWN_SECONDS=15"
+            ),
+        ],
+    ]
+    assert logged_command(Path(environment["CURL_COMMAND_LOG"])) == [
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--retry",
+        "12",
+        "--retry-delay",
+        "5",
+        "--retry-all-errors",
+        "--max-time",
+        "10",
+        "https://gateway.example/health",
+    ]
+    assert Path(environment["JQ_INPUT_LOG"]).read_text() == ACTIVE_REVISION_JSON
+    assert Path(environment["JQ_FILTER_LOG"]).read_text() == ACTIVE_REVISION_FILTER
+    assert_token_is_not_printed(result)
 
 
 def test_deploy_script_rolls_back_active_revision_after_failed_health_check(tmp_path: Path) -> None:
@@ -313,16 +442,27 @@ def test_deploy_script_rolls_back_active_revision_after_failed_health_check(tmp_
 
     environment, command_log = deployment_environment(tmp_path)
     environment["FAKE_CURL_EXIT"] = "1"
-    environment["FAKE_PREVIOUS_REVISION"] = "previous-revision"
 
     result = run_deploy(environment)
 
     assert result.returncode != 0
     commands = logged_yc_commands(command_log)
-    rollback = next(command for command in commands if "rollback" in command)
-    assert rollback[-2:] == ["--revision-id", "previous-revision"]
-    assert "test-iam-token" not in result.stdout
-    assert "test-iam-token" not in result.stderr
+    prefix = ["--folder-id", "folder-id", "--token", TEST_IAM_TOKEN]
+    assert commands[-1] == prefix + [
+        "serverless",
+        "container",
+        "rollback",
+        "--id",
+        "http-container-id",
+        "--revision-id",
+        "previous-revision",
+    ]
+    assert commands.index(next(command for command in commands if "list" in command)) < commands.index(
+        next(command for command in commands if "deploy" in command)
+    ) < commands.index(commands[-1])
+    assert Path(environment["JQ_INPUT_LOG"]).read_text() == ACTIVE_REVISION_JSON
+    assert Path(environment["JQ_FILTER_LOG"]).read_text() == ACTIVE_REVISION_FILTER
+    assert_token_is_not_printed(result)
 
 
 def test_deploy_script_skips_rollback_without_active_revision_after_failed_health_check(
@@ -332,10 +472,12 @@ def test_deploy_script_skips_rollback_without_active_revision_after_failed_healt
 
     environment, command_log = deployment_environment(tmp_path)
     environment["FAKE_CURL_EXIT"] = "1"
+    environment["FAKE_REVISION_JSON"] = "[]"
 
     result = run_deploy(environment)
 
     assert result.returncode != 0
     assert not any("rollback" in command for command in logged_yc_commands(command_log))
-    assert "test-iam-token" not in result.stdout
-    assert "test-iam-token" not in result.stderr
+    assert Path(environment["JQ_INPUT_LOG"]).read_text() == "[]"
+    assert Path(environment["JQ_FILTER_LOG"]).read_text() == ACTIVE_REVISION_FILTER
+    assert_token_is_not_printed(result)
