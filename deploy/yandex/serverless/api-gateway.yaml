@@ -1,0 +1,40 @@
+openapi: 3.0.0
+info:
+  title: YPerson API
+  version: 1.0.0
+paths:
+  /health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: Service and database are ready
+        "503":
+          description: Service or database is unavailable
+      x-yc-apigateway-integration:
+        type: serverless_containers
+        container_id: ${YC_HTTP_CONTAINER_ID}
+        service_account_id: ${YC_GATEWAY_SA_ID}
+  /config:
+    get:
+      operationId: config
+      responses:
+        "200":
+          description: Public application configuration
+      x-yc-apigateway-integration:
+        type: serverless_containers
+        container_id: ${YC_HTTP_CONTAINER_ID}
+        service_account_id: ${YC_GATEWAY_SA_ID}
+  /sync:
+    post:
+      operationId: syncDisabled
+      responses:
+        "503":
+          description: Sync is disabled until installation authentication is enabled
+      x-yc-apigateway-integration:
+        type: dummy
+        http_code: 503
+        http_headers:
+          Content-Type: application/json
+        content:
+          application/json: '{"error":"temporarily_unavailable","message":"sync is not enabled"}'
