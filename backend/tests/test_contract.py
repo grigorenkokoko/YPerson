@@ -106,6 +106,8 @@ def test_every_response_has_request_id(client: TestClient) -> None:
     responses = [
         client.get("/health"),
         client.get("/config"),
+        client.get("/privacy"),
+        client.get("/support"),
         client.post("/sync", content=b"{}", headers={"Content-Type": "application/json"}),
         client.get("/not-a-route"),
     ]

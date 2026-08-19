@@ -4,10 +4,11 @@ import json
 from hashlib import sha256
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.observability import RequestObservabilityMiddleware
+from app.public_pages import PRIVACY_HTML, SUPPORT_HTML
 from app.schemas import PublicConfigResponse
 from app.settings import Settings
 
@@ -58,6 +59,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if request.headers.get("if-none-match") == config_etag:
             return Response(status_code=304, headers=headers)
         return Response(content=config_bytes, media_type="application/json", headers=headers)
+
+    @application.get("/privacy", response_class=HTMLResponse)
+    def privacy() -> HTMLResponse:
+        return HTMLResponse(content=PRIVACY_HTML)
+
+    @application.get("/support", response_class=HTMLResponse)
+    def support() -> HTMLResponse:
+        return HTMLResponse(content=SUPPORT_HTML)
 
     @application.post("/sync")
     def sync(request: Request) -> JSONResponse:

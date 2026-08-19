@@ -29,7 +29,7 @@ def client(settings: Settings) -> Generator[TestClient]:
 def assert_request_id(response) -> str:
     request_id = response.headers["x-request-id"]
     assert UUID(request_id).version == 4
-    if response.content:
+    if response.content and response.headers["content-type"].startswith("application/json"):
         body = response.json()
         if "requestID" in body:
             assert body["requestID"] == request_id
@@ -48,7 +48,13 @@ def test_config_bytes_and_etag_are_the_exact_canonical_sha256(client: TestClient
 
 @pytest.mark.parametrize(
     ("method", "path", "allow"),
-    [("post", "/health", "GET"), ("post", "/config", "GET"), ("get", "/sync", "POST")],
+    [
+        ("post", "/health", "GET"),
+        ("post", "/config", "GET"),
+        ("post", "/privacy", "GET"),
+        ("post", "/support", "GET"),
+        ("get", "/sync", "POST"),
+    ],
 )
 def test_known_routes_return_exact_405_contract(
     client: TestClient, method: str, path: str, allow: str
@@ -92,6 +98,8 @@ def test_logs_exclude_hostile_url_and_sync_secrets(client: TestClient) -> None:
     ]
     try:
         client.get("/hostile-path-sentinel?value=hostile-query-sentinel")
+        client.get("/privacy")
+        client.get("/support")
         client.post(
             "/sync",
             json={
@@ -106,7 +114,10 @@ def test_logs_exclude_hostile_url_and_sync_secrets(client: TestClient) -> None:
 
     output = "\n".join(captured)
     assert all(secret not in output for secret in secrets)
-    assert all(json.loads(line)["route"] in {"/sync", "unknown"} for line in captured)
+    assert all(
+        json.loads(line)["route"] in {"/privacy", "/support", "/sync", "unknown"}
+        for line in captured
+    )
 
 
 def test_public_responses_have_unique_uuid_request_ids_and_cache_contract(
@@ -117,6 +128,8 @@ def test_public_responses_have_unique_uuid_request_ids_and_cache_contract(
         client.get("/health"),
         config,
         client.get("/config", headers={"If-None-Match": config.headers["etag"]}),
+        client.get("/privacy"),
+        client.get("/support"),
         client.post("/sync", content=b"{", headers={"Content-Type": "application/json"}),
         client.get("/status-review-missing"),
         client.get("/sync"),
