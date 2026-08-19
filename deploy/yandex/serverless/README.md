@@ -115,13 +115,25 @@ must exchange GitHub OIDC for a short-lived Yandex Cloud IAM token.
    ```
 
    Set `YC_REGISTRY_ID` to `crp7vdmqvk61ce7oukqn`.
-9. Before enabling production OIDC or automatic deployment, create and enforce
-   GitHub branch protection for exact branch `main`. Require a pull request
-   before merging with at least one approving review and enable **Do not allow
-   bypassing the above settings**. Leave **Allow force pushes** disabled. Leave
-   **Allow deletions** disabled. Verify the effective `main` branch
-   protection rule in repository settings, record its read-back evidence, and
-   stop if any of those controls is absent.
+9. Before enabling production OIDC or automatic deployment, create or promote
+   the remote `main` branch from the reviewed local commit and prove that the
+   remote ref points to the same immutable SHA:
+
+   ```bash
+   EXPECTED_MAIN_SHA="$(git rev-parse HEAD)"
+   git show --no-patch "$EXPECTED_MAIN_SHA"
+   git push origin "$EXPECTED_MAIN_SHA:refs/heads/main"
+   REMOTE_MAIN_SHA="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+   test "$REMOTE_MAIN_SHA" = "$EXPECTED_MAIN_SHA"
+   ```
+
+   Stop if the SHA comparison fails. Then create and enforce GitHub branch
+   protection for exact branch `main`. Require a pull request before merging
+   with at least one approving review and enable **Do not allow bypassing the
+   above settings**. Leave **Allow force pushes** disabled. Leave **Allow
+   deletions** disabled. Verify the effective `main` branch protection rule in
+   repository settings, record its read-back evidence, and stop if any of
+   those controls is absent.
 10. Create the workload identity federation `yperson-github-oidc` with the exact
     issuer, audience, and JWKS values above. Read it back and record its
     federation ID and configured values.
@@ -131,9 +143,16 @@ must exchange GitHub OIDC for a short-lived Yandex Cloud IAM token.
     `repo:grigorenkokoko/YPerson:ref:refs/heads/main`. Read it back and verify
     all three links. Creating this credential enables the workflow's automatic
     production authentication path; keep static credentials absent.
-12. Manually dispatch **Deploy backend to Yandex Serverless Containers**. This
-    creates the first revision only after the Gateway domain and all ten
-    repository variables exist.
+12. Dispatch **Deploy backend to Yandex Serverless Containers** explicitly
+    from the verified production ref:
+
+    ```bash
+    gh workflow run deploy-serverless.yml --ref main
+    ```
+
+    Verify that the queued run names branch `main` and commit
+    `EXPECTED_MAIN_SHA`. This creates the first revision only after the Gateway
+    domain and all ten repository variables exist.
 13. Repeat the post-revision effective-access audit with the three commands from
     step 5 and apply the same public-group rejection. Then retrieve the
     container's direct URL and record it:
@@ -142,14 +161,19 @@ must exchange GitHub OIDC for a short-lived Yandex Cloud IAM token.
     CONTAINER_URL="$(yc serverless container get \
       --id "$YC_HTTP_CONTAINER_ID" --format json | jq -r '.url')"
     test -n "$CONTAINER_URL"
+    DIRECT_HEALTH_URL="${CONTAINER_URL%/}/health"
     DIRECT_STATUS="$(curl --silent --show-error --output /dev/null \
-      --write-out '%{http_code}' "$CONTAINER_URL")"
+      --write-out '%{http_code}' "$DIRECT_HEALTH_URL")"
+    case "$DIRECT_STATUS" in
+      401|403) ;;
+      *) echo "expected direct authorization denial, got $DIRECT_STATUS" >&2; exit 1 ;;
+    esac
     ```
 
-    Send that request without an `Authorization` header. Require
-    `DIRECT_STATUS` to be outside `200` through `299`; a `2xx` response means
-    the container is public and the bootstrap must stop. Do not make the
-    container public for this negative test.
+    Send that `/health` request without an `Authorization` header. Require the
+    authorization-layer denial `401` or `403`; any application response such
+    as `200` or `404`, and every other status, fails the privacy gate. Do not
+    make the container public for this negative test.
 
     Through `https://${GATEWAY_DOMAIN}`, verify these exact Gateway contracts:
 

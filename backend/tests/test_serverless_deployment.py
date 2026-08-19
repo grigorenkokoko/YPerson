@@ -490,7 +490,7 @@ def test_runbook_creates_container_before_container_scoped_bindings_and_gateway(
         "Create the empty private `yperson-api` container object",
         "Grant the container-scoped bindings",
         "create `yperson-api-gateway`",
-        "manually dispatch",
+        "gh workflow run deploy-serverless.yml --ref main",
     )
 
 
@@ -508,7 +508,7 @@ def test_runbook_creates_named_federation_and_separate_exact_credential() -> Non
         source,
         "Create the workload identity federation `yperson-github-oidc`",
         "Create a separate federated credential",
-        "manually dispatch",
+        "gh workflow run deploy-serverless.yml --ref main",
     )
     assert "Do not create an authorized-key JSON or GitHub secret" in source
 
@@ -523,11 +523,20 @@ def test_runbook_protects_main_before_enabling_production_oidc() -> None:
     assert "Do not allow bypassing the above settings" in normalized_source
     assert "Leave **Allow force pushes** disabled" in normalized_source
     assert "Leave **Allow deletions** disabled" in normalized_source
+    for required_fragment in (
+        "EXPECTED_MAIN_SHA",
+        "refs/heads/main",
+        "REMOTE_MAIN_SHA",
+        "gh workflow run deploy-serverless.yml --ref main",
+    ):
+        assert required_fragment in source
     assert_runbook_order(
         source,
+        "Create or promote the remote `main` branch",
+        "REMOTE_MAIN_SHA",
         "Verify the effective `main` branch protection rule",
         "Create a separate federated credential",
-        "manually dispatch",
+        "gh workflow run deploy-serverless.yml --ref main",
     )
 
 
@@ -546,8 +555,11 @@ def test_runbook_audits_effective_access_and_rejects_direct_public_invocation() 
         "serverless-containers.editor",
         "serverless-containers.admin",
         "CONTAINER_URL",
+        "DIRECT_HEALTH_URL",
         "without an `Authorization` header",
-        "outside `200` through `299`",
+        "401",
+        "403",
+        "authorization-layer denial",
         "Do not make the container public",
     ):
         assert required_fragment in source
@@ -556,7 +568,7 @@ def test_runbook_audits_effective_access_and_rejects_direct_public_invocation() 
         source,
         "Run the pre-revision effective-access audit",
         "create `yperson-api-gateway`",
-        "manually dispatch",
+        "gh workflow run deploy-serverless.yml --ref main",
         "Repeat the post-revision effective-access audit",
         "CONTAINER_URL",
         "Through `https://${GATEWAY_DOMAIN}`, verify",
