@@ -43,9 +43,14 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
                 AVNumberOfChannelsKey: 1,
                 AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
             ]
-            recorder = try AVAudioRecorder(url: recordingURL, settings: settings)
-            recorder?.delegate = self
-            recorder?.record()
+            let recorder = try AVAudioRecorder(url: recordingURL, settings: settings)
+            recorder.delegate = self
+            guard recorder.prepareToRecord(), recorder.record() else {
+                try? audioSession.setActive(false)
+                state = .empty
+                return
+            }
+            self.recorder = recorder
             state = .recording
             let item = DispatchWorkItem { [weak self] in self?.stopRecording() }
             stopWorkItem = item
@@ -56,10 +61,15 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
     func stopRecording() {
         stopWorkItem?.cancel()
         stopWorkItem = nil
-        recorder?.stop()
-        let duration = recorder?.currentTime ?? 0
-        recorder = nil
+        guard let recorder else {
+            state = .empty
+            return
+        }
+        let elapsedTime = recorder.currentTime
+        recorder.stop()
+        self.recorder = nil
         try? audioSession.setActive(false)
+        let duration = (try? AVAudioPlayer(contentsOf: recordingURL).duration) ?? elapsedTime
         state = duration > 0 ? .preview(duration: duration) : .empty
     }
 
