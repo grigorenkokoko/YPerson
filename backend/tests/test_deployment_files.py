@@ -142,7 +142,9 @@ def assert_every_locked_requirement_has_sha256_hash(path: Path) -> None:
     entries = locked_requirement_entries(path)
     assert entries, f"{path.name} has no pinned requirement entries"
     missing_hashes = sorted(
-        name for name, lines in entries.items() if not any(SHA256_HASH.fullmatch(line) for line in lines)
+        name
+        for name, lines in entries.items()
+        if not any(SHA256_HASH.fullmatch(line) for line in lines)
     )
     assert not missing_hashes, f"{path.name} has unhashed pinned requirements: {missing_hashes}"
 

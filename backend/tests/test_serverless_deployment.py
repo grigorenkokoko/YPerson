@@ -43,8 +43,7 @@ DEPLOY_SCRIPT = ROOT / "deploy" / "yandex" / "serverless" / "deploy.sh"
 WORKFLOW = ROOT / ".github" / "workflows" / "deploy-serverless.yml"
 TEST_IAM_TOKEN = "test-iam-token"
 ACTIVE_REVISION_JSON = (
-    '[{"id":"inactive-revision","status":"INACTIVE"},'
-    '{"id":"previous-revision","status":"ACTIVE"}]'
+    '[{"id":"inactive-revision","status":"INACTIVE"},{"id":"previous-revision","status":"ACTIVE"}]'
 )
 ACTIVE_REVISION_FILTER = 'map(select(.status == "ACTIVE")) | first | .id // empty'
 REQUIRED_DEPLOYMENT_VALUES = (
@@ -286,9 +285,9 @@ def assert_release_workflow_contract(workflow: dict[str, object], workflow_sourc
         "run": (
             "curl --fail --silent --show-error --location \\\n"
             "  https://storage.yandexcloud.net/yandexcloud-yc/install.sh \\\n"
-            "  | bash -s -- -i \"${RUNNER_TEMP}/yandex-cloud\" -n\n"
-            "echo \"${RUNNER_TEMP}/yandex-cloud/bin\" >> \"${GITHUB_PATH}\"\n"
-            "\"${RUNNER_TEMP}/yandex-cloud/bin/yc\" version\n"
+            '  | bash -s -- -i "${RUNNER_TEMP}/yandex-cloud" -n\n'
+            'echo "${RUNNER_TEMP}/yandex-cloud/bin" >> "${GITHUB_PATH}"\n'
+            '"${RUNNER_TEMP}/yandex-cloud/bin/yc" version\n'
         ),
     }
     assert steps == [
@@ -355,7 +354,9 @@ def test_release_workflow_contract_rejects_security_and_order_regressions(
         steps.insert(0, {"name": "Early deploy", "run": "deploy/yandex/serverless/deploy.sh"})
     else:
         cli_index = next(
-            index for index, step in enumerate(steps) if step.get("name") == "Install Yandex Cloud CLI"
+            index
+            for index, step in enumerate(steps)
+            if step.get("name") == "Install Yandex Cloud CLI"
         )
         steps.append(steps.pop(cli_index))
 
@@ -398,7 +399,9 @@ def test_gateway_exposes_only_fail_closed_routes() -> None:
 
     def all_mappings(value: object) -> list[dict[str, object]]:
         if isinstance(value, dict):
-            return [value] + [mapping for child in value.values() for mapping in all_mappings(child)]
+            return [value] + [
+                mapping for child in value.values() for mapping in all_mappings(child)
+            ]
         if isinstance(value, list):
             return [mapping for child in value for mapping in all_mappings(child)]
         return []
@@ -434,9 +437,7 @@ def test_gateway_matches_the_approved_openapi_operations() -> None:
     }
     assert paths["/sync"]["post"]["operationId"] == "syncDisabled"
     assert paths["/sync"]["post"]["responses"] == {
-        "503": {
-            "description": "Sync is disabled until installation authentication is enabled"
-        }
+        "503": {"description": "Sync is disabled until installation authentication is enabled"}
     }
 
 
@@ -655,9 +656,11 @@ def test_deploy_script_rolls_back_active_revision_after_failed_health_check(tmp_
         "--revision-id",
         "previous-revision",
     ]
-    assert commands.index(next(command for command in commands if "list" in command)) < commands.index(
-        next(command for command in commands if "deploy" in command)
-    ) < commands.index(commands[-1])
+    assert (
+        commands.index(next(command for command in commands if "list" in command))
+        < commands.index(next(command for command in commands if "deploy" in command))
+        < commands.index(commands[-1])
+    )
     assert Path(environment["JQ_INPUT_LOG"]).read_text() == ACTIVE_REVISION_JSON
     assert Path(environment["JQ_FILTER_LOG"]).read_text() == ACTIVE_REVISION_FILTER
     assert_token_is_not_printed(result)
