@@ -1,0 +1,79 @@
+name: Deploy backend to Yandex Serverless Containers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - backend/**
+      - deploy/yandex/serverless/**
+      - .github/workflows/deploy-serverless.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: production-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend test dependencies
+        run: pip install --require-hashes -r backend/requirements-dev.lock
+
+      - name: Test backend
+        working-directory: backend
+        run: python -m pytest tests -q
+
+      - name: Get Yandex Cloud IAM token
+        id: iam-token
+        uses: docker://ghcr.io/yc-actions/yc-iam-token-fed:1.0.0
+        with:
+          yc-sa-id: ${{ vars.YC_DEPLOYER_SA_ID }}
+
+      - name: Login to Yandex Container Registry
+        env:
+          YC_IAM_TOKEN: ${{ steps.iam-token.outputs.token }}
+        run: printf '%s' "${YC_IAM_TOKEN}" | docker login --username iam --password-stdin cr.yandex
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: cr.yandex/${{ vars.YC_REGISTRY_ID }}/backend:${{ github.sha }}
+
+      - name: Install Yandex Cloud CLI
+        run: |
+          curl --fail --silent --show-error --location \
+            https://storage.yandexcloud.net/yandexcloud-yc/install.sh \
+            | bash -s -- -i "${RUNNER_TEMP}/yandex-cloud" -n
+          echo "${RUNNER_TEMP}/yandex-cloud/bin" >> "${GITHUB_PATH}"
+          "${RUNNER_TEMP}/yandex-cloud/bin/yc" version
+
+      - name: Deploy HTTP revision
+        env:
+          YC_FOLDER_ID: ${{ vars.YC_FOLDER_ID }}
+          YC_HTTP_CONTAINER_ID: ${{ vars.YC_HTTP_CONTAINER_ID }}
+          YC_RUNTIME_SA_ID: ${{ vars.YC_RUNTIME_SA_ID }}
+          YC_HEALTH_URL: ${{ vars.YC_HEALTH_URL }}
+          YPERSON_CONFIG_VERSION: ${{ vars.YPERSON_CONFIG_VERSION }}
+          YPERSON_PRIVACY_URL: https://yperson.ru/privacy
+          YPERSON_SUPPORT_URL: https://yperson.ru/support
+          YC_IAM_TOKEN: ${{ steps.iam-token.outputs.token }}
+          IMAGE_URL: cr.yandex/${{ vars.YC_REGISTRY_ID }}/backend:${{ github.sha }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: deploy/yandex/serverless/deploy.sh

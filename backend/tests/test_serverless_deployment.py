@@ -40,6 +40,7 @@ FORBIDDEN_SECRET_KEY_PARTS = (
     "apns",
 )
 DEPLOY_SCRIPT = ROOT / "deploy" / "yandex" / "serverless" / "deploy.sh"
+WORKFLOW = ROOT / ".github" / "workflows" / "deploy-serverless.yml"
 TEST_IAM_TOKEN = "test-iam-token"
 ACTIVE_REVISION_JSON = (
     '[{"id":"inactive-revision","status":"INACTIVE"},'
@@ -179,6 +180,133 @@ def gateway_spec() -> dict[str, object]:
     spec = yaml.safe_load(GATEWAY.read_text())
     assert isinstance(spec, dict)
     return spec
+
+
+def test_release_workflow_deploys_an_immutable_database_free_backend() -> None:
+    """The production release path tests, pushes, then deploys with OIDC only.
+
+    Removing any of these safeguards would allow an untested, mutable, or
+    credential-bearing release workflow to reach production.
+    """
+
+    workflow_source = WORKFLOW.read_text()
+    workflow = yaml.safe_load(workflow_source)
+    assert isinstance(workflow, dict)
+
+    # PyYAML 1.1 parses the YAML key ``on`` as boolean True.
+    triggers = workflow.get("on", workflow.get(True))
+    assert triggers == {
+        "push": {
+            "branches": ["main"],
+            "paths": [
+                "backend/**",
+                "deploy/yandex/serverless/**",
+                ".github/workflows/deploy-serverless.yml",
+            ],
+        },
+        "workflow_dispatch": None,
+    }
+    assert workflow["permissions"] == {"contents": "read", "id-token": "write"}
+    assert workflow["concurrency"] == {
+        "group": "production-backend",
+        "cancel-in-progress": False,
+    }
+
+    jobs = workflow["jobs"]
+    assert set(jobs) == {"deploy"}
+    deploy_job = jobs["deploy"]
+    assert deploy_job["runs-on"] == "ubuntu-latest"
+    assert "services" not in deploy_job
+    steps = deploy_job["steps"]
+
+    assert {"uses": "actions/checkout@v4"} in steps
+    assert {
+        "uses": "actions/setup-python@v5",
+        "with": {"python-version": "3.12"},
+    } in steps
+    assert {
+        "name": "Install backend test dependencies",
+        "run": "pip install --require-hashes -r backend/requirements-dev.lock",
+    } in steps
+    assert {
+        "name": "Test backend",
+        "working-directory": "backend",
+        "run": "python -m pytest tests -q",
+    } in steps
+
+    iam_step = {
+        "name": "Get Yandex Cloud IAM token",
+        "id": "iam-token",
+        "uses": "docker://ghcr.io/yc-actions/yc-iam-token-fed:1.0.0",
+        "with": {"yc-sa-id": "${{ vars.YC_DEPLOYER_SA_ID }}"},
+    }
+    image_step = {
+        "name": "Build and push backend image",
+        "uses": "docker/build-push-action@v6",
+        "with": {
+            "context": ".",
+            "file": "backend/Dockerfile",
+            "platforms": "linux/amd64",
+            "push": True,
+            "tags": "cr.yandex/${{ vars.YC_REGISTRY_ID }}/backend:${{ github.sha }}",
+        },
+    }
+    login_step = {
+        "name": "Login to Yandex Container Registry",
+        "env": {"YC_IAM_TOKEN": "${{ steps.iam-token.outputs.token }}"},
+        "run": (
+            "printf '%s' \"${YC_IAM_TOKEN}\" | docker login --username iam "
+            "--password-stdin cr.yandex"
+        ),
+    }
+    deploy_step = {
+        "name": "Deploy HTTP revision",
+        "env": {
+            "YC_FOLDER_ID": "${{ vars.YC_FOLDER_ID }}",
+            "YC_HTTP_CONTAINER_ID": "${{ vars.YC_HTTP_CONTAINER_ID }}",
+            "YC_RUNTIME_SA_ID": "${{ vars.YC_RUNTIME_SA_ID }}",
+            "YC_HEALTH_URL": "${{ vars.YC_HEALTH_URL }}",
+            "YPERSON_CONFIG_VERSION": "${{ vars.YPERSON_CONFIG_VERSION }}",
+            "YPERSON_PRIVACY_URL": "https://yperson.ru/privacy",
+            "YPERSON_SUPPORT_URL": "https://yperson.ru/support",
+            "YC_IAM_TOKEN": "${{ steps.iam-token.outputs.token }}",
+            "IMAGE_URL": "cr.yandex/${{ vars.YC_REGISTRY_ID }}/backend:${{ github.sha }}",
+            "GITHUB_SHA": "${{ github.sha }}",
+        },
+        "run": "deploy/yandex/serverless/deploy.sh",
+    }
+    assert iam_step in steps
+    assert login_step in steps
+    assert {"uses": "docker/setup-buildx-action@v3"} in steps
+    assert image_step in steps
+    assert deploy_step in steps
+    test_step = next(step for step in steps if step.get("name") == "Test backend")
+    assert steps.index(test_step) < steps.index(image_step)
+    assert steps.index(iam_step) < steps.index(login_step) < steps.index(image_step)
+    assert steps.index(image_step) < steps.index(deploy_step)
+
+    install_cli_step = next(step for step in steps if step.get("name") == "Install Yandex Cloud CLI")
+    assert install_cli_step["run"] == (
+        "curl --fail --silent --show-error --location \\\n"
+        "  https://storage.yandexcloud.net/yandexcloud-yc/install.sh \\\n"
+        "  | bash -s -- -i \"${RUNNER_TEMP}/yandex-cloud\" -n\n"
+        "echo \"${RUNNER_TEMP}/yandex-cloud/bin\" >> \"${GITHUB_PATH}\"\n"
+        "\"${RUNNER_TEMP}/yandex-cloud/bin/yc\" version\n"
+    )
+
+    forbidden_references = (
+        "secrets.",
+        "authorized_key",
+        "authorized key",
+        "postgres",
+        "test_database_url",
+        "database",
+        "lockbox",
+        "migration",
+        "vpc",
+    )
+    normalized_source = workflow_source.casefold()
+    assert not any(reference in normalized_source for reference in forbidden_references)
 
 
 def test_gateway_exposes_only_fail_closed_routes() -> None:
