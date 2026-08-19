@@ -1,2 +1,2 @@
 #include "Base.xcconfig"
-API_BASE_URL = https:/$()/api.example.invalid
+API_BASE_URL = https:/$()/d5dl7dc4rc07v7jnvlf2.p8361f8z.apigw.yandexcloud.net
