@@ -66,6 +66,7 @@ jobs:
           context: .
           file: backend/Dockerfile
           platforms: linux/amd64
+          provenance: false
           push: true
           tags: cr.yandex/${{ vars.YC_REGISTRY_ID }}/backend:${{ github.sha }}
 
