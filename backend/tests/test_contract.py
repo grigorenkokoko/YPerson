@@ -36,7 +36,7 @@ def valid_sync(**overrides: object) -> dict[str, object]:
 
 @pytest.fixture
 def settings(session_factory: sessionmaker[Session]) -> Settings:
-    database_url = str(session_factory.kw["bind"].url)
+    database_url = session_factory.kw["bind"].url.render_as_string(hide_password=False)
     return Settings(DATABASE_URL=database_url, _env_file=None)
 
 
