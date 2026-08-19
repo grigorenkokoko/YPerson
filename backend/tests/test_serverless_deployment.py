@@ -12,6 +12,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 GATEWAY = ROOT / "deploy" / "yandex" / "serverless" / "api-gateway.yaml"
 CONFIG_EXAMPLE = ROOT / "deploy" / "yandex" / "serverless" / "config.example.env"
+RUNBOOK = ROOT / "deploy" / "yandex" / "serverless" / "README.md"
 
 EXPECTED_CONFIG = {
     "YC_FOLDER_ID": "",
@@ -188,6 +189,22 @@ def release_workflow() -> tuple[dict[str, object], str]:
     workflow = yaml.safe_load(workflow_source)
     assert isinstance(workflow, dict)
     return workflow, workflow_source
+
+
+def bootstrap_runbook() -> str:
+    """Load the operator procedure that controls external production bootstrap."""
+
+    return RUNBOOK.read_text()
+
+
+def assert_runbook_order(source: str, *milestones: str) -> None:
+    """Require security-sensitive bootstrap milestones to stay executable in order."""
+
+    normalized_source = " ".join(source.split()).casefold()
+    positions = [
+        normalized_source.index(" ".join(milestone.split()).casefold()) for milestone in milestones
+    ]
+    assert positions == sorted(positions), milestones
 
 
 def assert_release_workflow_contract(workflow: dict[str, object], workflow_source: str) -> None:
@@ -459,6 +476,91 @@ def test_production_deployment_artifacts_do_not_name_a_custom_domain_or_tls() ->
     for artifact in production_artifacts:
         artifact_source = artifact.read_text().casefold()
         assert not any(fragment in artifact_source for fragment in prohibited_fragments)
+
+
+def test_runbook_creates_container_before_container_scoped_bindings_and_gateway() -> None:
+    """Container roles must target an existing private container before Gateway creation."""
+
+    source = bootstrap_runbook()
+
+    assert_runbook_order(
+        source,
+        "Create the three service accounts",
+        "Grant the registry-scoped bindings",
+        "Create the empty private `yperson-api` container object",
+        "Grant the container-scoped bindings",
+        "create `yperson-api-gateway`",
+        "manually dispatch",
+    )
+
+
+def test_runbook_creates_named_federation_and_separate_exact_credential() -> None:
+    """GitHub OIDC needs both Yandex IAM objects and the exact production subject."""
+
+    source = bootstrap_runbook()
+
+    assert "Federation name: `yperson-github-oidc`" in source
+    assert "Issuer: https://token.actions.githubusercontent.com" in source
+    assert "Audience: https://github.com/grigorenkokoko" in source
+    assert "JWKS: https://token.actions.githubusercontent.com/.well-known/jwks" in source
+    assert ("External subject ID: `repo:grigorenkokoko/YPerson:ref:refs/heads/main`") in source
+    assert_runbook_order(
+        source,
+        "Create the workload identity federation `yperson-github-oidc`",
+        "Create a separate federated credential",
+        "manually dispatch",
+    )
+    assert "Do not create an authorized-key JSON or GitHub secret" in source
+
+
+def test_runbook_protects_main_before_enabling_production_oidc() -> None:
+    """A protected production branch must gate the credential and automatic deploy path."""
+
+    source = bootstrap_runbook()
+
+    normalized_source = " ".join(source.split())
+    assert "Require a pull request before merging" in normalized_source
+    assert "Do not allow bypassing the above settings" in normalized_source
+    assert "Leave **Allow force pushes** disabled" in normalized_source
+    assert "Leave **Allow deletions** disabled" in normalized_source
+    assert_runbook_order(
+        source,
+        "Verify the effective `main` branch protection rule",
+        "Create a separate federated credential",
+        "manually dispatch",
+    )
+
+
+def test_runbook_audits_effective_access_and_rejects_direct_public_invocation() -> None:
+    """Gateway-only public access needs IAM and direct-container negative verification."""
+
+    source = bootstrap_runbook()
+
+    for required_fragment in (
+        "yc serverless container list-access-bindings",
+        "yc resource-manager folder list-access-bindings",
+        "yc resource-manager cloud list-access-bindings",
+        "allUsers",
+        "allAuthenticatedUsers",
+        "serverless-containers.containerInvoker",
+        "serverless-containers.editor",
+        "serverless-containers.admin",
+        "CONTAINER_URL",
+        "without an `Authorization` header",
+        "outside `200` through `299`",
+        "Do not make the container public",
+    ):
+        assert required_fragment in source
+
+    assert_runbook_order(
+        source,
+        "Run the pre-revision effective-access audit",
+        "create `yperson-api-gateway`",
+        "manually dispatch",
+        "Repeat the post-revision effective-access audit",
+        "CONTAINER_URL",
+        "Through `https://${GATEWAY_DOMAIN}`, verify",
+    )
 
 
 def test_config_parser_rejects_duplicate_and_secret_bearing_keys() -> None:

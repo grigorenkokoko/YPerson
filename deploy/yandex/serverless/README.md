@@ -1,7 +1,8 @@
 # Domainless serverless bootstrap
 
 This is the one-time operator runbook for the database-free YPerson backend.
-Perform the steps in this order. The deployment workflow is
+Perform the steps in order and stop if any verification fails. The deployment
+workflow is
 [`../../../.github/workflows/deploy-serverless.yml`](../../../.github/workflows/deploy-serverless.yml),
 the Gateway specification is [`api-gateway.yaml`](api-gateway.yaml), and the
 revision deployment with health-check rollback is [`deploy.sh`](deploy.sh).
@@ -25,9 +26,9 @@ YDB, PostgreSQL, Lockbox, VPC attachment, migration container, or database
 security group. Do not create or configure any of those resources for this
 runbook.
 
-## Least-privilege identities and GitHub OIDC
+## Least-privilege target state
 
-Create the three named service accounts and grant only these scoped bindings:
+The completed bootstrap must have only these intended bindings:
 
 | Service account | Binding |
 | --- | --- |
@@ -35,33 +36,70 @@ Create the three named service accounts and grant only these scoped bindings:
 | `yperson-gateway` | `serverless-containers.containerInvoker` on `yperson-api` |
 | `yperson-github` | `container-registry.images.pusher` on the registry; `serverless-containers.editor` on `yperson-api`; `iam.serviceAccounts.user` on `yperson-runtime` |
 
-Configure workload identity federation for `yperson-github` with these exact
-values:
+The order below deliberately creates each target resource before assigning a
+binding to it.
+
+## GitHub OIDC target state
+
+Create two distinct Yandex IAM objects: a named workload identity federation
+and a federated credential linking that federation to `yperson-github`.
 
 ```text
+Federation name: `yperson-github-oidc`
 Issuer: https://token.actions.githubusercontent.com
 Audience: https://github.com/grigorenkokoko
 JWKS: https://token.actions.githubusercontent.com/.well-known/jwks
-Subject: repo:grigorenkokoko/YPerson:ref:refs/heads/main
+External subject ID: `repo:grigorenkokoko/YPerson:ref:refs/heads/main`
 ```
 
-The workflow exchanges its GitHub Actions identity token for a Yandex Cloud IAM
-token. Do not create an authorized-key JSON or GitHub secret.
+The issuer, audience, and JWKS configure the federation. The external subject
+ID configures the separate federated credential; it is not a federation
+property. Do not create an authorized-key JSON or GitHub secret. The workflow
+must exchange GitHub OIDC for a short-lived Yandex Cloud IAM token.
 
 ## Bootstrap order
 
-1. Create the three service accounts and their scoped bindings.
-2. Create the private `yperson-api` container object without publishing a
-   revision.
-3. In a temporary rendered copy of [`api-gateway.yaml`](api-gateway.yaml), fill
+1. Create the three service accounts: `yperson-runtime`, `yperson-gateway`, and
+   `yperson-github`.
+2. Grant the registry-scoped bindings: give `yperson-runtime`
+   `container-registry.images.puller` and `yperson-github`
+   `container-registry.images.pusher` on registry `crp7vdmqvk61ce7oukqn`.
+   Also grant `yperson-github` `iam.serviceAccounts.user` on the existing
+   `yperson-runtime` account.
+3. Create the empty private `yperson-api` container object without publishing
+   a revision. Record its ID as `YC_HTTP_CONTAINER_ID`. Do not make the
+   container public.
+4. Grant the container-scoped bindings on the now-existing `yperson-api`
+   container: give `yperson-gateway`
+   `serverless-containers.containerInvoker` and `yperson-github`
+   `serverless-containers.editor`.
+5. Run the pre-revision effective-access audit. Container role listings omit
+   inherited roles, so inspect the direct container, folder, and cloud bindings
+   and save all three outputs:
+
+   ```bash
+   YC_CLOUD_ID="$(yc resource-manager folder get "$YC_FOLDER_ID" \
+     --format json | jq -r '.cloud_id')"
+   yc serverless container list-access-bindings --name yperson-api
+   yc resource-manager folder list-access-bindings "$YC_FOLDER_ID"
+   yc resource-manager cloud list-access-bindings "$YC_CLOUD_ID"
+   ```
+
+   At every inspected scope, reject any binding for `allUsers` or
+   `allAuthenticatedUsers` that grants `serverless-containers.containerInvoker`,
+   `serverless-containers.editor`, `serverless-containers.admin`, `editor`, or
+   `admin`. Stop if one exists; do not continue until it is removed through a
+   separately reviewed access change. Do not make the container public to test
+   access.
+6. In a temporary rendered copy of [`api-gateway.yaml`](api-gateway.yaml), fill
    only `YC_HTTP_CONTAINER_ID` and `YC_GATEWAY_SA_ID`. Reject the file if any
    literal `${` remains, then create `yperson-api-gateway` from that rendered
    copy.
-4. Read and record the Gateway `domain` field as `GATEWAY_DOMAIN`. Its base URL
+7. Read and record the Gateway `domain` field as `GATEWAY_DOMAIN`. Its base URL
    is `https://${GATEWAY_DOMAIN}`. This API Gateway technical HTTPS domain is
    the permanent production address while the same Gateway resource exists;
    this architecture has no later custom-domain cutover.
-5. Configure exactly these ten GitHub repository variables:
+8. Configure exactly these ten GitHub repository variables:
 
    ```text
    YC_DEPLOYER_SA_ID
@@ -76,28 +114,60 @@ token. Do not create an authorized-key JSON or GitHub secret.
    YPERSON_SUPPORT_URL=https://${GATEWAY_DOMAIN}/support
    ```
 
-   Set `YC_REGISTRY_ID` to the existing registry ID
-   `crp7vdmqvk61ce7oukqn`.
-6. Configure workload identity federation and manually dispatch **Deploy
-   backend to Yandex Serverless Containers**. This creates the first revision.
-7. Through `https://${GATEWAY_DOMAIN}`, verify these exact status and content
-   contracts:
+   Set `YC_REGISTRY_ID` to `crp7vdmqvk61ce7oukqn`.
+9. Before enabling production OIDC or automatic deployment, create and enforce
+   GitHub branch protection for exact branch `main`. Require a pull request
+   before merging with at least one approving review and enable **Do not allow
+   bypassing the above settings**. Leave **Allow force pushes** disabled. Leave
+   **Allow deletions** disabled. Verify the effective `main` branch
+   protection rule in repository settings, record its read-back evidence, and
+   stop if any of those controls is absent.
+10. Create the workload identity federation `yperson-github-oidc` with the exact
+    issuer, audience, and JWKS values above. Read it back and record its
+    federation ID and configured values.
+11. Only after branch protection is verified, create a separate federated
+    credential linking the recorded federation ID, service account
+    `yperson-github`, and external subject ID
+    `repo:grigorenkokoko/YPerson:ref:refs/heads/main`. Read it back and verify
+    all three links. Creating this credential enables the workflow's automatic
+    production authentication path; keep static credentials absent.
+12. Manually dispatch **Deploy backend to Yandex Serverless Containers**. This
+    creates the first revision only after the Gateway domain and all ten
+    repository variables exist.
+13. Repeat the post-revision effective-access audit with the three commands from
+    step 5 and apply the same public-group rejection. Then retrieve the
+    container's direct URL and record it:
 
-   | Request | Required result |
-   | --- | --- |
-   | `GET /health` | `200` JSON with `status: "ok"` and the configured `version` |
-   | `GET /config` | `200` canonical public-configuration JSON, `ETag`, and `Cache-Control: public, max-age=60`; an equal `If-None-Match` returns `304` with an empty body |
-   | `GET /privacy` | `200` HTML technical privacy page |
-   | `GET /support` | `200` HTML technical support page |
-   | `POST /sync` | `503` Gateway dummy JSON `{"error":"temporarily_unavailable","message":"sync is not enabled"}` |
+    ```bash
+    CONTAINER_URL="$(yc serverless container get \
+      --id "$YC_HTTP_CONTAINER_ID" --format json | jq -r '.url')"
+    test -n "$CONTAINER_URL"
+    DIRECT_STATUS="$(curl --silent --show-error --output /dev/null \
+      --write-out '%{http_code}' "$CONTAINER_URL")"
+    ```
 
-8. Put `https://${GATEWAY_DOMAIN}` in `Config/Release.xcconfig` as
-   `API_BASE_URL`. Put the `/privacy` and `/support` URLs in
-   `Config/Base.xcconfig` as `PRIVACY_POLICY_URL` and `SUPPORT_URL`, using the
-   repository's `https:/$()/...` xcconfig escaping.
-9. Regenerate the Xcode project if required, build the Release configuration,
-   and verify the resolved `API_BASE_URL`, `PRIVACY_POLICY_URL`, and
-   `SUPPORT_URL` build settings before installing on an iPhone.
+    Send that request without an `Authorization` header. Require
+    `DIRECT_STATUS` to be outside `200` through `299`; a `2xx` response means
+    the container is public and the bootstrap must stop. Do not make the
+    container public for this negative test.
+
+    Through `https://${GATEWAY_DOMAIN}`, verify these exact Gateway contracts:
+
+    | Request | Required result |
+    | --- | --- |
+    | `GET /health` | `200` JSON with `status: "ok"` and the configured `version` |
+    | `GET /config` | `200` canonical public-configuration JSON, `ETag`, and `Cache-Control: public, max-age=60`; an equal `If-None-Match` returns `304` with an empty body |
+    | `GET /privacy` | `200` HTML technical privacy page |
+    | `GET /support` | `200` HTML technical support page |
+    | `POST /sync` | `503` Gateway dummy JSON `{"error":"temporarily_unavailable","message":"sync is not enabled"}` |
+
+14. Put `https://${GATEWAY_DOMAIN}` in `Config/Release.xcconfig` as
+    `API_BASE_URL`. Put the `/privacy` and `/support` URLs in
+    `Config/Base.xcconfig` as `PRIVACY_POLICY_URL` and `SUPPORT_URL`, using the
+    repository's `https:/$()/...` xcconfig escaping.
+15. Regenerate the Xcode project if required, build the Release configuration,
+    and verify the resolved `API_BASE_URL`, `PRIVACY_POLICY_URL`, and
+    `SUPPORT_URL` build settings before installing on an iPhone.
 
 ## Rollback and physical-iPhone gate
 
@@ -110,9 +180,20 @@ yc --folder-id "$YC_FOLDER_ID" serverless container rollback \
 ```
 
 The deployment script also attempts this rollback after a failed health check
-when a previous active revision exists. After rollback, recheck all five route
-contracts through the Gateway domain.
+when a previous active revision exists. After rollback, repeat the
+post-revision effective-access audit, the unauthenticated direct-URL denial
+check, and all five Gateway route contracts.
 
 A physical iPhone must successfully load `/config`, `/privacy`, and `/support`
 through API Gateway before release installation is accepted. The legacy VM is
 neither a dependency nor a fallback in this runbook; no VM action is included.
+
+## Official procedures
+
+- [Create a Serverless Container](https://yandex.cloud/en/docs/serverless-containers/operations/create)
+- [Assign roles for a container](https://yandex.cloud/en/docs/serverless-containers/operations/role-add)
+- [View direct container roles](https://yandex.cloud/en/docs/serverless-containers/operations/role-list)
+- [View assigned and inherited roles](https://yandex.cloud/en/docs/iam/operations/roles/get-assigned-roles)
+- [Configure GitHub workload identity federation and federated credentials](https://yandex.cloud/en/docs/iam/tutorials/ci-cd-github-functions)
+- [Configure API Gateway Serverless Containers integration](https://yandex.cloud/en/docs/api-gateway/concepts/extensions/containers)
+- [About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
