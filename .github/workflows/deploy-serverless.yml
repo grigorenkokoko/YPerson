@@ -71,8 +71,8 @@ jobs:
           YC_RUNTIME_SA_ID: ${{ vars.YC_RUNTIME_SA_ID }}
           YC_HEALTH_URL: ${{ vars.YC_HEALTH_URL }}
           YPERSON_CONFIG_VERSION: ${{ vars.YPERSON_CONFIG_VERSION }}
-          YPERSON_PRIVACY_URL: https://yperson.ru/privacy
-          YPERSON_SUPPORT_URL: https://yperson.ru/support
+          YPERSON_PRIVACY_URL: ${{ vars.YPERSON_PRIVACY_URL }}
+          YPERSON_SUPPORT_URL: ${{ vars.YPERSON_SUPPORT_URL }}
           YC_IAM_TOKEN: ${{ steps.iam-token.outputs.token }}
           IMAGE_URL: cr.yandex/${{ vars.YC_REGISTRY_ID }}/backend:${{ github.sha }}
           GITHUB_SHA: ${{ github.sha }}

@@ -22,8 +22,8 @@ EXPECTED_CONFIG = {
     "YC_GATEWAY_SA_ID": "",
     "YC_HEALTH_URL": "",
     "YPERSON_CONFIG_VERSION": "2026-08-19.1",
-    "YPERSON_PRIVACY_URL": "https://yperson.ru/privacy",
-    "YPERSON_SUPPORT_URL": "https://yperson.ru/support",
+    "YPERSON_PRIVACY_URL": "",
+    "YPERSON_SUPPORT_URL": "",
 }
 DATABASE_ERA_CONFIG_KEYS = {
     "YC_MIGRATION_CONTAINER_ID",
@@ -116,8 +116,8 @@ def deployment_environment(tmp_path: Path, sha: str = "a" * 40) -> tuple[dict[st
         "YC_RUNTIME_SA_ID": "runtime-sa-id",
         "YC_HEALTH_URL": "https://gateway.example/health",
         "YPERSON_CONFIG_VERSION": "2026-08-19.1",
-        "YPERSON_PRIVACY_URL": "https://yperson.ru/privacy",
-        "YPERSON_SUPPORT_URL": "https://yperson.ru/support",
+        "YPERSON_PRIVACY_URL": "https://gateway.example/privacy",
+        "YPERSON_SUPPORT_URL": "https://gateway.example/support",
         "IMAGE_URL": f"cr.yandex/registry/backend:{sha}",
         "GITHUB_SHA": sha,
         "YC_IAM_TOKEN": TEST_IAM_TOKEN,
@@ -273,8 +273,8 @@ def assert_release_workflow_contract(workflow: dict[str, object], workflow_sourc
             "YC_RUNTIME_SA_ID": "${{ vars.YC_RUNTIME_SA_ID }}",
             "YC_HEALTH_URL": "${{ vars.YC_HEALTH_URL }}",
             "YPERSON_CONFIG_VERSION": "${{ vars.YPERSON_CONFIG_VERSION }}",
-            "YPERSON_PRIVACY_URL": "https://yperson.ru/privacy",
-            "YPERSON_SUPPORT_URL": "https://yperson.ru/support",
+            "YPERSON_PRIVACY_URL": "${{ vars.YPERSON_PRIVACY_URL }}",
+            "YPERSON_SUPPORT_URL": "${{ vars.YPERSON_SUPPORT_URL }}",
             "YC_IAM_TOKEN": "${{ steps.iam-token.outputs.token }}",
             "IMAGE_URL": "cr.yandex/${{ vars.YC_REGISTRY_ID }}/backend:${{ github.sha }}",
             "GITHUB_SHA": "${{ github.sha }}",
@@ -368,10 +368,10 @@ def test_gateway_exposes_only_fail_closed_routes() -> None:
 
     spec = gateway_spec()
     paths = spec["paths"]
-    assert set(paths) == {"/health", "/config", "/sync"}
+    assert set(paths) == {"/health", "/config", "/privacy", "/support", "/sync"}
     assert all("{" not in path and "}" not in path for path in paths)
 
-    for route in ("/health", "/config"):
+    for route in ("/health", "/config", "/privacy", "/support"):
         operations = paths[route]
         assert set(operations) == {"get"}
         operation = operations["get"]
@@ -419,13 +419,18 @@ def test_gateway_matches_the_approved_openapi_operations() -> None:
 
     paths = spec["paths"]
     assert paths["/health"]["get"]["operationId"] == "health"
-    assert paths["/health"]["get"]["responses"] == {
-        "200": {"description": "Service and database are ready"},
-        "503": {"description": "Service or database is unavailable"},
-    }
+    assert paths["/health"]["get"]["responses"] == {"200": {"description": "Service is ready"}}
     assert paths["/config"]["get"]["operationId"] == "config"
     assert paths["/config"]["get"]["responses"] == {
         "200": {"description": "Public application configuration"}
+    }
+    assert paths["/privacy"]["get"]["operationId"] == "privacy"
+    assert paths["/privacy"]["get"]["responses"] == {
+        "200": {"description": "Technical privacy information"}
+    }
+    assert paths["/support"]["get"]["operationId"] == "support"
+    assert paths["/support"]["get"]["responses"] == {
+        "200": {"description": "Technical support information"}
     }
     assert paths["/sync"]["post"]["operationId"] == "syncDisabled"
     assert paths["/sync"]["post"]["responses"] == {
@@ -442,6 +447,17 @@ def test_config_example_exposes_only_approved_non_secret_values() -> None:
 
     assert pairs == EXPECTED_CONFIG
     assert DATABASE_ERA_CONFIG_KEYS.isdisjoint(pairs)
+
+
+def test_production_deployment_artifacts_do_not_name_a_custom_domain_or_tls() -> None:
+    """Bootstrap must work before a custom domain or its TLS certificate exists."""
+
+    production_artifacts = (GATEWAY, CONFIG_EXAMPLE, WORKFLOW)
+    prohibited_fragments = ("yperson.ru", "api.yperson", "certificate", "reg.ru")
+
+    for artifact in production_artifacts:
+        artifact_source = artifact.read_text().casefold()
+        assert not any(fragment in artifact_source for fragment in prohibited_fragments)
 
 
 def test_config_parser_rejects_duplicate_and_secret_bearing_keys() -> None:
@@ -595,8 +611,8 @@ def test_deploy_script_deploys_http_revision_without_database_era_options(tmp_pa
             "--environment",
             (
                 "YPERSON_ENV=staging,YPERSON_CONFIG_VERSION=2026-08-19.1,"
-                "YPERSON_PRIVACY_URL=https://yperson.ru/privacy,"
-                "YPERSON_SUPPORT_URL=https://yperson.ru/support,"
+                "YPERSON_PRIVACY_URL=https://gateway.example/privacy,"
+                "YPERSON_SUPPORT_URL=https://gateway.example/support,"
                 "YPERSON_ANALYTICS_KILL_SWITCH=false,GRACEFUL_SHUTDOWN_SECONDS=15"
             ),
         ],

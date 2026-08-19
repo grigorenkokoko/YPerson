@@ -8,9 +8,7 @@ paths:
       operationId: health
       responses:
         "200":
-          description: Service and database are ready
-        "503":
-          description: Service or database is unavailable
+          description: Service is ready
       x-yc-apigateway-integration:
         type: serverless_containers
         container_id: ${YC_HTTP_CONTAINER_ID}
@@ -21,6 +19,26 @@ paths:
       responses:
         "200":
           description: Public application configuration
+      x-yc-apigateway-integration:
+        type: serverless_containers
+        container_id: ${YC_HTTP_CONTAINER_ID}
+        service_account_id: ${YC_GATEWAY_SA_ID}
+  /privacy:
+    get:
+      operationId: privacy
+      responses:
+        "200":
+          description: Technical privacy information
+      x-yc-apigateway-integration:
+        type: serverless_containers
+        container_id: ${YC_HTTP_CONTAINER_ID}
+        service_account_id: ${YC_GATEWAY_SA_ID}
+  /support:
+    get:
+      operationId: support
+      responses:
+        "200":
+          description: Technical support information
       x-yc-apigateway-integration:
         type: serverless_containers
         container_id: ${YC_HTTP_CONTAINER_ID}
