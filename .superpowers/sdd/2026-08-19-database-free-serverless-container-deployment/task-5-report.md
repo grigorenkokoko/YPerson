@@ -32,3 +32,31 @@ Result: `28 passed in 2.40s`.
 `git diff --check`
 
 Result: no whitespace errors.
+
+## Review follow-up: contract-test hardening
+
+- The contract now rejects every job-level `permissions` override, so the
+  top-level least-privilege mapping remains the deploy job's effective
+  permission set.
+- It requires the exact unique release sequence: checkout, Python setup,
+  hashed dependency installation, backend tests, OIDC token exchange,
+  registry login, Buildx setup, full-SHA image push, official YC CLI install,
+  then deployment. The exact sequence rejects extra credential, login,
+  image-push, and deployment-script operations and leaves all steps subject to
+  GitHub's default success gating.
+- The production workflow required no changes; it already satisfies the
+  strengthened contract.
+
+### Mutation evidence
+
+Initial mutation run deliberately failed with three `DID NOT RAISE` results:
+
+- `jobs.deploy.permissions: write-all`;
+- an extra `deploy/yandex/serverless/deploy.sh` before tests and image push;
+- the YC CLI installer moved after deployment.
+
+After strengthening the contract:
+
+- focused workflow tests: `4 passed, 27 deselected`;
+- complete deployment module: `31 passed in 1.55s`;
+- `ruff check tests/test_serverless_deployment.py`: `All checks passed!`.

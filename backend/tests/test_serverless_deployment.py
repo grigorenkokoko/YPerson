@@ -182,16 +182,21 @@ def gateway_spec() -> dict[str, object]:
     return spec
 
 
-def test_release_workflow_deploys_an_immutable_database_free_backend() -> None:
-    """The production release path tests, pushes, then deploys with OIDC only.
-
-    Removing any of these safeguards would allow an untested, mutable, or
-    credential-bearing release workflow to reach production.
-    """
+def release_workflow() -> tuple[dict[str, object], str]:
+    """Load the parsed release workflow and its source for contract checks."""
 
     workflow_source = WORKFLOW.read_text()
     workflow = yaml.safe_load(workflow_source)
     assert isinstance(workflow, dict)
+    return workflow, workflow_source
+
+
+def assert_release_workflow_contract(workflow: dict[str, object], workflow_source: str) -> None:
+    """Assert the production release path tests, pushes, then deploys with OIDC only.
+
+    Removing any of these safeguards would allow an untested, mutable, or
+    credential-bearing release workflow to reach production.
+    """
 
     # PyYAML 1.1 parses the YAML key ``on`` as boolean True.
     triggers = workflow.get("on", workflow.get(True))
@@ -216,23 +221,25 @@ def test_release_workflow_deploys_an_immutable_database_free_backend() -> None:
     assert set(jobs) == {"deploy"}
     deploy_job = jobs["deploy"]
     assert deploy_job["runs-on"] == "ubuntu-latest"
+    assert "permissions" not in deploy_job
+    assert "if" not in deploy_job
     assert "services" not in deploy_job
     steps = deploy_job["steps"]
 
-    assert {"uses": "actions/checkout@v4"} in steps
-    assert {
+    checkout_step = {"uses": "actions/checkout@v4"}
+    setup_python_step = {
         "uses": "actions/setup-python@v5",
         "with": {"python-version": "3.12"},
-    } in steps
-    assert {
+    }
+    install_dependencies_step = {
         "name": "Install backend test dependencies",
         "run": "pip install --require-hashes -r backend/requirements-dev.lock",
-    } in steps
-    assert {
+    }
+    test_step = {
         "name": "Test backend",
         "working-directory": "backend",
         "run": "python -m pytest tests -q",
-    } in steps
+    }
 
     iam_step = {
         "name": "Get Yandex Cloud IAM token",
@@ -259,6 +266,7 @@ def test_release_workflow_deploys_an_immutable_database_free_backend() -> None:
             "--password-stdin cr.yandex"
         ),
     }
+    buildx_step = {"uses": "docker/setup-buildx-action@v3"}
     deploy_step = {
         "name": "Deploy HTTP revision",
         "env": {
@@ -275,24 +283,28 @@ def test_release_workflow_deploys_an_immutable_database_free_backend() -> None:
         },
         "run": "deploy/yandex/serverless/deploy.sh",
     }
-    assert iam_step in steps
-    assert login_step in steps
-    assert {"uses": "docker/setup-buildx-action@v3"} in steps
-    assert image_step in steps
-    assert deploy_step in steps
-    test_step = next(step for step in steps if step.get("name") == "Test backend")
-    assert steps.index(test_step) < steps.index(image_step)
-    assert steps.index(iam_step) < steps.index(login_step) < steps.index(image_step)
-    assert steps.index(image_step) < steps.index(deploy_step)
-
-    install_cli_step = next(step for step in steps if step.get("name") == "Install Yandex Cloud CLI")
-    assert install_cli_step["run"] == (
-        "curl --fail --silent --show-error --location \\\n"
-        "  https://storage.yandexcloud.net/yandexcloud-yc/install.sh \\\n"
-        "  | bash -s -- -i \"${RUNNER_TEMP}/yandex-cloud\" -n\n"
-        "echo \"${RUNNER_TEMP}/yandex-cloud/bin\" >> \"${GITHUB_PATH}\"\n"
-        "\"${RUNNER_TEMP}/yandex-cloud/bin/yc\" version\n"
-    )
+    install_cli_step = {
+        "name": "Install Yandex Cloud CLI",
+        "run": (
+            "curl --fail --silent --show-error --location \\\n"
+            "  https://storage.yandexcloud.net/yandexcloud-yc/install.sh \\\n"
+            "  | bash -s -- -i \"${RUNNER_TEMP}/yandex-cloud\" -n\n"
+            "echo \"${RUNNER_TEMP}/yandex-cloud/bin\" >> \"${GITHUB_PATH}\"\n"
+            "\"${RUNNER_TEMP}/yandex-cloud/bin/yc\" version\n"
+        ),
+    }
+    assert steps == [
+        checkout_step,
+        setup_python_step,
+        install_dependencies_step,
+        test_step,
+        iam_step,
+        login_step,
+        buildx_step,
+        image_step,
+        install_cli_step,
+        deploy_step,
+    ]
 
     forbidden_references = (
         "secrets.",
@@ -307,6 +319,40 @@ def test_release_workflow_deploys_an_immutable_database_free_backend() -> None:
     )
     normalized_source = workflow_source.casefold()
     assert not any(reference in normalized_source for reference in forbidden_references)
+
+
+def test_release_workflow_deploys_an_immutable_database_free_backend() -> None:
+    """The committed workflow satisfies the release deployment contract."""
+
+    workflow, workflow_source = release_workflow()
+
+    assert_release_workflow_contract(workflow, workflow_source)
+
+
+@pytest.mark.parametrize(
+    "regression",
+    ("job_permissions", "early_extra_deploy", "cli_after_deploy"),
+)
+def test_release_workflow_contract_rejects_security_and_order_regressions(
+    regression: str,
+) -> None:
+    """The checker rejects permission escalation and unsafe release sequencing."""
+
+    workflow, workflow_source = release_workflow()
+    steps = workflow["jobs"]["deploy"]["steps"]
+
+    if regression == "job_permissions":
+        workflow["jobs"]["deploy"]["permissions"] = "write-all"
+    elif regression == "early_extra_deploy":
+        steps.insert(0, {"name": "Early deploy", "run": "deploy/yandex/serverless/deploy.sh"})
+    else:
+        cli_index = next(
+            index for index, step in enumerate(steps) if step.get("name") == "Install Yandex Cloud CLI"
+        )
+        steps.append(steps.pop(cli_index))
+
+    with pytest.raises(AssertionError):
+        assert_release_workflow_contract(workflow, workflow_source)
 
 
 def test_gateway_exposes_only_fail_closed_routes() -> None:
