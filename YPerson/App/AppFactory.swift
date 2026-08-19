@@ -3,7 +3,7 @@ import UIKit
 import UserNotifications
 
 @MainActor
-final class AppFactory {
+final class YPersonExperienceBuilder {
     private let configuration: AppConfiguration
     private let session: URLSession
     private let snapshotStore: AppGroupSnapshotStore?
@@ -14,6 +14,8 @@ final class AppFactory {
     private let photoScanner = PhotoCardScanner()
     private let audio = AudioGreetingController()
     private let imageSaver = CardImageSaver()
+    private weak var output: (any YPersonExperienceOutput)?
+    private weak var rootViewController: MainTabBarController?
 
     init(configuration: AppConfiguration) {
         self.configuration = configuration
@@ -30,7 +32,11 @@ final class AppFactory {
         self.analytics.setRemoteKillSwitch(store?.cachedConfiguration()?.0.analyticsKillSwitch ?? false)
     }
 
-    func makeRootViewController() -> UIViewController {
+    func makeRootViewController(
+        context: YPersonExperienceContext,
+        output: any YPersonExperienceOutput
+    ) -> UIViewController {
+        self.output = output
         _ = analytics.activateIfConsented()
         var ownCard = snapshotStore?.readOwnCard()
         var savedPeople: [PersonCard] = []
@@ -54,7 +60,8 @@ final class AppFactory {
         let people = PeopleViewController(people: savedPeople, permissions: permissions, analytics: analytics, makePerson: person)
         let privacy = PrivacyViewController(permissions: permissions, audio: audio, analytics: analytics, snapshotStore: snapshotStore, apiClient: apiClient, configuration: configuration)
         let root = MainTabBarController(card: card, exchange: exchange, people: people, privacy: privacy)
-        retryPendingProfileDeletion()
+        self.rootViewController = root
+        root.route(to: context.entryPoint)
 #if DEBUG
         applyVerificationState(to: root, card: card, exchange: exchange, privacy: privacy, makePerson: person, makeEditor: makeEditor, makeAppearance: makeAppearance)
 #endif
@@ -74,6 +81,19 @@ final class AppFactory {
         )
         Task { [apiClient, snapshotStore] in
             if (try? await apiClient.sync(payload)) != nil { snapshotStore?.profileDeletionPending = false }
+        }
+    }
+
+    func route(to entryPoint: YPersonEntryPoint) {
+        rootViewController?.route(to: entryPoint)
+    }
+
+    func handle(_ event: YPersonLifecycleEvent) {
+        switch event {
+        case .didEnterForeground:
+            retryPendingProfileDeletion()
+        case .pushTokenChanged(let token):
+            updatePushToken(token)
         }
     }
 
@@ -118,7 +138,7 @@ final class AppFactory {
     }
 #endif
 
-    func updatePushToken(_ token: String?) {
+    private func updatePushToken(_ token: String?) {
         Task { [apiClient] in
             let payload = SyncRequest(
                 installationID: UIDevice.current.identifierForVendor?.uuidString ?? "simulator-installation",

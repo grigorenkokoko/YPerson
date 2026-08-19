@@ -2,17 +2,22 @@ import UIKit
 import UserNotifications
 
 @main
-final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterDelegate, YPersonExperienceOutput {
     var window: UIWindow?
-    private var factory: AppFactory?
+    private var experienceBuilder: YPersonExperienceBuilder?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         configureNotifications()
         let window = UIWindow(frame: UIScreen.main.bounds)
         do {
-            let factory = AppFactory(configuration: try AppConfiguration())
-            self.factory = factory
-            window.rootViewController = factory.makeRootViewController()
+            let builder = YPersonExperienceBuilder(
+                configuration: try AppConfiguration(bundle: .main)
+            )
+            self.experienceBuilder = builder
+            window.rootViewController = builder.makeRootViewController(
+                context: YPersonExperienceContext(entryPoint: .root),
+                output: self
+            )
         } catch {
             window.rootViewController = configurationErrorController(error)
         }
@@ -28,12 +33,18 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
 
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask { .portrait }
 
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        experienceBuilder?.handle(.didEnterForeground)
+    }
+
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        factory?.updatePushToken(deviceToken.map { String(format: "%02x", $0) }.joined())
+        experienceBuilder?.handle(
+            .pushTokenChanged(deviceToken.map { String(format: "%02x", $0) }.joined())
+        )
     }
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
-        factory?.updatePushToken(nil)
+        experienceBuilder?.handle(.pushTokenChanged(nil))
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
@@ -66,6 +77,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
 
     private func simpleAlert(_ title: String, _ message: String) -> UIAlertController {
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert); alert.addAction(UIAlertAction(title: "OK", style: .default)); return alert
+    }
+
+    func yPersonExperienceDidRequestDismiss() {
+        // The standalone experience owns the root and therefore has nothing to dismiss.
     }
 
 #if DEBUG

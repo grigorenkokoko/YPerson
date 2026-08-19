@@ -19,7 +19,7 @@ struct AppConfiguration {
     let appGroupIdentifier: String
     let appMetricaAPIKey: String
 
-    init(bundle: Bundle = .main) throws {
+    init(bundle: Bundle) throws {
         func value(_ key: String) throws -> String {
             guard let value = bundle.object(forInfoDictionaryKey: key) as? String,
                   !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
