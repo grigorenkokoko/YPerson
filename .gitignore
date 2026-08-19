@@ -18,6 +18,7 @@ Blodden-skills/
 .env
 .env.*
 !.env.example
+deploy/yandex/serverless/config.env
 Config/Secrets.xcconfig
 *.p8
 *.p12

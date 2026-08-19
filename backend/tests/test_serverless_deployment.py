@@ -2,12 +2,58 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 GATEWAY = ROOT / "deploy" / "yandex" / "serverless" / "api-gateway.yaml"
+CONFIG_EXAMPLE = ROOT / "deploy" / "yandex" / "serverless" / "config.example.env"
+
+PUBLIC_CONFIG_DEFAULTS = {
+    "YC_REGISTRY_ID": "crp7vdmqvk61ce7oukqn",
+    "YPERSON_CONFIG_VERSION": "2026-08-19.1",
+    "YPERSON_PRIVACY_URL": "https://yperson.ru/privacy",
+    "YPERSON_SUPPORT_URL": "https://yperson.ru/support",
+}
+EXPECTED_CONFIG_KEYS = {
+    "YC_FOLDER_ID",
+    "YC_REGISTRY_ID",
+    "YC_DEPLOYER_SA_ID",
+    "YC_HTTP_CONTAINER_ID",
+    "YC_MIGRATION_CONTAINER_ID",
+    "YC_RUNTIME_SA_ID",
+    "YC_GATEWAY_SA_ID",
+    "YC_NETWORK_ID",
+    "YC_LOCKBOX_SECRET_ID",
+    "YC_LOCKBOX_SECRET_VERSION_ID",
+    "YC_HEALTH_URL",
+    *PUBLIC_CONFIG_DEFAULTS,
+}
+FORBIDDEN_SECRET_KEY_PARTS = (
+    "password",
+    "token",
+    "oauth",
+    "authorized_key",
+    "private_key",
+    "apns",
+)
+
+
+def parse_env_pairs(contents: str) -> dict[str, str]:
+    """Parse the release template while rejecting unsafe dotenv entries."""
+
+    pairs: dict[str, str] = {}
+    for line in contents.splitlines():
+        key, separator, value = line.partition("=")
+        assert separator and key, f"invalid dotenv entry: {line!r}"
+        assert key not in pairs, f"duplicate dotenv key: {key}"
+        assert not any(part in key.casefold() for part in FORBIDDEN_SECRET_KEY_PARTS), (
+            f"secret-bearing dotenv key: {key}"
+        )
+        pairs[key] = value
+    return pairs
 
 
 def gateway_spec() -> dict[str, object]:
@@ -88,3 +134,54 @@ def test_gateway_matches_the_approved_openapi_operations() -> None:
             "description": "Sync is disabled until installation authentication is enabled"
         }
     }
+
+
+def test_config_example_exposes_only_approved_non_secret_values() -> None:
+    """The deployable template contains only reviewed public defaults."""
+
+    pairs = parse_env_pairs(CONFIG_EXAMPLE.read_text())
+
+    assert set(pairs) == EXPECTED_CONFIG_KEYS
+    assert {key: pairs[key] for key in PUBLIC_CONFIG_DEFAULTS} == PUBLIC_CONFIG_DEFAULTS
+    assert all(
+        value == "" for key, value in pairs.items() if key not in PUBLIC_CONFIG_DEFAULTS
+    )
+
+
+def test_config_parser_rejects_duplicate_and_secret_bearing_keys() -> None:
+    """A release template cannot quietly gain duplicate or credential entries."""
+
+    for invalid_contents in (
+        "YC_FOLDER_ID=first\nYC_FOLDER_ID=second\n",
+        "YC_DEPLOYER_TOKEN=value\n",
+        "YC_LOCKBOX_SECRET_ID=\nYC_RUNTIME_PRIVATE_KEY=value\n",
+    ):
+        try:
+            parse_env_pairs(invalid_contents)
+        except AssertionError:
+            continue
+        raise AssertionError(f"unsafe dotenv contents were accepted: {invalid_contents!r}")
+
+
+def test_config_local_values_are_ignored_without_ignoring_the_template() -> None:
+    """Local deployment values stay untracked while the safe template is committed."""
+
+    assert "deploy/yandex/serverless/config.env" in (ROOT / ".gitignore").read_text().splitlines()
+
+    local_config = subprocess.run(
+        ["git", "check-ignore", "--no-index", "deploy/yandex/serverless/config.env"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    template = subprocess.run(
+        ["git", "check-ignore", "--no-index", "deploy/yandex/serverless/config.example.env"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert local_config.returncode == 0
+    assert template.returncode == 1
