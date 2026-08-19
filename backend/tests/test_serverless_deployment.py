@@ -220,10 +220,8 @@ def assert_release_workflow_contract(workflow: dict[str, object], workflow_sourc
     jobs = workflow["jobs"]
     assert set(jobs) == {"deploy"}
     deploy_job = jobs["deploy"]
+    assert set(deploy_job) == {"runs-on", "steps"}
     assert deploy_job["runs-on"] == "ubuntu-latest"
-    assert "permissions" not in deploy_job
-    assert "if" not in deploy_job
-    assert "services" not in deploy_job
     steps = deploy_job["steps"]
 
     checkout_step = {"uses": "actions/checkout@v4"}
@@ -331,7 +329,13 @@ def test_release_workflow_deploys_an_immutable_database_free_backend() -> None:
 
 @pytest.mark.parametrize(
     "regression",
-    ("job_permissions", "early_extra_deploy", "cli_after_deploy"),
+    (
+        "job_permissions",
+        "job_matrix",
+        "job_continue_on_error",
+        "early_extra_deploy",
+        "cli_after_deploy",
+    ),
 )
 def test_release_workflow_contract_rejects_security_and_order_regressions(
     regression: str,
@@ -343,6 +347,10 @@ def test_release_workflow_contract_rejects_security_and_order_regressions(
 
     if regression == "job_permissions":
         workflow["jobs"]["deploy"]["permissions"] = "write-all"
+    elif regression == "job_matrix":
+        workflow["jobs"]["deploy"]["strategy"] = {"matrix": {"replica": [1, 2]}}
+    elif regression == "job_continue_on_error":
+        workflow["jobs"]["deploy"]["continue-on-error"] = True
     elif regression == "early_extra_deploy":
         steps.insert(0, {"name": "Early deploy", "run": "deploy/yandex/serverless/deploy.sh"})
     else:

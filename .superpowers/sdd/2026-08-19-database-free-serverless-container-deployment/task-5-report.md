@@ -60,3 +60,24 @@ After strengthening the contract:
 - focused workflow tests: `4 passed, 27 deselected`;
 - complete deployment module: `31 passed in 1.55s`;
 - `ruff check tests/test_serverless_deployment.py`: `All checks passed!`.
+
+## Re-review follow-up: exact deploy-job mapping
+
+- The deploy job now must contain exactly `runs-on` and `steps`. This prevents
+  runtime duplication via a matrix and rejects `continue-on-error`, job-level
+  permissions, conditions, services, or any other behavior override.
+- The workflow itself was already compliant and remains unchanged.
+
+### Mutation evidence
+
+Added parsed-workflow mutations for:
+
+- `strategy.matrix.replica: [1, 2]`, which would run the release twice;
+- `continue-on-error: true`, which would soften job failure reporting.
+
+Before the exact mapping check, both mutations produced `DID NOT RAISE` in the
+contract test. With the check in place:
+
+- focused workflow tests: `6 passed, 27 deselected`;
+- complete deployment module: `33 passed in 1.89s`;
+- `ruff check tests/test_serverless_deployment.py`: `All checks passed!`.
