@@ -58,7 +58,9 @@ token. Do not create an authorized-key JSON or GitHub secret.
    literal `${` remains, then create `yperson-api-gateway` from that rendered
    copy.
 4. Read and record the Gateway `domain` field as `GATEWAY_DOMAIN`. Its base URL
-   is `https://${GATEWAY_DOMAIN}`.
+   is `https://${GATEWAY_DOMAIN}`. This API Gateway technical HTTPS domain is
+   the permanent production address while the same Gateway resource exists;
+   this architecture has no later custom-domain cutover.
 5. Configure exactly these ten GitHub repository variables:
 
    ```text
@@ -87,7 +89,7 @@ token. Do not create an authorized-key JSON or GitHub secret.
    | `GET /config` | `200` canonical public-configuration JSON, `ETag`, and `Cache-Control: public, max-age=60`; an equal `If-None-Match` returns `304` with an empty body |
    | `GET /privacy` | `200` HTML technical privacy page |
    | `GET /support` | `200` HTML technical support page |
-   | `POST /sync` | `503` JSON `{"error":"temporarily_unavailable","message":"sync is not enabled","requestID":"<uuid>"}` |
+   | `POST /sync` | `503` Gateway dummy JSON `{"error":"temporarily_unavailable","message":"sync is not enabled"}` |
 
 8. Put `https://${GATEWAY_DOMAIN}` in `Config/Release.xcconfig` as
    `API_BASE_URL`. Put the `/privacy` and `/support` URLs in
