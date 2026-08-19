@@ -27,6 +27,8 @@ FORBIDDEN_DATABASE_PACKAGES = {
     "psycopg-binary",
     "sqlalchemy",
 }
+LOCKED_REQUIREMENT = re.compile(r"^([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?==[^\s\\]+(?:\s+\\)?$")
+SHA256_HASH = re.compile(r"--hash=sha256:[0-9a-f]{64}")
 
 
 def docker_instructions(path: Path) -> list[tuple[str, str]]:
@@ -112,15 +114,37 @@ def compose_port_pair(mapping: str, environment: dict[str, str]) -> tuple[str, s
     return port, port
 
 
+def locked_requirement_entries(path: Path) -> dict[str, list[str]]:
+    """Return each normalized pinned package and its logical lock-file block."""
+
+    entries: dict[str, list[str]] = {}
+    current_entry: str | None = None
+    for raw_line in path.read_text().splitlines():
+        if match := LOCKED_REQUIREMENT.fullmatch(raw_line):
+            current_entry = canonicalize_name(match.group(1))
+            entries[current_entry] = []
+        elif current_entry and raw_line.startswith((" ", "\t")):
+            entries[current_entry].append(raw_line.strip().removesuffix("\\").rstrip())
+        else:
+            current_entry = None
+    return entries
+
+
 def locked_requirement_names(path: Path) -> set[str]:
     """Return normalized package names pinned by a hashed requirements file."""
 
-    return {
-        canonicalize_name(match.group(1))
-        for match in re.finditer(
-            r"^([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?==", path.read_text(), re.MULTILINE
-        )
-    }
+    return set(locked_requirement_entries(path))
+
+
+def assert_every_locked_requirement_has_sha256_hash(path: Path) -> None:
+    """Require a valid SHA-256 hash in each logical requirement block."""
+
+    entries = locked_requirement_entries(path)
+    assert entries, f"{path.name} has no pinned requirement entries"
+    missing_hashes = sorted(
+        name for name, lines in entries.items() if not any(SHA256_HASH.fullmatch(line) for line in lines)
+    )
+    assert not missing_hashes, f"{path.name} has unhashed pinned requirements: {missing_hashes}"
 
 
 def test_database_packages_are_absent_from_project_and_locks() -> None:
@@ -132,9 +156,13 @@ def test_database_packages_are_absent_from_project_and_locks() -> None:
     }
     assert runtime_names.isdisjoint(FORBIDDEN_DATABASE_PACKAGES)
     for filename in ("requirements.lock", "requirements-dev.lock"):
-        names = locked_requirement_names(BACKEND / filename)
+        lock_path = BACKEND / filename
+        names = locked_requirement_names(lock_path)
         assert runtime_names <= names
         assert names.isdisjoint(FORBIDDEN_DATABASE_PACKAGES)
+        if filename == "requirements-dev.lock":
+            assert {"pip", "setuptools"} <= names
+        assert_every_locked_requirement_has_sha256_hash(lock_path)
 
 
 def test_runtime_image_is_immutable_nonroot_and_executable() -> None:
