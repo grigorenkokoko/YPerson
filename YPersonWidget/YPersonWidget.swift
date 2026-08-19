@@ -51,7 +51,6 @@ private struct WidgetView: View {
                 }.padding()
             }
         }
-        .widgetURL(URL(string: "yperson://card"))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("YPerson, моя карточка, \(updateText)")
     }

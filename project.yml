@@ -92,10 +92,6 @@ targets:
         SUPPORT_URL: $(SUPPORT_URL)
         APP_GROUP_IDENTIFIER: $(APP_GROUP_IDENTIFIER)
         APPMETRICA_API_KEY: $(APPMETRICA_API_KEY)
-        CFBundleURLTypes:
-          - CFBundleURLName: com.yperson.app
-            CFBundleURLSchemes:
-              - yperson
     entitlements:
       path: YPerson/YPerson.entitlements
       properties:
