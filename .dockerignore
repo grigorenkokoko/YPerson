@@ -5,9 +5,6 @@ backend/**
 !backend/requirements.lock
 !backend/app
 !backend/app/**
-!backend/migrations
-!backend/migrations/**
-!backend/alembic.ini
 **/__pycache__/
 **/*.py[cod]
 **/.env

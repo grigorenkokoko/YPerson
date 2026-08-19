@@ -10,13 +10,23 @@ import ast
 import json
 import re
 import shlex
+import tomllib
 from fnmatch import fnmatch
 from pathlib import Path
 
 import yaml
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 
 BACKEND = Path(__file__).resolve().parents[1]
 ROOT = BACKEND.parent
+FORBIDDEN_DATABASE_PACKAGES = {
+    "alembic",
+    "greenlet",
+    "psycopg",
+    "psycopg-binary",
+    "sqlalchemy",
+}
 
 
 def docker_instructions(path: Path) -> list[tuple[str, str]]:
@@ -102,6 +112,31 @@ def compose_port_pair(mapping: str, environment: dict[str, str]) -> tuple[str, s
     return port, port
 
 
+def locked_requirement_names(path: Path) -> set[str]:
+    """Return normalized package names pinned by a hashed requirements file."""
+
+    return {
+        canonicalize_name(match.group(1))
+        for match in re.finditer(
+            r"^([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?==", path.read_text(), re.MULTILINE
+        )
+    }
+
+
+def test_database_packages_are_absent_from_project_and_locks() -> None:
+    """A database dependency would make the serverless image non-portable."""
+
+    project = tomllib.loads((BACKEND / "pyproject.toml").read_text())
+    runtime_names = {
+        canonicalize_name(Requirement(value).name) for value in project["project"]["dependencies"]
+    }
+    assert runtime_names.isdisjoint(FORBIDDEN_DATABASE_PACKAGES)
+    for filename in ("requirements.lock", "requirements-dev.lock"):
+        names = locked_requirement_names(BACKEND / filename)
+        assert runtime_names <= names
+        assert names.isdisjoint(FORBIDDEN_DATABASE_PACKAGES)
+
+
 def test_runtime_image_is_immutable_nonroot_and_executable() -> None:
     """A mutable base, root user, shell command, or curl-only check breaks runtime safety."""
 
@@ -182,15 +217,11 @@ def test_image_copies_only_runtime_allowlist_and_context_excludes_secrets() -> N
     assert copied_sources == {
         "backend/requirements.lock",
         "backend/app/",
-        "backend/migrations/",
-        "backend/alembic.ini",
     }
 
     dockerignore = ROOT / ".dockerignore"
     assert dockerignore_includes(dockerignore, "backend/requirements.lock")
     assert dockerignore_includes(dockerignore, "backend/app/main.py")
-    assert dockerignore_includes(dockerignore, "backend/migrations/env.py")
-    assert dockerignore_includes(dockerignore, "backend/alembic.ini")
     for unsafe_path in (
         ".env",
         ".git/config",
@@ -198,39 +229,27 @@ def test_image_copies_only_runtime_allowlist_and_context_excludes_secrets() -> N
         "backend/tests/test_contract.py",
         "backend/__pycache__/main.pyc",
         "backend/app/__pycache__/main.cpython-312.pyc",
-        "backend/migrations/__pycache__/env.cpython-312.pyc",
-        "backend/migrations/versions/__pycache__/20260818_0001_initial.cpython-312.pyc",
         "backend/app/.env",
-        "backend/migrations/.env.production",
         "backend/app/state.sqlite3",
-        "backend/migrations/local.db",
     ):
         assert not dockerignore_includes(dockerignore, unsafe_path)
 
 
-def test_compose_models_database_migration_gate_and_api_shutdown() -> None:
-    """Starting traffic before a healthy migrated database risks an unavailable application."""
+def test_compose_models_detached_local_api_shutdown() -> None:
+    """A detached local start needs one directly reachable API service."""
 
     compose = yaml.safe_load((BACKEND / "compose.yaml").read_text())
     services = compose["services"]
-    assert set(services) == {"db", "migrate", "api"}
-    assert compose["volumes"] == {"yperson-postgres": None}
+    assert set(services) == {"api"}
+    assert "volumes" not in compose
 
-    db = services["db"]
-    assert db["image"] == "postgres:17.11-alpine"
-    assert db["volumes"] == ["yperson-postgres:/var/lib/postgresql/data"]
-    assert db["healthcheck"]["test"] == ["CMD-SHELL", "pg_isready -U yperson -d yperson"]
-
-    for service_name in ("migrate", "api"):
-        build = services[service_name]["build"]
-        assert build == {"context": "..", "dockerfile": "backend/Dockerfile"}
-        assert services[service_name]["env_file"] == [".env"]
-        assert services[service_name]["depends_on"]["db"]["condition"] == "service_healthy"
-    assert services["migrate"]["command"] == ["alembic", "upgrade", "head"]
-    assert services["api"]["depends_on"]["migrate"]["condition"] == "service_completed_successfully"
-    assert services["api"]["stop_grace_period"] == "20s"
-    assert "volumes" not in services["api"]
-    port_mapping = services["api"]["ports"]
+    api = services["api"]
+    assert api["build"] == {"context": "..", "dockerfile": "backend/Dockerfile"}
+    assert api["env_file"] == [".env"]
+    assert "depends_on" not in api
+    assert api["stop_grace_period"] == "20s"
+    assert "volumes" not in api
+    port_mapping = api["ports"]
     assert port_mapping == ["${PORT:-8080}:${PORT:-8080}"]
     assert compose_port_pair(port_mapping[0], {}) == ("8080", "8080")
     assert compose_port_pair(port_mapping[0], {"PORT": "9000"}) == ("9000", "9000")
@@ -243,12 +262,9 @@ def test_dotenv_example_is_complete_and_uses_safe_development_values() -> None:
         "YPERSON_ENV": "development",
         "HOST": "0.0.0.0",
         "PORT": "8080",
-        "DATABASE_URL": "postgresql+psycopg://yperson:yperson@db:5432/yperson",
         "YPERSON_CONFIG_VERSION": "2026-08-18.1",
         "YPERSON_PRIVACY_URL": "https://example.invalid/yperson/privacy",
         "YPERSON_SUPPORT_URL": "https://example.invalid/yperson/support",
         "YPERSON_ANALYTICS_KILL_SWITCH": "false",
-        "DATABASE_POOL_SIZE": "5",
-        "DATABASE_POOL_TIMEOUT_SECONDS": "5",
         "GRACEFUL_SHUTDOWN_SECONDS": "15",
     }

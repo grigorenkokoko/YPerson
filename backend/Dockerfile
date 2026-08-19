@@ -13,8 +13,6 @@ WORKDIR /app
 
 COPY --from=builder /install /usr/local
 COPY backend/app/ ./app/
-COPY backend/migrations/ ./migrations/
-COPY backend/alembic.ini ./alembic.ini
 
 USER 10001:10001
 EXPOSE 8080
