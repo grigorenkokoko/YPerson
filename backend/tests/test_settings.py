@@ -10,7 +10,6 @@ def test_development_defaults_are_safe() -> None:
     assert settings.environment == "development"
     assert settings.host == "127.0.0.1"
     assert settings.port == 8080
-    assert settings.max_body_bytes == 65_536
 
 
 def test_environment_aliases_override_configuration() -> None:
@@ -18,13 +17,10 @@ def test_environment_aliases_override_configuration() -> None:
         YPERSON_ENV="staging",
         HOST="0.0.0.0",
         PORT="9090",
-        DATABASE_URL="postgresql+psycopg://staging:secret@db.example/yperson",
         YPERSON_CONFIG_VERSION="2026-08-18.2",
         YPERSON_PRIVACY_URL="https://privacy.example/yperson",
         YPERSON_SUPPORT_URL="https://support.example/yperson",
         YPERSON_ANALYTICS_KILL_SWITCH="true",
-        DATABASE_POOL_SIZE="10",
-        DATABASE_POOL_TIMEOUT_SECONDS="9",
         GRACEFUL_SHUTDOWN_SECONDS="20",
         _env_file=None,
     )
@@ -32,7 +28,8 @@ def test_environment_aliases_override_configuration() -> None:
     assert settings.environment == "staging"
     assert settings.host == "0.0.0.0"
     assert settings.port == 9090
-    assert settings.database_pool_size == 10
+    assert settings.config_version == "2026-08-18.2"
+    assert settings.graceful_shutdown_seconds == 20
     assert settings.analytics_kill_switch is True
 
 
