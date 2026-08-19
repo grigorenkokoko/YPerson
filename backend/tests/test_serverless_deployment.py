@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -37,6 +38,78 @@ FORBIDDEN_SECRET_KEY_PARTS = (
     "private_key",
     "apns",
 )
+DEPLOY_SCRIPT = ROOT / "deploy" / "yandex" / "serverless" / "deploy.sh"
+
+
+def write_fake_commands(bin_dir: Path) -> None:
+    """Install deterministic command doubles for the deployment script."""
+
+    bin_dir.mkdir(parents=True)
+    commands = {
+        "yc": """#!/bin/sh
+printf '%s ' \"$@\" >> \"$COMMAND_LOG\"
+printf '\\n' >> \"$COMMAND_LOG\"
+case \" $* \" in
+  *" serverless container revision list "*) printf '%s\\n' '[]' ;;
+esac
+""",
+        "curl": """#!/bin/sh
+exit \"${FAKE_CURL_EXIT:-0}\"
+""",
+        "jq": """#!/bin/sh
+/bin/cat >/dev/null
+printf '%s\\n' \"${FAKE_PREVIOUS_REVISION:-}\"
+""",
+    }
+    for name, contents in commands.items():
+        command = bin_dir / name
+        command.write_text(contents)
+        command.chmod(0o755)
+
+
+def deployment_environment(tmp_path: Path, sha: str = "a" * 40) -> tuple[dict[str, str], Path]:
+    """Create the complete deployment environment and controlled command log."""
+
+    bin_dir = tmp_path / "bin"
+    write_fake_commands(bin_dir)
+    command_log = tmp_path / "yc-command.log"
+    environment = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "COMMAND_LOG": str(command_log),
+        "YC_FOLDER_ID": "folder-id",
+        "YC_HTTP_CONTAINER_ID": "http-container-id",
+        "YC_RUNTIME_SA_ID": "runtime-sa-id",
+        "YC_HEALTH_URL": "https://gateway.example/health",
+        "YPERSON_CONFIG_VERSION": "2026-08-19.1",
+        "YPERSON_PRIVACY_URL": "https://yperson.ru/privacy",
+        "YPERSON_SUPPORT_URL": "https://yperson.ru/support",
+        "IMAGE_URL": f"cr.yandex/registry/backend:{sha}",
+        "GITHUB_SHA": sha,
+        "YC_IAM_TOKEN": "test-iam-token",
+    }
+    return environment, command_log
+
+
+def run_deploy(environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Execute the real deployment script with controlled external commands."""
+
+    return subprocess.run(
+        ["/bin/bash", str(DEPLOY_SCRIPT)],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def logged_yc_commands(command_log: Path) -> list[list[str]]:
+    """Read the command arguments captured by the fake Yandex Cloud CLI."""
+
+    if not command_log.exists():
+        return []
+    return [line.split() for line in command_log.read_text().splitlines()]
 
 
 def parse_env_pairs(contents: str) -> dict[str, str]:
@@ -180,3 +253,89 @@ def test_config_local_values_are_ignored_without_ignoring_the_template() -> None
 
     assert local_config.returncode == 0
     assert template.returncode == 1
+
+
+def test_deploy_script_rejects_invalid_or_missing_full_sha_before_yc(tmp_path: Path) -> None:
+    """Invalid immutable image input must not reach the cloud CLI."""
+
+    for sha, image_url in (("short-sha", "cr.yandex/registry/backend:short-sha"), ("", "")):
+        environment, command_log = deployment_environment(tmp_path / (sha or "missing"))
+        environment["GITHUB_SHA"] = sha
+        environment["IMAGE_URL"] = image_url
+
+        result = run_deploy(environment)
+
+        assert result.returncode == 2
+        assert logged_yc_commands(command_log) == []
+        assert "test-iam-token" not in result.stdout
+        assert "test-iam-token" not in result.stderr
+
+
+def test_deploy_script_rejects_missing_command_before_cloud_calls(tmp_path: Path) -> None:
+    """Validated inputs still fail safely when a required local command is absent."""
+
+    environment, command_log = deployment_environment(tmp_path)
+    (tmp_path / "bin" / "jq").unlink()
+    environment["PATH"] = str(tmp_path / "bin")
+
+    result = run_deploy(environment)
+
+    assert result.returncode == 2
+    assert logged_yc_commands(command_log) == []
+    assert "Required deployment command is unavailable: jq" in result.stderr
+    assert "test-iam-token" not in result.stdout
+    assert "test-iam-token" not in result.stderr
+
+
+def test_deploy_script_deploys_http_revision_without_database_era_options(tmp_path: Path) -> None:
+    """A healthy release deploys exactly one HTTP-only revision."""
+
+    environment, command_log = deployment_environment(tmp_path)
+
+    result = run_deploy(environment)
+
+    assert result.returncode == 0
+    commands = logged_yc_commands(command_log)
+    deployments = [command for command in commands if "revision" in command and "deploy" in command]
+    assert len(deployments) == 1
+    deployment = deployments[0]
+    assert ["--runtime", "http"] == deployment[deployment.index("--runtime") : deployment.index("--runtime") + 2]
+    assert "--network-id" not in deployment
+    assert "--secret" not in deployment
+    assert "task" not in deployment
+    assert not any("anonymous" in argument for command in commands for argument in command)
+    assert "test-iam-token" not in result.stdout
+    assert "test-iam-token" not in result.stderr
+
+
+def test_deploy_script_rolls_back_active_revision_after_failed_health_check(tmp_path: Path) -> None:
+    """A failed health check restores the revision that was active before deploy."""
+
+    environment, command_log = deployment_environment(tmp_path)
+    environment["FAKE_CURL_EXIT"] = "1"
+    environment["FAKE_PREVIOUS_REVISION"] = "previous-revision"
+
+    result = run_deploy(environment)
+
+    assert result.returncode != 0
+    commands = logged_yc_commands(command_log)
+    rollback = next(command for command in commands if "rollback" in command)
+    assert rollback[-2:] == ["--revision-id", "previous-revision"]
+    assert "test-iam-token" not in result.stdout
+    assert "test-iam-token" not in result.stderr
+
+
+def test_deploy_script_skips_rollback_without_active_revision_after_failed_health_check(
+    tmp_path: Path,
+) -> None:
+    """Bootstrap failures remain failures but have no revision to restore."""
+
+    environment, command_log = deployment_environment(tmp_path)
+    environment["FAKE_CURL_EXIT"] = "1"
+
+    result = run_deploy(environment)
+
+    assert result.returncode != 0
+    assert not any("rollback" in command for command in logged_yc_commands(command_log))
+    assert "test-iam-token" not in result.stdout
+    assert "test-iam-token" not in result.stderr
