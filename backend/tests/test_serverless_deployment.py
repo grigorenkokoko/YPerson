@@ -254,6 +254,22 @@ def assert_release_workflow_contract(workflow: dict[str, object], workflow_sourc
         "working-directory": "backend",
         "run": "python -m pytest tests -q",
     }
+    oidc_diagnostic_step = {
+        "name": "Show non-secret GitHub OIDC claims",
+        "uses": "actions/github-script@v7",
+        "with": {
+            "script": (
+                "const audience = `https://github.com/${context.repo.owner}`;\n"
+                "const token = await core.getIDToken(audience);\n"
+                "const payload = JSON.parse(\n"
+                '  Buffer.from(token.split(".")[1], "base64url").toString("utf8"),\n'
+                ");\n"
+                "core.info(`OIDC issuer: ${payload.iss}`);\n"
+                "core.info(`OIDC audience: ${payload.aud}`);\n"
+                "core.info(`OIDC subject: ${payload.sub}`);\n"
+            )
+        },
+    }
 
     iam_step = {
         "name": "Get Yandex Cloud IAM token",
@@ -312,6 +328,7 @@ def assert_release_workflow_contract(workflow: dict[str, object], workflow_sourc
         setup_python_step,
         install_dependencies_step,
         test_step,
+        oidc_diagnostic_step,
         iam_step,
         login_step,
         buildx_step,
