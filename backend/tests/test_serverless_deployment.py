@@ -814,3 +814,20 @@ def test_deploy_script_skips_rollback_without_active_revision_after_failed_healt
     assert Path(environment["JQ_INPUT_LOG"]).read_text() == "[]"
     assert Path(environment["JQ_FILTER_LOG"]).read_text() == ACTIVE_REVISION_FILTER
     assert_token_is_not_printed(result)
+
+
+def test_ios_debug_and_release_use_the_production_gateway() -> None:
+    """Both app configurations resolve every public URL through API Gateway."""
+
+    gateway = "d5dl7dc4rc07v7jnvlf2.p8361f8z.apigw.yandexcloud.net"
+    debug = (ROOT / "Config" / "Debug.xcconfig").read_text()
+    release = (ROOT / "Config" / "Release.xcconfig").read_text()
+    base = (ROOT / "Config" / "Base.xcconfig").read_text()
+
+    api_setting = f"API_BASE_URL = https:/$()/{gateway}"
+    assert api_setting in debug
+    assert api_setting in release
+    assert f"PRIVACY_POLICY_URL = https:/$()/{gateway}/privacy" in base
+    assert f"SUPPORT_URL = https:/$()/{gateway}/support" in base
+    assert "127.0.0.1" not in debug
+    assert "example.invalid" not in debug + release + base
