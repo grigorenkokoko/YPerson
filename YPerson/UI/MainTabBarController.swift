@@ -13,6 +13,15 @@ final class MainTabBarController: UITabBarController {
         tabBar.backgroundColor = YPStyle.surface
     }
 
+    func route(to entryPoint: YPersonEntryPoint) {
+        switch entryPoint {
+        case .root, .card:
+            selectedIndex = 0
+        case .privacy:
+            selectedIndex = 3
+        }
+    }
+
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
     private static func wrap(_ controller: UIViewController, title: String, symbol: String) -> UINavigationController {

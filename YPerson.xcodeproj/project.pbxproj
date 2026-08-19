@@ -24,6 +24,7 @@
 		825E97AB9DE3077A7A1FB3B3 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6506B9BE77BAB21F35300A5A /* APIClient.swift */; };
 		8BA7E80D97F1A2A25B7864E9 /* YPersonWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 85FF1494661E949011B6F874 /* YPersonWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		8DAEE38A487807265E664A0A /* PhotoCardScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D51EBF735785D82AF276EA87 /* PhotoCardScanner.swift */; };
+		98290ADBE47289C2AB496557 /* YPersonIntegrationContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8231A08DD9861DEC29505A7 /* YPersonIntegrationContract.swift */; };
 		9E469F546766DFDAB04A4660 /* AppFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95235915DA13A07330BC207D /* AppFactory.swift */; };
 		A0A6331485D058047FAC74D2 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38A55AA34CCEEB53EC48D024 /* NotificationService.swift */; };
 		A0FC157A713AA27C3B7E8D9D /* NearbyExchangeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D938FC5C6EE5391F7920B405 /* NearbyExchangeController.swift */; };
@@ -128,6 +129,7 @@
 		B05DF4272FF693CA8C7E28F4 /* MainTabBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabBarController.swift; sourceTree = "<group>"; };
 		CAC46C8858C0D992879AF1C4 /* PersonViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonViewController.swift; sourceTree = "<group>"; };
 		D51EBF735785D82AF276EA87 /* PhotoCardScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCardScanner.swift; sourceTree = "<group>"; };
+		D8231A08DD9861DEC29505A7 /* YPersonIntegrationContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YPersonIntegrationContract.swift; sourceTree = "<group>"; };
 		D938FC5C6EE5391F7920B405 /* NearbyExchangeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearbyExchangeController.swift; sourceTree = "<group>"; };
 		F3E533DAB9E006DADF68EA10 /* ExchangeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExchangeViewController.swift; sourceTree = "<group>"; };
 		F5EFCA26B0528FD85942ED0E /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -202,6 +204,7 @@
 				416B6259A69F2BCB900888FB /* Analytics */,
 				9D7855FE30E7984779865AE0 /* App */,
 				6AD3CE69784BFE996AC3FD40 /* Domain */,
+				514A5A61AB5BF720C91A0944 /* Experience */,
 				2A97283EA24CE6DE44E397EA /* Features */,
 				47819F5D171D102448D72AC3 /* Networking */,
 				F786F2AC17B9CFCB64515902 /* Permissions */,
@@ -212,6 +215,14 @@
 				208993AD3E8746016DEFD75F /* YPerson.entitlements */,
 			);
 			path = YPerson;
+			sourceTree = "<group>";
+		};
+		514A5A61AB5BF720C91A0944 /* Experience */ = {
+			isa = PBXGroup;
+			children = (
+				D8231A08DD9861DEC29505A7 /* YPersonIntegrationContract.swift */,
+			);
+			path = Experience;
 			sourceTree = "<group>";
 		};
 		536BC01DCBE5D104CFCA0899 /* Resources */ = {
@@ -572,6 +583,7 @@
 				DCAB22468D62AE11C281CFE1 /* PrivacyViewController.swift in Sources */,
 				48B8935AECD4A25733526E34 /* QRCodeScannerViewController.swift in Sources */,
 				D91A4ED9BE788718888C6405 /* YPStyle.swift in Sources */,
+				98290ADBE47289C2AB496557 /* YPersonIntegrationContract.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
