@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		052F7348711D22B1253A7A1E /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 6D22DD8D5C703D5A0EB4117E /* InfoPlist.strings */; };
+		0DC40FF0ADF08360DE334C91 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 750506F4EEAF3B8D1B12E774 /* WidgetSnapshot.swift */; };
 		13CCCAFA15AD9B93B570C5A2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F5EFCA26B0528FD85942ED0E /* PrivacyInfo.xcprivacy */; };
 		1616764F166B74ACAEAB5862 /* AppMetricaAnalyticsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A82460406C63E9A3C7FA221 /* AppMetricaAnalyticsClient.swift */; };
 		245F6C0FB5C326CC2DEB3B73 /* PersonViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAC46C8858C0D992879AF1C4 /* PersonViewController.swift */; };
@@ -28,6 +29,7 @@
 		9E469F546766DFDAB04A4660 /* AppFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95235915DA13A07330BC207D /* AppFactory.swift */; };
 		A0A6331485D058047FAC74D2 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38A55AA34CCEEB53EC48D024 /* NotificationService.swift */; };
 		A0FC157A713AA27C3B7E8D9D /* NearbyExchangeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D938FC5C6EE5391F7920B405 /* NearbyExchangeController.swift */; };
+		AA2209FE210BFDD77FF0A64D /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 750506F4EEAF3B8D1B12E774 /* WidgetSnapshot.swift */; };
 		B20D697B2111A0880896340F /* CardEditorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CDBA4E3382BD6229B260BBB /* CardEditorViewController.swift */; };
 		B30EF3E75B860EFE6064BC68 /* AppearanceViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C86F699B3F01C82FEE91E99 /* AppearanceViewController.swift */; };
 		B54A900AEB613F80AE957785 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 8DBF242EE59E958AF301277F /* PrivacyInfo.xcprivacy */; };
@@ -115,6 +117,7 @@
 		6AB1404B21FE58EB813AF60A /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfiguration.swift; sourceTree = "<group>"; };
 		6CDBA4E3382BD6229B260BBB /* CardEditorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardEditorViewController.swift; sourceTree = "<group>"; };
 		6D4EC9F123380A9A82AAC30E /* AppGroupSnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupSnapshotStore.swift; sourceTree = "<group>"; };
+		750506F4EEAF3B8D1B12E774 /* WidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshot.swift; sourceTree = "<group>"; };
 		7A13996E6F0278470DBD08AA /* NotificationViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationViewController.swift; sourceTree = "<group>"; };
 		85FF1494661E949011B6F874 /* YPersonWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = YPersonWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		89A99344CEF5B9D4A1670A7F /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
@@ -261,6 +264,14 @@
 			path = Config;
 			sourceTree = "<group>";
 		};
+		744FECF23B2C6CF152C857E3 /* YPersonShared */ = {
+			isa = PBXGroup;
+			children = (
+				750506F4EEAF3B8D1B12E774 /* WidgetSnapshot.swift */,
+			);
+			path = YPersonShared;
+			sourceTree = "<group>";
+		};
 		7EF2E891B0C676C7338D1ECA = {
 			isa = PBXGroup;
 			children = (
@@ -268,6 +279,7 @@
 				4807C6E9F40F40DA3E1D9F53 /* YPerson */,
 				F4ECDF85FB14F91797DCAE5C /* YPersonNotificationContent */,
 				94DFE148B9F9EB58C3FC5AA0 /* YPersonNotificationService */,
+				744FECF23B2C6CF152C857E3 /* YPersonShared */,
 				335112BC36B2C40D0B6A38C5 /* YPersonWidget */,
 				2F12DA7DDF294DA0AF1F7546 /* Products */,
 			);
@@ -553,6 +565,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0DC40FF0ADF08360DE334C91 /* WidgetSnapshot.swift in Sources */,
 				52717EBD27E93DC80BA5D866 /* YPersonWidget.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -582,6 +595,7 @@
 				8DAEE38A487807265E664A0A /* PhotoCardScanner.swift in Sources */,
 				DCAB22468D62AE11C281CFE1 /* PrivacyViewController.swift in Sources */,
 				48B8935AECD4A25733526E34 /* QRCodeScannerViewController.swift in Sources */,
+				AA2209FE210BFDD77FF0A64D /* WidgetSnapshot.swift in Sources */,
 				D91A4ED9BE788718888C6405 /* YPStyle.swift in Sources */,
 				98290ADBE47289C2AB496557 /* YPersonIntegrationContract.swift in Sources */,
 			);

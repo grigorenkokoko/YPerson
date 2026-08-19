@@ -47,6 +47,7 @@ targets:
     deploymentTarget: "15.0"
     sources:
       - path: YPerson
+      - path: YPersonShared
     configFiles:
       Debug: Config/Debug.xcconfig
       Release: Config/Release.xcconfig
@@ -120,6 +121,7 @@ targets:
     deploymentTarget: "15.0"
     sources:
       - path: YPersonWidget
+      - path: YPersonShared
     configFiles:
       Debug: Config/Debug.xcconfig
       Release: Config/Release.xcconfig

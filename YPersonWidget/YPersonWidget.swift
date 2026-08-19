@@ -1,11 +1,6 @@
 import SwiftUI
 import WidgetKit
 
-private struct Snapshot: Codable {
-    let updateCount: Int
-    let isOffline: Bool
-    let updatedAt: Date
-}
 private struct Entry: TimelineEntry {
     let date: Date
     let updateCount: Int
@@ -20,13 +15,18 @@ private struct Provider: TimelineProvider {
     }
 
     private func readEntry() -> Entry {
-        guard let group = Bundle.main.object(forInfoDictionaryKey: "APP_GROUP_IDENTIFIER") as? String,
+        guard let group = Bundle.main.object(
+            forInfoDictionaryKey: "APP_GROUP_IDENTIFIER"
+        ) as? String,
               let defaults = UserDefaults(suiteName: group),
-              let data = defaults.data(forKey: "widget_snapshot"),
-              let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else {
+              let snapshot = WidgetSnapshotStorage.read(from: defaults) else {
             return Entry(date: Date(), updateCount: 0, isOffline: false)
         }
-        return Entry(date: snapshot.updatedAt, updateCount: snapshot.updateCount, isOffline: snapshot.isOffline)
+        return Entry(
+            date: snapshot.updatedAt,
+            updateCount: snapshot.updateCount,
+            isOffline: snapshot.isOffline
+        )
     }
 }
 

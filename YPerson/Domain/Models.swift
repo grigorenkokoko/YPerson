@@ -77,14 +77,6 @@ struct PersonCard: Codable, Equatable, Identifiable {
 #endif
 }
 
-struct WidgetSnapshot: Codable, Equatable {
-    let updateCount: Int
-    let isOffline: Bool
-    let updatedAt: Date
-
-    static let empty = WidgetSnapshot(updateCount: 0, isOffline: false, updatedAt: .distantPast)
-}
-
 enum SyncOperation: String, Codable {
     case refresh
     case publishCard
