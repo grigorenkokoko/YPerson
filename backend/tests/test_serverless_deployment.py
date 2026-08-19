@@ -11,25 +11,23 @@ ROOT = Path(__file__).resolve().parents[2]
 GATEWAY = ROOT / "deploy" / "yandex" / "serverless" / "api-gateway.yaml"
 CONFIG_EXAMPLE = ROOT / "deploy" / "yandex" / "serverless" / "config.example.env"
 
-PUBLIC_CONFIG_DEFAULTS = {
+EXPECTED_CONFIG = {
+    "YC_FOLDER_ID": "",
     "YC_REGISTRY_ID": "crp7vdmqvk61ce7oukqn",
+    "YC_DEPLOYER_SA_ID": "",
+    "YC_HTTP_CONTAINER_ID": "",
+    "YC_RUNTIME_SA_ID": "",
+    "YC_GATEWAY_SA_ID": "",
+    "YC_HEALTH_URL": "",
     "YPERSON_CONFIG_VERSION": "2026-08-19.1",
     "YPERSON_PRIVACY_URL": "https://yperson.ru/privacy",
     "YPERSON_SUPPORT_URL": "https://yperson.ru/support",
 }
-EXPECTED_CONFIG_KEYS = {
-    "YC_FOLDER_ID",
-    "YC_REGISTRY_ID",
-    "YC_DEPLOYER_SA_ID",
-    "YC_HTTP_CONTAINER_ID",
+DATABASE_ERA_CONFIG_KEYS = {
     "YC_MIGRATION_CONTAINER_ID",
-    "YC_RUNTIME_SA_ID",
-    "YC_GATEWAY_SA_ID",
     "YC_NETWORK_ID",
     "YC_LOCKBOX_SECRET_ID",
     "YC_LOCKBOX_SECRET_VERSION_ID",
-    "YC_HEALTH_URL",
-    *PUBLIC_CONFIG_DEFAULTS,
 }
 FORBIDDEN_SECRET_KEY_PARTS = (
     "password",
@@ -141,11 +139,8 @@ def test_config_example_exposes_only_approved_non_secret_values() -> None:
 
     pairs = parse_env_pairs(CONFIG_EXAMPLE.read_text())
 
-    assert set(pairs) == EXPECTED_CONFIG_KEYS
-    assert {key: pairs[key] for key in PUBLIC_CONFIG_DEFAULTS} == PUBLIC_CONFIG_DEFAULTS
-    assert all(
-        value == "" for key, value in pairs.items() if key not in PUBLIC_CONFIG_DEFAULTS
-    )
+    assert pairs == EXPECTED_CONFIG
+    assert DATABASE_ERA_CONFIG_KEYS.isdisjoint(pairs)
 
 
 def test_config_parser_rejects_duplicate_and_secret_bearing_keys() -> None:
