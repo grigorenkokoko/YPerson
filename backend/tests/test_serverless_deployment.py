@@ -284,6 +284,7 @@ def assert_release_workflow_contract(workflow: dict[str, object], workflow_sourc
             "context": ".",
             "file": "backend/Dockerfile",
             "platforms": "linux/amd64",
+            "provenance": False,
             "push": True,
             "tags": "cr.yandex/${{ vars.YC_REGISTRY_ID }}/backend:${{ github.sha }}",
         },
