@@ -457,7 +457,11 @@ tracking:
 
 backend:
   storage_model: YDB Serverless stores compact profile snapshots, connections, short-lived exchange claims, moderation state, push token, and audio metadata; private Object Storage stores only audio greeting objects
-  durable_storage_target: approved deployment target; YDB schema, private bucket, Lockbox configuration, and external runtime verification are not yet production-deployment evidence
+  durable_storage_target: implemented locally; YDB schema, private bucket, Lockbox configuration, and external runtime verification remain pending deployment evidence
+  evidence_state:
+    implemented_locally: sync v2 authentication, YDB adapter/schema, private signed audio transfer, idempotent profile deletion, and iOS durable retry
+    deployed_externally: false
+    pending_physical_device: production APNs delivery and mutual Bluetooth exchange on two iPhones
   implementation:
     runtime: Python 3.12 with FastAPI and Uvicorn in a Serverless Container behind API Gateway; YDB and private Object Storage are the approved durable-storage target
     wire_format: versioned camelCase sync v2; authentication secret is sent only as an HTTPS Bearer header and is stored server-side only as a hash
@@ -674,7 +678,7 @@ policy_modules:
     reason: installation-scoped cloud profile is created
     in_app_path: "Настройки → Данные и конфиденциальность → Удалить профиль"
     scope: published card/assets, connections, exchange claims, APNs/auth tokens, and local data
-    timing: active storage immediately; backups within 30 days
+    timing: active storage after server acknowledgement; offline request persists for retry; configured backups must be removed within 30 days
     exception: closed abuse/security report may remain restricted for up to 180 days
     ui_evidence: "S7 Данные и конфиденциальность → Удалить профиль → подтверждение полного scope и сроков"
   third_party_login:

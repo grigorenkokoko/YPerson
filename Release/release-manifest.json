@@ -50,17 +50,21 @@
   "backend": {
     "runtime": "Python 3.12.14",
     "framework": "FastAPI 0.141.1",
-    "storage": "PostgreSQL via SQLAlchemy 2.0.52; Alembic 1.19.1 migration 20260818_0001",
+    "storage": "YDB Serverless for structured state; private Yandex Object Storage for audio greetings",
     "process": "Uvicorn 0.52.3",
     "implementationEvidence": [
       "backend/app/main.py",
       "backend/app/storage.py",
-      "backend/migrations/versions/20260818_0001_initial.py",
+      "backend/app/ydb_store.py",
+      "backend/app/ydb_schema.py",
+      "backend/app/media_service.py",
+      "backend/app/object_storage.py",
+      "backend/scripts/apply_ydb_schema.py",
       "backend/tests",
-      "backend/Dockerfile",
-      "backend/compose.yaml"
+      "backend/Dockerfile"
     ],
-    "containerVerification": "Local Docker 29.7.2 / Compose 5.4.0 Linux arm64 build and run verified at 2026-08-18T12:54:33Z: hash-locked install completed, Alembic migration exited 0, PostgreSQL and API became healthy, runtime user is UID/GID 10001, GET /health and GET /config returned 200, and a disposable card survived an API-only restart before API deletion cleanup. No registry push, external staging, or production deployment is claimed.",
+    "implementationStatus": "implemented locally; external YDB/Object Storage deployment not yet verified",
+    "containerVerification": "Task 5 verified the backend suite (173 passed), Ruff, private signed-audio behavior, and Debug/Release simulator builds. No new Serverless Container revision, YDB schema application, bucket mutation, or external API Gateway smoke is claimed.",
     "endpoints": [
       "GET /health",
       "GET /config",
@@ -121,15 +125,13 @@
       "xcodegen": "2.46.0",
       "python": "3.12.14",
       "fastapi": "0.141.1",
-      "sqlalchemy": "2.0.52",
-      "alembic": "1.19.1",
-      "psycopg": "3.3.4",
-      "greenlet": "3.5.5",
+      "ydb": "3.29.4",
+      "boto3": "1.43.55",
       "uvicorn": "0.52.3"
     },
     "xcodegen": "generated the shared project during the 2026-08-18 verification",
     "debugBuild": "passed with warnings treated as errors on 2026-08-18T12:07:30Z; generic iOS Simulator, CODE_SIGNING_ALLOWED=NO; full compile BUILD SUCCEEDED in 39.978s and corrected repeat exited 0 in 5.18s",
-    "releaseSimulatorBuild": "passed with warnings treated as errors on 2026-08-18T12:08:26Z; generic iOS Simulator, CODE_SIGNING_ALLOWED=NO, exit 0 in 42.91s",
+      "releaseSimulatorBuild": "passed with warnings treated as errors on 2026-08-20T11:59:42Z; generic iOS Simulator, CODE_SIGNING_ALLOWED=NO, BUILD SUCCEEDED in 75.426s",
     "simulator": "iPhone 16 Pro, iOS 18.5",
     "cleanInstallReleaseSimulator": "passed: empty create-card state with no profile, people, counters, or sync claims",
     "ordinaryDebugState": "passed: matches clean Release state without YP_SCREENSHOT_STATE",
@@ -152,20 +154,16 @@
       "oversizedBody": 413,
       "unsupportedMediaType": 415,
       "sanitizedInternalError": 500,
-      "unavailableDatabase": 503
+      "unavailableDurableStorage": 503
     },
     "backendVerification": {
-      "recordedAtUTC": "2026-08-18T12:10:27Z",
-      "postgresql": "17.11 isolated UTF-8 local cluster",
-      "migration": "alembic upgrade head; current: 20260818_0001 (head); downgrade base and re-upgrade head passed",
-      "pytest": "67 passed, 1 existing FastAPI TestClient deprecation warning in 2.29s; focused 500/503 matrix 3 passed; final all-status invariant 1 passed",
-      "ruff": "check passed; 19 files already formatted",
-      "localUvicornSmoke": "live 200/304/400/404/405 with Allow GET/413/415; controlled isolated probes verified sanitized 500 and unavailable-database 503",
-      "gracefulShutdown": "SIGTERM stopped the two local Uvicorn processes in 0.236s and 0.176s, below the 15-second allowance",
-        "persistence": "published card and APNs token survived an API-only restart and direct PostgreSQL readback; contract and storage suites exercised transactional persistence and profile deletion"
+      "recordedAtUTC": "2026-08-20T11:59:42Z",
+      "pytest": "Task 5 full backend: 173 passed; Task 6 focused deletion/media/public pages: 7 passed; Task 6 minimal integrated suite: 75 passed; one existing Starlette TestClient deprecation warning",
+      "ruff": "Task 6 final check passed",
+      "persistence": "YDB adapter tests cover authenticated persistence, reciprocal connections, revocations, APNs, media ownership and transactional idempotent profile deletion; private Object Storage behavior uses deterministic fake storage",
+      "externalDeployment": "not yet verified"
       },
-      "containerVerificationAtUTC": "2026-08-18T12:54:33Z",
-      "localDockerCompose": "Docker 29.7.2 / Compose 5.4.0 on Linux arm64; clean no-cache API image build passed with --require-hashes; db and api healthy; migration exited 0; UID/GID 10001; live /health and /config returned 200; disposable card survived API-only restart and was then deleted with direct zero-row confirmation; clean Linux dev-lock install plus pytest reported 68 passed and Ruff check/format passed",
+      "historicalDockerCompose": "Historical PostgreSQL/Compose evidence predates the approved YDB/Object Storage architecture and is not production-deployment evidence.",
       "skillValidation": "11 mutation tests passed; custom validator passed; system quick_validate passed on 2026-08-18T12:08:59Z",
     "parserValidation": "all Release JSON plus AppPrivacy.yml, project.yml, and backend/compose.yaml parsed; implementation-verified/releaseReady false invariant held",
     "releasePreparationBackendSmokeAtUTC": "2026-08-18T07:35:18Z",
@@ -176,7 +174,7 @@
   },
   "releaseBlockers": [
     "Assign final Apple bundle identifiers, team, App Group, signing certificates, and provisioning profiles.",
-    "Deploy the production API only after approved installation authentication; managed PostgreSQL with tested backup/restore and deletion behavior; a production TLS-protected domain; hosting jurisdiction; processor agreement; and monitoring/alerting evidence are confirmed.",
+    "Apply the YDB schema, configure a private Object Storage bucket and Lockbox/runtime IAM, deploy a Serverless Container revision, route API Gateway /sync, and externally verify authentication/audio/deletion plus backup policy and monitoring.",
     "Publish final privacy-policy and support/moderation URLs and contacts.",
     "Provide the production AppMetrica API key and confirm DPA, retention, deletion, package provenance, privacy manifests, and network domains in the archive.",
     "Configure APNs credentials and a production notification-signing public key, then perform end-to-end remote notification checks.",
