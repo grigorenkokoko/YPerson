@@ -82,8 +82,7 @@ Update `AppSpec.md`, `Design/design-spec.md`, `AppPrivacy.yml`, `Release/impleme
 
 ## Verification
 
-- Unit tests cover exact acceptance of `yperson://scan` and rejection of lookalike or extended URLs.
-- Unit tests cover scanner-entry routing without duplicating an already active scanner flow.
+- Temporary executable Swift harnesses cover exact acceptance of `yperson://scan`, rejection of lookalike or extended URLs, and duplicate-launch gating without adding a persistent test target to the standalone app.
 - Build the main application and widget extension for an iPhone simulator with iOS 15-compatible APIs.
 - Inspect the built widget extension to confirm it has no App Group entitlement and no camera usage description.
 - Verify `systemSmall`, `accessoryCircular`, and `accessoryRectangular` previews or screenshots.
