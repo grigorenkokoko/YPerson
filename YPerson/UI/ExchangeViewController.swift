@@ -1,3 +1,4 @@
+import AVFoundation
 import Photos
 import PhotosUI
 import UIKit
@@ -58,14 +59,33 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
               !(navigationController?.topViewController is QRCodeScannerViewController) else {
             return
         }
-        explainPermission(title: "Сканирование QR", message: "Камера нужна, чтобы сканировать QR-код визитки YPerson и добавить человека.") { [weak self] in
-            guard let self else { return }
-            let scanner = QRCodeScannerViewController { [weak self] value in
-                self?.analytics.report(.cardReceived("qr"))
-                self?.confirmImportedCard(method: value.hasPrefix("BEGIN:VCARD") ? "vCard" : "QR")
+
+        switch QRScannerPermissionPolicy.action(for: cameraAuthorizationState) {
+        case .openScanner:
+            openQRScanner()
+        case .explainPermission:
+            explainPermission(title: "Сканирование QR", message: "Камера нужна, чтобы сканировать QR-код визитки YPerson и добавить человека.") { [weak self] in
+                self?.openQRScanner()
             }
-            self.navigationController?.pushViewController(scanner, animated: true)
         }
+    }
+
+    private var cameraAuthorizationState: QRScannerPermissionPolicy.AuthorizationState {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized: return .authorized
+        case .notDetermined: return .notDetermined
+        case .denied: return .denied
+        case .restricted: return .restricted
+        @unknown default: return .unavailable
+        }
+    }
+
+    private func openQRScanner() {
+        let scanner = QRCodeScannerViewController { [weak self] value in
+            self?.analytics.report(.cardReceived("qr"))
+            self?.confirmImportedCard(method: value.hasPrefix("BEGIN:VCARD") ? "vCard" : "QR")
+        }
+        navigationController?.pushViewController(scanner, animated: true)
     }
 
     @objc private func startNearby() {

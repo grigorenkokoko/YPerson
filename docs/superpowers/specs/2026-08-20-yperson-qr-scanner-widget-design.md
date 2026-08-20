@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-20
 
-**Status:** Approved in chat; awaiting written-spec review
+**Status:** Approved and implemented
 
 **Supersedes:** `2026-08-20-yperson-qr-widget-design.md`
 
