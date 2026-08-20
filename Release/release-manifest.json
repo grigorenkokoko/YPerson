@@ -93,6 +93,26 @@
     "remoteKillSwitch": true,
     "extensionsActivateAnalytics": false
   },
+  "publicCardPayload": {
+    "templateID": {
+      "classification": "public presentation metadata",
+      "transmission": "included only with an explicitly published or confirmed-exchange card",
+      "excluded": [
+        "palette values",
+        "ATT state",
+        "attribution identifiers",
+        "analytics consent",
+        "sponsored-template interaction events"
+      ],
+      "evidence": [
+        "YPerson/Domain/Models.swift",
+        "backend/app/schemas.py",
+        "backend/tests/test_schemas.py",
+        "backend/tests/test_storage.py",
+        "backend/tests/test_sync_service.py"
+      ]
+    }
+  },
   "releasePreparation": {
     "approvedAtUTC": "2026-08-18T07:13:02Z",
     "preparedAtUTC": "2026-08-18T07:35:18Z",

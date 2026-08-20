@@ -322,18 +322,21 @@ def test_published_card_survives_refresh(
     card: PersonCard,
 ) -> None:
     store.authenticate_or_create("installation-owner", "owner-secret")
-    version = store.publish_card("installation-owner", "op-publish-1", card, None)
-    retried_version = store.publish_card("installation-owner", "op-publish-1", card, None)
+    styled_card = PersonCard.model_validate(
+        card.model_dump(mode="json") | {"templateID": "mint-conference"}
+    )
+    version = store.publish_card("installation-owner", "op-publish-1", styled_card, None)
+    retried_version = store.publish_card("installation-owner", "op-publish-1", styled_card, None)
     snapshot = store.refresh("installation-owner", None)
     assert version == 1
     assert retried_version == version
-    assert snapshot.own_card == card
+    assert snapshot.own_card == styled_card
 
     pool = RecordingPool()
     adapter = YDBSyncStore(pool)  # type: ignore[arg-type]
     adapter.authenticate_or_create("installation-owner", "owner-secret")
-    ydb_version = adapter.publish_card("installation-owner", "op-publish-1", card, None)
-    ydb_retry = adapter.publish_card("installation-owner", "op-publish-1", card, None)
+    ydb_version = adapter.publish_card("installation-owner", "op-publish-1", styled_card, None)
+    ydb_retry = adapter.publish_card("installation-owner", "op-publish-1", styled_card, None)
     ydb_snapshot = adapter.refresh("installation-owner", None)
     adapter.prepare_exchange(
         "installation-owner",
@@ -352,7 +355,7 @@ def test_published_card_survives_refresh(
 
     assert ydb_version == 1
     assert ydb_retry == ydb_version
-    assert ydb_snapshot.own_card == card
+    assert ydb_snapshot.own_card == styled_card
     assert pool.exchange_token_hashes == [sha256(b"raw-exchange-token").digest()]
     assert "raw-exchange-token" not in repr(pool.transaction_calls)
     assert all(settings.idempotent for _, settings in pool.transaction_settings)
@@ -361,6 +364,7 @@ def test_published_card_survives_refresh(
         for mode, _ in pool.transaction_settings
     )
     stored_json = json.loads(pool.cards["installation-owner"][1])
+    assert stored_json["templateID"] == "mint-conference"
     assert "meetingPlace" not in stored_json
 
 

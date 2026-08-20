@@ -237,6 +237,10 @@ def post_sync(
 
 def test_two_installations_claim_exchange_and_receive_peer_card() -> None:
     store = MemoryStore()
+    owner_card = PersonCard.model_validate(
+        card("card-owner", "Owner").model_dump(mode="json")
+        | {"templateID": "indigo-studio"}
+    )
     with make_client(store) as client:
         owner_bootstrap = post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-1")
         peer_bootstrap = post_sync(client, PEER, "refresh", operation_id="peer-bootstrap-01")
@@ -245,7 +249,7 @@ def test_two_installations_claim_exchange_and_receive_peer_card() -> None:
             OWNER,
             "prepareExchange",
             operation_id="prepare-op-0001",
-            card=card("card-owner", "Owner").model_dump(mode="json"),
+            card=owner_card.model_dump(mode="json"),
         )
         claimed = post_sync(
             client,
@@ -261,6 +265,7 @@ def test_two_installations_claim_exchange_and_receive_peer_card() -> None:
     assert "=" not in prepared.json()["exchangeToken"]
     assert claimed.status_code == 200
     assert claimed.json()["people"][0]["card"]["id"] == "card-owner"
+    assert claimed.json()["people"][0]["card"]["templateID"] == "indigo-studio"
     assert claimed.json()["people"][0]["installationID"] == OWNER[0]
 
 

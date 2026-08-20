@@ -256,6 +256,8 @@ data_inventory:
     used_for_tracking: false
     retention: active profile lifetime or 24 months of inactivity; backup deletion within 30 days
     deletion: delete field, revoke card, or delete profile
+    public_presentation_metadata: templateID is collected only as part of an explicitly published Contact Info card for App Functionality and is delivered to confirmed recipients
+    template_payload: only templateID is transmitted; palette values, ATT state, attribution identifiers, analytics consent, and sponsored-template interaction events are not transmitted
 
   - id: published_avatar
     apple_data_types: [photos_or_videos]
