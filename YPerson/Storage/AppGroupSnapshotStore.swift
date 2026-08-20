@@ -1,9 +1,9 @@
 import Foundation
-import WidgetKit
 
 final class AppGroupSnapshotStore {
     private enum Key {
         static let ownCard = "yperson.v1.own_card"
+        static let obsoleteWidgetSnapshot = "yperson.v1.widget_snapshot"
         static let remoteConfiguration = "yperson.v1.remote_configuration"
         static let remoteConfigurationETag = "yperson.v1.remote_configuration_etag"
         static let analyticsConsent = "yperson.v1.analytics_consent"
@@ -18,6 +18,7 @@ final class AppGroupSnapshotStore {
 
         enum Legacy {
             static let ownCard = "own_card"
+            static let obsoleteWidgetSnapshot = "widget_snapshot"
             static let remoteConfiguration = "remote_configuration"
             static let remoteConfigurationETag = "remote_configuration_etag"
             static let analyticsConsent = "analytics_consent"
@@ -154,18 +155,6 @@ final class AppGroupSnapshotStore {
         migrateLegacyValues()
     }
 
-    func readWidgetSnapshot() -> WidgetSnapshot {
-        WidgetSnapshotStorage.read(from: defaults) ?? .empty
-    }
-
-    func writeWidgetSnapshot(_ snapshot: WidgetSnapshot) throws {
-        defaults.set(
-            try WidgetSnapshotStorage.encode(snapshot),
-            forKey: WidgetSnapshotStorage.currentKey
-        )
-        WidgetCenter.shared.reloadAllTimelines()
-    }
-
     func cachedConfiguration() -> (RemoteConfiguration, String?)? {
         guard let data = defaults.data(forKey: Key.remoteConfiguration),
               let config = try? decoder.decode(RemoteConfiguration.self, from: data) else { return nil }
@@ -195,7 +184,7 @@ final class AppGroupSnapshotStore {
     func clearUserData() {
         let removableKeys = [
             Key.ownCard,
-            WidgetSnapshotStorage.currentKey,
+            Key.obsoleteWidgetSnapshot,
             Key.remoteConfiguration,
             Key.remoteConfigurationETag,
             Key.analyticsConsent,
@@ -206,13 +195,12 @@ final class AppGroupSnapshotStore {
             Key.pendingAPNSToken,
             Key.pendingAPNSRemoval,
             Key.Legacy.ownCard,
-            WidgetSnapshotStorage.legacyKey,
+            Key.Legacy.obsoleteWidgetSnapshot,
             Key.Legacy.remoteConfiguration,
             Key.Legacy.remoteConfigurationETag,
             Key.Legacy.analyticsConsent
         ]
         removableKeys.forEach(defaults.removeObject(forKey:))
-        WidgetCenter.shared.reloadAllTimelines()
     }
 
     private func storePeople(_ people: [PersonCard]) throws {
@@ -229,7 +217,6 @@ final class AppGroupSnapshotStore {
             from: Key.Legacy.ownCard,
             to: Key.ownCard
         )
-        migrateWidgetSnapshot()
         migrateCodable(
             RemoteConfiguration.self,
             from: Key.Legacy.remoteConfiguration,
@@ -261,17 +248,6 @@ final class AppGroupSnapshotStore {
         }
         defaults.set(data, forKey: currentKey)
         defaults.removeObject(forKey: legacyKey)
-    }
-
-    private func migrateWidgetSnapshot() {
-        guard defaults.object(forKey: WidgetSnapshotStorage.currentKey) == nil,
-              let data = defaults.data(forKey: WidgetSnapshotStorage.legacyKey),
-              let snapshot = WidgetSnapshotStorage.decode(data),
-              let encoded = try? WidgetSnapshotStorage.encode(snapshot) else {
-            return
-        }
-        defaults.set(encoded, forKey: WidgetSnapshotStorage.currentKey)
-        defaults.removeObject(forKey: WidgetSnapshotStorage.legacyKey)
     }
 
     private func migrateString(from legacyKey: String, to currentKey: String) {

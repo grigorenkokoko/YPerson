@@ -153,9 +153,12 @@ UGC controls находятся в `S4 → •••`: `Пожаловаться
 
 ### WidgetKit
 
-- iOS 16+: `accessoryRectangular`, строка `YPerson · Моя карточка`, ниже `3 обновления`; без QR, телефона, email и закрытых полей.
-- iOS 15: `systemSmall` с тем же безопасным содержимым и кнопкой-deep-link по всей поверхности.
-- Empty: `Обновлений нет`; offline использует последний безопасный snapshot.
+- WidgetKit — статический launcher, а не live camera: расширение не может размещать preview камеры. Камера, permission flow и fallback остаются в существующем приложении.
+- iOS 15: `systemSmall` на Home Screen с крупным `qrcode.viewfinder`, заголовком `Сканировать QR` и подписью `Добавить визитку`.
+- iOS 16+: дополнительно `accessoryCircular` со scanner symbol и `accessoryRectangular` с `Сканировать QR` и компактной меткой YPerson.
+- Каждое семейство открывает общий deep link `yperson://scan`; приложение выбирает «Обмен» и запускает существующий flow `Сканировать QR`.
+- Нет состояний карточки, QR payload, счётчика обновлений или cached snapshot: виджет не читает персональные данные, не делает сетевых запросов и не запрашивает доступ к камере.
+- Accessibility: combined VoiceOver label — `Сканировать QR-код визитки в YPerson`; текст следует Dynamic Type в пределах family, символ и текст используются вместе там, где есть место, а цвет не является единственным сигналом.
 
 ### Notification Service Extension
 
@@ -198,7 +201,7 @@ UGC controls находятся в `S4 → •••`: `Пожаловаться
 - Permission flow: пакетных запросов нет; все 10 trigger paths и denied alternatives видимы.
 - Privacy: локальные данные не обозначены как серверные; ATT и analytics остаются отдельными решениями.
 - Accessibility: масштабирование, VoiceOver, contrast, non-color states и touch targets заданы.
-- Feasibility: каждый экран реализуем programmatic UIKit на iOS 15; WidgetKit использует версионный fallback.
+- Feasibility: каждый экран реализуем programmatic UIKit на iOS 15; WidgetKit использует статический scanner launcher с `systemSmall` fallback и iOS 16+ accessory families.
 - Scope: публичная лента, чат, платежи, отдельный аккаунт и дополнительные платформы не добавлены.
 
 ## Визуальные кандидаты

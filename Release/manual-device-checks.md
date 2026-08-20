@@ -31,9 +31,12 @@
 - [ ] Проверить, что `/config` может только отключать функции/аналитику и не может добавлять разрешения, категории данных, tracking или retention.
 - [ ] С production AppMetrica key подтвердить: до согласия нет активации/трафика; после согласия есть единственный `launch`; выключение аналитики и remote kill switch останавливают будущую отправку; события не содержат карточки, Контакты, медиа, координаты, токены или свободный текст.
 - [ ] Проверить AppMetrica 6.5.0, его package identity/revision, privacy manifests, подпись/происхождение и фактические сетевые домены в release archive.
-- [ ] Проверить Home Screen `systemSmall` на iOS 15 и Lock Screen `accessoryRectangular` на iOS 16+; убедиться, что виджет показывает только нейтральный shortcut и число обновлений.
+- [ ] На iOS 15 проверить `systemSmall`: нажатие открывает «Обмен» и запускает существующий сценарий «Сканировать QR».
+- [ ] На iOS 16+ проверить `accessoryCircular` и `accessoryRectangular` на Lock Screen с тем же переходом.
+- [ ] Проверить cold launch, warm launch, повторное нажатие без дублирования, а также authorized/notDetermined/denied/restricted состояния камеры.
+- [ ] Подтвердить, что у widget extension нет App Group entitlement, camera purpose string, сетевого клиента и персонального snapshot.
 - [ ] Настроить Curve25519 public key и отправить валидное и невалидное signed push. Проверить тайм-аут public-avatar, безопасный fallback, удаление технического токена и действия «Просмотреть и обновить»/«Заблокировать» без прямой записи в Контакты.
-- [ ] Проверить подписанные App Group entitlements между приложением и виджетом и push entitlement основного приложения.
+- [ ] На подписанной сборке подтвердить App Group entitlement основного приложения, его отсутствие у widget extension и push entitlement основного приложения.
 
 ## Удаление и модерация
 

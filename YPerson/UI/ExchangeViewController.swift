@@ -1,3 +1,4 @@
+import AVFoundation
 import Photos
 import PhotosUI
 import UIKit
@@ -13,6 +14,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private let ownCard: () -> PersonCard?
     private let onPersonSaved: (PersonCard) -> Void
     private var includePrivate = false
+    private var scannerLaunchGate = QRScannerLaunchGate()
     private var nearbySearchAlert: UIAlertController?
     private var prepareTask: Task<Void, Never>?
     private var preparedToken: String?
@@ -60,14 +62,53 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
 
     @objc private func showOwnQR() { tabBarController?.selectedIndex = 0 }
 
-    @objc func scanQR() {
-        explainPermission(title: "Сканирование QR", message: "Камера нужна, чтобы сканировать QR-код визитки YPerson и добавить человека.") { [weak self] in
-            guard let self else { return }
-            let scanner = QRCodeScannerViewController { [weak self] value in
-                DispatchQueue.main.async { self?.handleScannedCode(value) }
-            }
-            self.navigationController?.pushViewController(scanner, animated: true)
+    func openScannerFromWidget() {
+        let scannerIsVisible = navigationController?.topViewController
+            is QRCodeScannerViewController
+        let alreadyPresenting = scannerIsVisible || presentedViewController != nil
+        guard scannerLaunchGate.begin(alreadyPresenting: alreadyPresenting) else {
+            return
         }
+
+        navigationController?.popToRootViewController(animated: false)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.scannerLaunchGate.complete()
+            self.scanQR()
+        }
+    }
+
+    @objc func scanQR() {
+        guard presentedViewController == nil,
+              !(navigationController?.topViewController is QRCodeScannerViewController) else {
+            return
+        }
+
+        switch QRScannerPermissionPolicy.action(for: cameraAuthorizationState) {
+        case .openScanner:
+            openQRScanner()
+        case .explainPermission:
+            explainPermission(title: "Сканирование QR", message: "Камера нужна, чтобы сканировать QR-код визитки YPerson и добавить человека.") { [weak self] in
+                self?.openQRScanner()
+            }
+        }
+    }
+
+    private var cameraAuthorizationState: QRScannerPermissionPolicy.AuthorizationState {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized: return .authorized
+        case .notDetermined: return .notDetermined
+        case .denied: return .denied
+        case .restricted: return .restricted
+        @unknown default: return .unavailable
+        }
+    }
+
+    private func openQRScanner() {
+        let scanner = QRCodeScannerViewController { [weak self] value in
+            DispatchQueue.main.async { self?.handleScannedCode(value) }
+        }
+        navigationController?.pushViewController(scanner, animated: true)
     }
 
 #if DEBUG

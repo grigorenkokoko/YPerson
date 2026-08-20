@@ -3,6 +3,7 @@ import Foundation
 enum YPersonEntryPoint: Sendable {
     case root
     case card
+    case scanQR
     case privacy
 }
 

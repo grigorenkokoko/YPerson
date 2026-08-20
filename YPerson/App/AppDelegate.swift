@@ -14,8 +14,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
                 configuration: try AppConfiguration(bundle: .main)
             )
             self.experienceBuilder = builder
+            let launchURL = launchOptions?[.url] as? URL
+            let entryPoint: YPersonEntryPoint = launchURL.map(ScannerWidgetRoute.matches) == true
+                ? .scanQR
+                : .root
             window.rootViewController = builder.makeRootViewController(
-                context: YPersonExperienceContext(entryPoint: .root),
+                context: YPersonExperienceContext(entryPoint: entryPoint),
                 output: self
             )
         } catch {
@@ -28,6 +32,18 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.writeAccessibilityEvidence() }
         }
 #endif
+        return true
+    }
+
+    func application(
+        _ application: UIApplication,
+        open url: URL,
+        options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+    ) -> Bool {
+        guard ScannerWidgetRoute.matches(url), let experienceBuilder else {
+            return false
+        }
+        experienceBuilder.route(to: .scanQR)
         return true
     }
 

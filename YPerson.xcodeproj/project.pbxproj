@@ -9,7 +9,6 @@
 /* Begin PBXBuildFile section */
 		052F7348711D22B1253A7A1E /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 6D22DD8D5C703D5A0EB4117E /* InfoPlist.strings */; };
 		0B4B0B7A8801F15BD6B10DFE /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3E940A52F8EAC0CB5F9E5619 /* Security.framework */; };
-		0DC40FF0ADF08360DE334C91 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 750506F4EEAF3B8D1B12E774 /* WidgetSnapshot.swift */; };
 		13CCCAFA15AD9B93B570C5A2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F5EFCA26B0528FD85942ED0E /* PrivacyInfo.xcprivacy */; };
 		1616764F166B74ACAEAB5862 /* AppMetricaAnalyticsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A82460406C63E9A3C7FA221 /* AppMetricaAnalyticsClient.swift */; };
 		232809C4B65AC451691AC6B6 /* MediaTransferClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0A9390AFFB941DA8CB57AB /* MediaTransferClient.swift */; };
@@ -20,10 +19,13 @@
 		48B8935AECD4A25733526E34 /* QRCodeScannerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD1799F52DDF1E713B76582 /* QRCodeScannerViewController.swift */; };
 		52717EBD27E93DC80BA5D866 /* YPersonWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0713886AFFF02F8B18A0E405 /* YPersonWidget.swift */; };
 		56307796A09DEA57FBCDE1C7 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 1E7F0A5C4BE5C51180C7B46D /* PrivacyInfo.xcprivacy */; };
+		5F90883E088EE1F658318A61 /* ScannerWidgetRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 865202CF29A8D4B5A7005697 /* ScannerWidgetRoute.swift */; };
 		62E75CC79906A07A1ECF6537 /* YPersonNotificationContent.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 26B16DC13ECBE2DC6B708901 /* YPersonNotificationContent.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		6633BEE8A465A05C91D7C507 /* CardImageSaver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F5BA513D189A26885B9C8C8 /* CardImageSaver.swift */; };
+		6FE43A64E27A1AED3AED4626 /* QRScannerLaunchGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5F2F1682CFC85E2B485474F /* QRScannerLaunchGate.swift */; };
 		7003A8F439D23CDAE3BA20D9 /* AppGroupSnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D4EC9F123380A9A82AAC30E /* AppGroupSnapshotStore.swift */; };
 		75033FFC1C035C8D77463E91 /* PeopleViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3337EAFEF3B0198BB5BA9D44 /* PeopleViewController.swift */; };
+		7D5AC138F61871893EE3BA0D /* ScannerWidgetRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 865202CF29A8D4B5A7005697 /* ScannerWidgetRoute.swift */; };
 		825E97AB9DE3077A7A1FB3B3 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6506B9BE77BAB21F35300A5A /* APIClient.swift */; };
 		8BA7E80D97F1A2A25B7864E9 /* YPersonWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 85FF1494661E949011B6F874 /* YPersonWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		8DAEE38A487807265E664A0A /* PhotoCardScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D51EBF735785D82AF276EA87 /* PhotoCardScanner.swift */; };
@@ -31,7 +33,6 @@
 		9E469F546766DFDAB04A4660 /* AppFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95235915DA13A07330BC207D /* AppFactory.swift */; };
 		A0A6331485D058047FAC74D2 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38A55AA34CCEEB53EC48D024 /* NotificationService.swift */; };
 		A0FC157A713AA27C3B7E8D9D /* NearbyExchangeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D938FC5C6EE5391F7920B405 /* NearbyExchangeController.swift */; };
-		AA2209FE210BFDD77FF0A64D /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 750506F4EEAF3B8D1B12E774 /* WidgetSnapshot.swift */; };
 		AAE2FC5FCA7708321265DE54 /* InstallationCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E25CDD2FC15A3E7A1F9E6D9 /* InstallationCredentialStore.swift */; };
 		AF51485D3E619498E9AA5262 /* SyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF020DA50446199E2CCA120A /* SyncCoordinator.swift */; };
 		B20D697B2111A0880896340F /* CardEditorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CDBA4E3382BD6229B260BBB /* CardEditorViewController.swift */; };
@@ -122,28 +123,30 @@
 		6532043854455B0ECB9711D7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		66A9319A79DAA44B02E60A99 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		6AB1404B21FE58EB813AF60A /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfiguration.swift; sourceTree = "<group>"; };
-		6AFB6AF1689D6E61F25579BB /* YPersonPersonal.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = YPersonPersonal.entitlements; sourceTree = "<group>"; };
 		6CDBA4E3382BD6229B260BBB /* CardEditorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardEditorViewController.swift; sourceTree = "<group>"; };
 		6D4EC9F123380A9A82AAC30E /* AppGroupSnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupSnapshotStore.swift; sourceTree = "<group>"; };
-		750506F4EEAF3B8D1B12E774 /* WidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshot.swift; sourceTree = "<group>"; };
 		7A13996E6F0278470DBD08AA /* NotificationViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationViewController.swift; sourceTree = "<group>"; };
+		7F5CF64FC392D6638F060F08 /* WidgetPersonalDebug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = WidgetPersonalDebug.xcconfig; sourceTree = "<group>"; };
 		85FF1494661E949011B6F874 /* YPersonWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = YPersonWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		865202CF29A8D4B5A7005697 /* ScannerWidgetRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScannerWidgetRoute.swift; sourceTree = "<group>"; };
 		89A99344CEF5B9D4A1670A7F /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 		8DBF242EE59E958AF301277F /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		95235915DA13A07330BC207D /* AppFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFactory.swift; sourceTree = "<group>"; };
 		982CA5FB80AC4B6B03E1D4C2 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		9C5A1EBF234ED2265F80D10C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		9C86F699B3F01C82FEE91E99 /* AppearanceViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceViewController.swift; sourceTree = "<group>"; };
-		A1CE5299D0A8AF20539CCD18 /* YPersonWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = YPersonWidget.entitlements; sourceTree = "<group>"; };
 		ABD1799F52DDF1E713B76582 /* QRCodeScannerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeScannerViewController.swift; sourceTree = "<group>"; };
 		AEE237F9A1DF69B6E996CF21 /* YPerson.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = YPerson.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B05DF4272FF693CA8C7E28F4 /* MainTabBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabBarController.swift; sourceTree = "<group>"; };
+		B4489AF682C77B6756F96CD3 /* WidgetDebug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = WidgetDebug.xcconfig; sourceTree = "<group>"; };
 		CAC46C8858C0D992879AF1C4 /* PersonViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonViewController.swift; sourceTree = "<group>"; };
 		CF0A9390AFFB941DA8CB57AB /* MediaTransferClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaTransferClient.swift; sourceTree = "<group>"; };
 		D51EBF735785D82AF276EA87 /* PhotoCardScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCardScanner.swift; sourceTree = "<group>"; };
+		D5F2F1682CFC85E2B485474F /* QRScannerLaunchGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerLaunchGate.swift; sourceTree = "<group>"; };
 		D8231A08DD9861DEC29505A7 /* YPersonIntegrationContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YPersonIntegrationContract.swift; sourceTree = "<group>"; };
 		D938FC5C6EE5391F7920B405 /* NearbyExchangeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearbyExchangeController.swift; sourceTree = "<group>"; };
 		DF020DA50446199E2CCA120A /* SyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
+		F05D8628028E8CA968A66818 /* WidgetRelease.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = WidgetRelease.xcconfig; sourceTree = "<group>"; };
 		F3E533DAB9E006DADF68EA10 /* ExchangeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExchangeViewController.swift; sourceTree = "<group>"; };
 		F5EFCA26B0528FD85942ED0E /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -190,7 +193,6 @@
 			isa = PBXGroup;
 			children = (
 				87F3BF095E18A8E3BF44470C /* Resources */,
-				A1CE5299D0A8AF20539CCD18 /* YPersonWidget.entitlements */,
 				0713886AFFF02F8B18A0E405 /* YPersonWidget.swift */,
 			);
 			path = YPersonWidget;
@@ -229,7 +231,6 @@
 				5B2C8340BB81DAE33A3C0177 /* Support */,
 				B2CF411AF81045E9CFE98B39 /* UI */,
 				208993AD3E8746016DEFD75F /* YPerson.entitlements */,
-				6AFB6AF1689D6E61F25579BB /* YPersonPersonal.entitlements */,
 			);
 			path = YPerson;
 			sourceTree = "<group>";
@@ -237,6 +238,7 @@
 		514A5A61AB5BF720C91A0944 /* Experience */ = {
 			isa = PBXGroup;
 			children = (
+				D5F2F1682CFC85E2B485474F /* QRScannerLaunchGate.swift */,
 				D8231A08DD9861DEC29505A7 /* YPersonIntegrationContract.swift */,
 			);
 			path = Experience;
@@ -275,6 +277,9 @@
 				66A9319A79DAA44B02E60A99 /* Debug.xcconfig */,
 				444F6266844246A38742F30C /* PersonalDebug.xcconfig */,
 				89A99344CEF5B9D4A1670A7F /* Release.xcconfig */,
+				B4489AF682C77B6756F96CD3 /* WidgetDebug.xcconfig */,
+				7F5CF64FC392D6638F060F08 /* WidgetPersonalDebug.xcconfig */,
+				F05D8628028E8CA968A66818 /* WidgetRelease.xcconfig */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -282,7 +287,7 @@
 		744FECF23B2C6CF152C857E3 /* YPersonShared */ = {
 			isa = PBXGroup;
 			children = (
-				750506F4EEAF3B8D1B12E774 /* WidgetSnapshot.swift */,
+				865202CF29A8D4B5A7005697 /* ScannerWidgetRoute.swift */,
 			);
 			path = YPersonShared;
 			sourceTree = "<group>";
@@ -590,7 +595,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				0DC40FF0ADF08360DE334C91 /* WidgetSnapshot.swift in Sources */,
+				7D5AC138F61871893EE3BA0D /* ScannerWidgetRoute.swift in Sources */,
 				52717EBD27E93DC80BA5D866 /* YPersonWidget.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -622,8 +627,9 @@
 				8DAEE38A487807265E664A0A /* PhotoCardScanner.swift in Sources */,
 				DCAB22468D62AE11C281CFE1 /* PrivacyViewController.swift in Sources */,
 				48B8935AECD4A25733526E34 /* QRCodeScannerViewController.swift in Sources */,
+				6FE43A64E27A1AED3AED4626 /* QRScannerLaunchGate.swift in Sources */,
+				5F90883E088EE1F658318A61 /* ScannerWidgetRoute.swift in Sources */,
 				AF51485D3E619498E9AA5262 /* SyncCoordinator.swift in Sources */,
-				AA2209FE210BFDD77FF0A64D /* WidgetSnapshot.swift in Sources */,
 				D91A4ED9BE788718888C6405 /* YPStyle.swift in Sources */,
 				98290ADBE47289C2AB496557 /* YPersonIntegrationContract.swift in Sources */,
 			);
@@ -812,10 +818,9 @@
 		};
 		6477CD773AA4C3C042E30878 /* PersonalDebug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 444F6266844246A38742F30C /* PersonalDebug.xcconfig */;
+			baseConfigurationReference = 7F5CF64FC392D6638F060F08 /* WidgetPersonalDebug.xcconfig */;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
-				CODE_SIGN_ENTITLEMENTS = YPersonWidget/YPersonWidget.entitlements;
 				INFOPLIST_FILE = YPersonWidget/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -863,10 +868,9 @@
 		};
 		9C93BF54FA43352243392FE5 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 66A9319A79DAA44B02E60A99 /* Debug.xcconfig */;
+			baseConfigurationReference = B4489AF682C77B6756F96CD3 /* WidgetDebug.xcconfig */;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
-				CODE_SIGN_ENTITLEMENTS = YPersonWidget/YPersonWidget.entitlements;
 				INFOPLIST_FILE = YPersonWidget/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -985,10 +989,9 @@
 		};
 		AAFD61FA86ADF83A0A82638F /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 89A99344CEF5B9D4A1670A7F /* Release.xcconfig */;
+			baseConfigurationReference = F05D8628028E8CA968A66818 /* WidgetRelease.xcconfig */;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
-				CODE_SIGN_ENTITLEMENTS = YPersonWidget/YPersonWidget.entitlements;
 				INFOPLIST_FILE = YPersonWidget/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (

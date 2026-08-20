@@ -94,6 +94,11 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UIApplicationSupportsIndirectInputEvents: false
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Viewer
+            CFBundleURLName: com.yperson.app.scanner
+            CFBundleURLSchemes:
+              - yperson
         NSBluetoothAlwaysUsageDescription: "Bluetooth нужен, чтобы находить поблизости другой iPhone с открытым экраном обмена YPerson и безопасно передавать выбранную визитку."
         NSCameraUsageDescription: "Камера нужна, чтобы сканировать QR-код визитки YPerson и добавить человека."
         NSContactsUsageDescription: "Контакты нужны, чтобы находить дубликаты, добавлять визитки YPerson в адресную книгу и обновлять их при изменениях владельца."
@@ -131,9 +136,9 @@ targets:
       - path: YPersonWidget
       - path: YPersonShared
     configFiles:
-      Debug: Config/Debug.xcconfig
-      PersonalDebug: Config/PersonalDebug.xcconfig
-      Release: Config/Release.xcconfig
+      Debug: Config/WidgetDebug.xcconfig
+      PersonalDebug: Config/WidgetPersonalDebug.xcconfig
+      Release: Config/WidgetRelease.xcconfig
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "1"
@@ -143,14 +148,12 @@ targets:
         SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
         PRODUCT_BUNDLE_IDENTIFIER: $(YP_PRODUCT_BUNDLE_IDENTIFIER).widget
         PRODUCT_NAME: YPersonWidget
-        CODE_SIGN_ENTITLEMENTS: YPersonWidget/YPersonWidget.entitlements
         SKIP_INSTALL: YES
         APPLICATION_EXTENSION_API_ONLY: YES
     info:
       path: YPersonWidget/Resources/Info.plist
       properties:
         CFBundleDisplayName: YPerson Widget
-        APP_GROUP_IDENTIFIER: $(APP_GROUP_IDENTIFIER)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
   YPersonNotificationService:

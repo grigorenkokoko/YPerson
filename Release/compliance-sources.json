@@ -60,7 +60,7 @@
       "title": "Configuring App Groups",
       "url": "https://developer.apple.com/documentation/xcode/configuring-app-groups",
       "checkedOn": "2026-08-18",
-      "decisions": ["The registered App Group must match the main app and widget provisioning entitlements."],
+      "decisions": ["The main app retains its registered App Group for app-owned storage; the stateless QR-scanner widget intentionally has no App Group entitlement, and the final signed entitlements must confirm that boundary."],
       "affectedArtifacts": ["Release/reconciliation.json", "Release/archive-validation.json"]
     },
     {

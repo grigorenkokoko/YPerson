@@ -12,9 +12,17 @@
 - YDB adapter хранит карточки, подтверждённые связи, APNs-токены, краткоживущие exchange claims, moderation state и метаданные аудио. Private Object Storage хранит только `.m4a`; подписанные PUT/GET действуют 300 секунд и не сохраняются на iPhone.
 - Публикация аудио проходит prepare → signed PUT → HEAD-проверка размера/MIME → публикация карточки. Получатель загружает аудио только после нажатия; кэш очищается при изменении/отзыве карточки, блокировке и удалении профиля.
 - Удаление профиля транзакционно удаляет карточку, APNs-токен, связи, claims, installation credential и media metadata, затем идемпотентно удаляет Object Storage keys. Повтор того же `operationID` возвращает то же подтверждение без создания новой установки.
-- На iOS запрос удаления хранится до подтверждения сервера. После подтверждения очищены карточка, люди, widget snapshot, sync cursor/pending payloads, analytics consent, аудиофайлы/кэш и Keychain credential; автоматический bootstrap остаётся запрещён до явного создания новой карточки.
+- На iOS запрос удаления хранится до подтверждения сервера. После подтверждения очищены карточка, люди, legacy widget snapshot keys, sync cursor/pending payloads, analytics consent, аудиофайлы/кэш и Keychain credential; автоматический bootstrap остаётся запрещён до явного создания новой карточки.
 - Публичные `/privacy` и `/support` описывают фактически реализованные данные, путь удаления и сроки, но прямо отмечают отсутствие внешней проверки этой версии.
-- Focused deletion/media/public-pages: 7 passed. Итоговый минимальный backend-набор: 75 passed; Ruff passed. Task 6 Release simulator build без signing завершился `BUILD SUCCEEDED` за 75.426 s.
+- После объединения полный backend-набор завершился с результатом 140 passed; Ruff passed. Чистая Debug-сборка общего iOS-проекта для Generic iOS Simulator без signing завершилась успешно.
+
+## QR scanner widget
+
+- Виджет является stateless-ярлыком сканера: он открывает только строгий маршрут `yperson://scan`, выбирает экран «Обмен» и запускает существующий QR-сканер приложения.
+- На iOS 15 доступен `systemSmall`; на iOS 16 и новее также доступны `accessoryCircular` и `accessoryRectangular` для экрана блокировки.
+- Расширение не имеет App Group entitlement, camera purpose string, доступа к камере, сети, аналитике или персональным данным. Все разрешения и сканирование остаются внутри основного приложения.
+- Route, launch-gate и camera-permission policy harnesses прошли; чистая Debug-сборка для Generic iOS Simulator завершилась успешно. На iPhone 16 Pro Simulator проверены warm, cold и повторный `yperson://scan`, включая уже разрешённую камеру.
+- Реальная камера, signed entitlements, размещение на Lock Screen и полный набор permission states остаются ручными проверками на физических устройствах.
 
 ## Не подтверждено внешне
 

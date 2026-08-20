@@ -19,7 +19,7 @@ Permission paths and fallbacks:
 9. Tracking: Card → Edit → Appearance and templates → Help measure ads. ATT is only for AppMetrica attribution; denial keeps every free template and core feature.
 10. Notifications: Settings → Enable card updates. Denial keeps updates on the People screen.
 
-Widget: add YPerson `systemSmall` on iOS 15. On iOS 16+, also add the Lock Screen rectangular widget. It shows only a neutral shortcut/update count.
+Widget: add YPerson `systemSmall` on the Home Screen on iOS 15. On iOS 16+, also add the `accessoryCircular` and `accessoryRectangular` shortcuts on the Lock Screen. Every family opens `yperson://scan`, selects Exchange, and starts the existing Scan QR permission/recovery flow. The extension is a stateless launcher: it has no card data, QR payload, update count, cached snapshot, App Group entitlement, camera purpose string or access, analytics, or network client.
 
 Notifications: a local sample can be scheduled after notification permission. Production remote content requires APNs and a signed payload; Service Extension fails open to original text and Content Extension offers Review and Block. It never updates Contacts directly.
 
