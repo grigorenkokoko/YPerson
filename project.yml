@@ -110,6 +110,7 @@ targets:
         APP_GROUP_IDENTIFIER: $(APP_GROUP_IDENTIFIER)
         APPMETRICA_API_KEY: $(APPMETRICA_API_KEY)
     dependencies:
+      - sdk: Security.framework
       - package: AppMetrica
         product: AppMetricaCore
       - package: AppMetrica

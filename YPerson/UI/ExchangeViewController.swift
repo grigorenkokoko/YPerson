@@ -8,11 +8,21 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private let permissions: PermissionCenter
     private let apiClient: APIClient
     private let analytics: AppMetricaAnalyticsClient
+    private let snapshotStore: AppGroupSnapshotStore?
+    private let ownCard: () -> PersonCard?
+    private let onPersonSaved: (PersonCard) -> Void
     private var includePrivate = false
     private var nearbySearchAlert: UIAlertController?
 
-    init(nearby: NearbyExchangeController, photoScanner: PhotoCardScanner, permissions: PermissionCenter, apiClient: APIClient, analytics: AppMetricaAnalyticsClient) {
-        self.nearby = nearby; self.photoScanner = photoScanner; self.permissions = permissions; self.apiClient = apiClient; self.analytics = analytics
+    init(nearby: NearbyExchangeController, photoScanner: PhotoCardScanner, permissions: PermissionCenter, apiClient: APIClient, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, ownCard: @escaping () -> PersonCard?, onPersonSaved: @escaping (PersonCard) -> Void) {
+        self.nearby = nearby
+        self.photoScanner = photoScanner
+        self.permissions = permissions
+        self.apiClient = apiClient
+        self.analytics = analytics
+        self.snapshotStore = snapshotStore
+        self.ownCard = ownCard
+        self.onPersonSaved = onPersonSaved
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -31,6 +41,12 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         contentStack.addArrangedSubview(row)
     }
 
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        nearby.stop()
+        nearbySearchAlert = nil
+    }
+
     private func addButton(_ title: String, _ symbol: String, _ action: Selector, primary: Bool = false) {
         let button = YPStyle.button(title, symbol: symbol, primary: primary); button.addTarget(self, action: action, for: .touchUpInside); contentStack.addArrangedSubview(button)
     }
@@ -41,19 +57,50 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         explainPermission(title: "Сканирование QR", message: "Камера нужна, чтобы сканировать QR-код визитки YPerson и добавить человека.") { [weak self] in
             guard let self else { return }
             let scanner = QRCodeScannerViewController { [weak self] value in
-                self?.analytics.report(.cardReceived("qr"))
-                self?.confirmImportedCard(method: value.hasPrefix("BEGIN:VCARD") ? "vCard" : "QR")
+                DispatchQueue.main.async { self?.handleScannedCode(value) }
             }
             self.navigationController?.pushViewController(scanner, animated: true)
         }
     }
 
+#if DEBUG
+    func showVerificationImport() {
+        confirmImportedCard(ExchangePayload(
+            version: 2,
+            issuerInstallationID: "00000000-0000-4000-8000-000000000001",
+            card: .reviewAlexey,
+            exchangeToken: nil,
+            expiresAt: nil
+        ))
+    }
+#endif
+
     @objc private func startNearby() {
         explainPermission(title: "Обмен рядом", message: "Bluetooth нужен, чтобы находить поблизости другой iPhone с открытым экраном обмена YPerson и безопасно передавать выбранную визитку.") { [weak self] in
-            self?.analytics.report(.exchangeStarted("bluetooth"))
-            self?.nearby.start(onState: { [weak self] state in
-                self?.handleNearbyState(state)
-            }, onToken: { [weak self] token in self?.finishNearbySearch(token: token) })
+            guard let self, let card = ownCard() else {
+                self?.showMessage("Сначала создайте визитку", "Для обмена по Bluetooth нужна ваша сохранённая карточка.")
+                return
+            }
+            analytics.report(.exchangeStarted("bluetooth"))
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let response = try await apiClient.sync(SyncRequest(
+                        operation: .prepareExchange,
+                        card: card.exchangeCopy,
+                        exchangeMethod: "bluetooth"
+                    ))
+                    guard let token = response.exchangeToken, !token.isEmpty else {
+                        throw ExchangeError.missingExchangeToken
+                    }
+                    nearby.start(exchangeToken: token, onState: { [weak self] state in
+                        self?.handleNearbyState(state)
+                    }, onToken: { [weak self] token in self?.finishNearbySearch(token: token) })
+                } catch {
+                    nearby.stop()
+                    showMessage("Не удалось начать поиск", "Для Bluetooth-обмена сейчас нужен интернет, чтобы получить короткоживущий защищённый токен. Используйте офлайн QR.")
+                }
+            }
         }
     }
 
@@ -129,27 +176,104 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private func claimNearby(token: String) {
         Task { [weak self] in
             guard let self else { return }
-            let payload = SyncRequest(installationID: UIDevice.current.identifierForVendor?.uuidString ?? "simulator-installation", bearer: nil, apnsToken: nil, operation: .claimExchange, card: nil, exchangeToken: token, moderationCategory: nil)
             do {
-                _ = try await apiClient.sync(payload)
+                let response = try await apiClient.sync(SyncRequest(
+                    operation: .claimExchange,
+                    exchangeToken: token
+                ))
+                let saved = try persist(response: response)
+                guard !saved.isEmpty else { throw ExchangeError.missingPeerCard }
                 analytics.report(.cardReceived("bluetooth"))
-                confirmImportedCard(method: "Bluetooth")
+                showMessage("Человек добавлен", "Карточка сохранена в YPerson и связана с подтверждённым Bluetooth-обменом.")
             } catch {
                 showMessage("Обмен не подтверждён", "Не удалось связаться с сервером. Токен не сохранён; повторите обмен после восстановления сети.")
             }
         }
     }
 
-    private func confirmImportedCard(method: String) {
-        let alert = UIAlertController(title: "Карточка найдена", message: "Источник: \(method). Проверьте полученные данные перед сохранением.", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "Добавить человека", style: .default) { [weak self] _ in self?.showMessage("Человек добавлен", "Карточка сохранена в YPerson. В Контакты она попадёт только по отдельной команде.") })
+    private func handleScannedCode(_ value: String) {
+        guard value.hasPrefix("yperson:v2:") else {
+            showMessage("Неподдерживаемая визитка", "Сейчас надёжное локальное сохранение доступно для QR-кодов YPerson v2.")
+            return
+        }
+        do {
+            let payload = try ExchangePayloadCodec.decode(value)
+            analytics.report(.cardReceived("qr"))
+            confirmImportedCard(payload)
+        } catch {
+            showMessage("Не удалось прочитать QR", error.localizedDescription)
+        }
+    }
+
+    private func confirmImportedCard(_ payload: ExchangePayload) {
+        let expired = payload.expiresAt.map { $0 <= Date() } ?? false
+        let hasCloudClaim = payload.exchangeToken != nil && !expired
+        let cloudNote = hasCloudClaim
+            ? "После сохранения YPerson попробует подключить облачные обновления."
+            : "Офлайн-код: карточка сохранится только на этом iPhone без подтверждения облачной связи."
+        let companyLine = payload.card.company.isEmpty ? "" : " · \(payload.card.company)"
+        let alert = UIAlertController(
+            title: payload.card.name,
+            message: "\(payload.card.role)\(companyLine)\n\n\(cloudNote)",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Добавить человека", style: .default) { [weak self] _ in
+            self?.saveImportedCard(payload, allowsCloudClaim: hasCloudClaim)
+        })
         alert.addAction(UIAlertAction(title: "Не добавлять", style: .cancel))
         present(alert, animated: true)
     }
 
+    private func saveImportedCard(_ payload: ExchangePayload, allowsCloudClaim: Bool) {
+        do {
+            guard let snapshotStore else { throw ExchangeError.localStorageUnavailable }
+            let localCard = payload.card.exchangeCopy
+            try snapshotStore.upsertPerson(localCard)
+            onPersonSaved(localCard)
+        } catch {
+            showMessage("Не удалось добавить человека", "Карточка не записана на iPhone. Попробуйте ещё раз.")
+            return
+        }
+
+        guard allowsCloudClaim, let token = payload.exchangeToken else {
+            showMessage("Человек добавлен", "Карточка сохранена на этом iPhone. Облачная связь не подтверждалась.")
+            return
+        }
+
+        showMessage("Человек добавлен", "Карточка уже сохранена на этом iPhone. Подключаем облачные обновления; при отсутствии сети это можно повторить новым кодом.")
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let response = try await apiClient.sync(SyncRequest(
+                    operation: .claimExchange,
+                    exchangeToken: token
+                ))
+                _ = try persist(response: response)
+            } catch {
+                // The confirmed local card stays visible. A new short-lived code can reconnect updates.
+            }
+        }
+    }
+
+    @discardableResult
+    private func persist(response: SyncResponse) throws -> [PersonCard] {
+        guard let snapshotStore else { throw ExchangeError.localStorageUnavailable }
+        let cards = response.people.map(\.versionedCard)
+        try snapshotStore.replacePeople(cards)
+        for id in response.revokedCardIDs { try snapshotStore.removePerson(id: id) }
+        snapshotStore.syncCursor = response.nextCursor ?? snapshotStore.syncCursor
+        let saved = snapshotStore.readPeople()
+        for card in cards { onPersonSaved(card) }
+        return saved.filter { card in cards.contains(where: { $0.id == card.id }) }
+    }
+
     private func presentPhotoResults(_ payloads: [String]) {
         guard !payloads.isEmpty else { presentPhotoFallback(); return }
-        confirmImportedCard(method: "Фото · найдено кандидатов: \(payloads.count)")
+        guard let payload = payloads.lazy.compactMap({ try? ExchangePayloadCodec.decode($0) }).first else {
+            showMessage("Визитка не распознана", "На выбранных изображениях нет поддерживаемого QR-кода YPerson v2.")
+            return
+        }
+        confirmImportedCard(payload)
     }
 
     private func presentPhotoFallback() {
@@ -186,9 +310,28 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         alert.addTextField { $0.placeholder = "YP-1234"; $0.autocapitalizationType = .allCharacters }
         alert.addAction(UIAlertAction(title: "Проверить", style: .default) { [weak self, weak alert] _ in
             let code = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            self?.analytics.report(.cardReceived("manual")); self?.showMessage(code.isEmpty ? "Код не введён" : "Код принят", code.isEmpty ? "Введите код или выберите другой способ." : "Проверьте полученную карточку перед сохранением.")
+            guard !code.isEmpty else {
+                self?.showMessage("Код не введён", "Введите код или выберите другой способ.")
+                return
+            }
+            self?.claimManualCode(code)
         })
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel)); present(alert, animated: true)
+    }
+
+    private func claimManualCode(_ code: String) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let response = try await apiClient.sync(SyncRequest(operation: .claimExchange, exchangeToken: code))
+                let saved = try persist(response: response)
+                guard !saved.isEmpty else { throw ExchangeError.missingPeerCard }
+                analytics.report(.cardReceived("manual"))
+                showMessage("Человек добавлен", "Карточка сохранена после подтверждения кода сервером.")
+            } catch {
+                showMessage("Код не подтверждён", "Проверьте код и подключение к интернету.")
+            }
+        }
     }
 
     @objc private func togglePrivate(_ sender: UISwitch) {
@@ -202,4 +345,10 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     }
 
     deinit { nearby.stop(); photoScanner.cancel() }
+
+    private enum ExchangeError: Error {
+        case localStorageUnavailable
+        case missingExchangeToken
+        case missingPeerCard
+    }
 }

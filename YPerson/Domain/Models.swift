@@ -34,6 +34,60 @@ struct PersonCard: Codable, Equatable, Identifiable {
     var hasAudioGreeting: Bool
     var meetingPlace: String?
     var isBlocked: Bool
+    var version: Int
+
+    init(
+        id: String,
+        name: String,
+        role: String,
+        company: String,
+        phone: String,
+        email: String,
+        tagline: String,
+        hasAudioGreeting: Bool,
+        meetingPlace: String?,
+        isBlocked: Bool,
+        version: Int = 1
+    ) {
+        self.id = id
+        self.name = name
+        self.role = role
+        self.company = company
+        self.phone = phone
+        self.email = email
+        self.tagline = tagline
+        self.hasAudioGreeting = hasAudioGreeting
+        self.meetingPlace = meetingPlace
+        self.isBlocked = isBlocked
+        self.version = max(1, version)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, role, company, phone, email, tagline
+        case hasAudioGreeting, meetingPlace, isBlocked, version
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        role = try container.decode(String.self, forKey: .role)
+        company = try container.decode(String.self, forKey: .company)
+        phone = try container.decode(String.self, forKey: .phone)
+        email = try container.decode(String.self, forKey: .email)
+        tagline = try container.decode(String.self, forKey: .tagline)
+        hasAudioGreeting = try container.decode(Bool.self, forKey: .hasAudioGreeting)
+        meetingPlace = try container.decodeIfPresent(String.self, forKey: .meetingPlace)
+        isBlocked = try container.decode(Bool.self, forKey: .isBlocked)
+        version = max(1, try container.decodeIfPresent(Int.self, forKey: .version) ?? 1)
+    }
+
+    var exchangeCopy: PersonCard {
+        var copy = self
+        copy.phone = ""
+        copy.meetingPlace = nil
+        return copy
+    }
 
 #if DEBUG
     static let reviewAlexey = PersonCard(
@@ -80,7 +134,9 @@ struct PersonCard: Codable, Equatable, Identifiable {
 enum SyncOperation: String, Codable {
     case refresh
     case publishCard
+    case prepareExchange
     case claimExchange
+    case prepareAudioUpload
     case updatePushToken
     case removePushToken
     case deleteProfile
@@ -88,14 +144,50 @@ enum SyncOperation: String, Codable {
     case block
 }
 
-struct SyncRequest: Codable {
-    let installationID: String
-    let bearer: String?
+struct SyncRequest {
+    let contractVersion = 2
+    let operationID: String
     let apnsToken: String?
     let operation: SyncOperation
+    let cursor: String?
     let card: PersonCard?
     let exchangeToken: String?
+    let exchangeMethod: String?
+    let audioAssetID: String?
+    let audioSizeBytes: Int?
+    let audioDurationMS: Int?
     let moderationCategory: String?
+    let subjectInstallationID: String?
+
+    init(
+        apnsToken: String? = nil,
+        operation: SyncOperation,
+        operationID: String = UUID().uuidString.lowercased(),
+        cursor: String? = nil,
+        card: PersonCard? = nil,
+        exchangeToken: String? = nil,
+        exchangeMethod: String? = nil,
+        audioAssetID: String? = nil,
+        audioSizeBytes: Int? = nil,
+        audioDurationMS: Int? = nil,
+        moderationCategory: String? = nil,
+        subjectInstallationID: String? = nil
+    ) {
+        self.apnsToken = apnsToken
+        self.operation = operation
+        self.operationID = operationID
+        self.cursor = cursor
+        self.card = card
+        self.exchangeToken = exchangeToken
+        self.exchangeMethod = exchangeMethod
+        self.audioAssetID = audioAssetID
+        self.audioSizeBytes = audioSizeBytes
+        self.audioDurationMS = audioDurationMS
+        self.moderationCategory = moderationCategory
+        self.subjectInstallationID = subjectInstallationID
+    }
+
+    var isMutation: Bool { operation != .refresh }
 }
 
 struct SyncResponse: Codable {
@@ -103,6 +195,140 @@ struct SyncResponse: Codable {
     let serverVersion: String
     let updateCount: Int
     let message: String
+    let nextCursor: String?
+    let ownCardVersion: Int?
+    let people: [SyncedPerson]
+    let revokedCardIDs: [String]
+    let exchangeToken: String?
+    let audioUpload: AudioUpload?
+    let notificationConfiguration: [String: Bool]?
+}
+
+struct AudioAsset: Codable, Equatable {
+    let assetID: String
+    let downloadURL: URL
+    let expiresAt: Date
+}
+
+struct AudioUpload: Codable, Equatable {
+    let assetID: String
+    let uploadURL: URL
+    let expiresAt: Date
+}
+
+struct SyncedPerson: Codable, Equatable {
+    let card: PersonCard
+    let version: Int
+    let audio: AudioAsset?
+
+    var versionedCard: PersonCard {
+        var result = card
+        result.version = max(1, version)
+        return result
+    }
+}
+
+struct ExchangePayload: Codable, Equatable {
+    let version: Int
+    let issuerInstallationID: String
+    let card: PersonCard
+    let exchangeToken: String?
+    let expiresAt: Date?
+}
+
+enum ExchangePayloadCodec {
+    private static let prefix = "yperson:v2:"
+
+    static func encode(_ payload: ExchangePayload) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        return prefix + Base64URL.encode(try encoder.encode(payload))
+    }
+
+    static func decode(_ value: String) throws -> ExchangePayload {
+        guard value.hasPrefix(prefix),
+              let data = Base64URL.decode(String(value.dropFirst(prefix.count))) else {
+            throw PayloadError.invalidFormat
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let payload = try decoder.decode(ExchangePayload.self, from: data)
+        guard payload.version == 2 else { throw PayloadError.unsupportedVersion }
+        return payload
+    }
+
+    enum PayloadError: LocalizedError {
+        case invalidFormat
+        case unsupportedVersion
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidFormat: return "QR-код YPerson повреждён или имеет неизвестный формат."
+            case .unsupportedVersion: return "Эта версия QR-кода пока не поддерживается."
+            }
+        }
+    }
+}
+
+enum Base64URL {
+    static func encode(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    static func decode(_ value: String) -> Data? {
+        let remainder = value.count % 4
+        let padding = remainder == 0 ? "" : String(repeating: "=", count: 4 - remainder)
+        return Data(base64Encoded: value
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/") + padding)
+    }
+}
+
+struct SyncWireRequest: Encodable {
+    let contractVersion: Int
+    let operationID: String
+    let installationID: String
+    let apnsToken: String?
+    let operation: SyncOperation
+    let cursor: String?
+    let card: SyncWirePersonCard?
+    let exchangeToken: String?
+    let exchangeMethod: String?
+    let audioAssetID: String?
+    let audioSizeBytes: Int?
+    let audioDurationMS: Int?
+    let moderationCategory: String?
+    let subjectInstallationID: String?
+}
+
+struct SyncWirePersonCard: Codable {
+    let id: String
+    let name: String
+    let role: String
+    let company: String
+    let phone: String
+    let email: String
+    let tagline: String
+    let hasAudioGreeting: Bool
+    let meetingPlace: String?
+    let isBlocked: Bool
+
+    init(_ card: PersonCard) {
+        id = card.id
+        name = card.name
+        role = card.role
+        company = card.company
+        phone = card.phone
+        email = card.email
+        tagline = card.tagline
+        hasAudioGreeting = card.hasAudioGreeting
+        meetingPlace = nil
+        isBlocked = card.isBlocked
+    }
 }
 
 enum AnalyticsEvent {

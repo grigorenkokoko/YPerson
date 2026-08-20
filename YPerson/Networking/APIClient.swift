@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 final class APIClient {
@@ -18,13 +19,38 @@ final class APIClient {
     private let baseURL: URL
     private let session: URLSession
     private let snapshotStore: AppGroupSnapshotStore?
-    private let decoder = JSONDecoder()
-    private let encoder = JSONEncoder()
+    private let credential: InstallationCredential
+    private let decoder: JSONDecoder
+    private let encoder: JSONEncoder
 
-    init(baseURL: URL, session: URLSession, snapshotStore: AppGroupSnapshotStore?) {
+    var installationID: String { credential.installationID }
+
+    init(baseURL: URL, session: URLSession, snapshotStore: AppGroupSnapshotStore?, credential: InstallationCredential) {
         self.baseURL = baseURL
         self.session = session
         self.snapshotStore = snapshotStore
+        self.credential = credential
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let value = try decoder.singleValueContainer().decode(String.self)
+            let fractional = ISO8601DateFormatter()
+            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = fractional.date(from: value) { return date }
+            let standard = ISO8601DateFormatter()
+            standard.formatOptions = [.withInternetDateTime]
+            guard let date = standard.date(from: value) else {
+                throw DecodingError.dataCorruptedError(
+                    in: try decoder.singleValueContainer(),
+                    debugDescription: "Invalid ISO 8601 date"
+                )
+            }
+            return date
+        }
+        self.decoder = decoder
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        self.encoder = encoder
     }
 
     func fetchConfiguration() async throws -> RemoteConfiguration {
@@ -54,20 +80,54 @@ final class APIClient {
     }
 
     func sync(_ payload: SyncRequest) async throws -> SyncResponse {
+        let pendingKey = try payload.isMutation ? operationStorageKey(for: payload) : nil
+        let operationID: String
+        if let pendingKey, let snapshotStore {
+            operationID = snapshotStore.pendingOperationID(for: pendingKey, proposed: payload.operationID)
+        } else {
+            operationID = payload.operationID
+        }
+        let wire = makeWireRequest(payload, operationID: operationID)
         var request = URLRequest(url: baseURL.appendingPathComponent("sync"), timeoutInterval: 12)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let bearer = payload.bearer, !bearer.isEmpty {
-            request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
-        }
-        request.httpBody = try encoder.encode(payload)
+        request.setValue("Bearer \(credential.bearer)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try encoder.encode(wire)
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
             throw ClientError.status(http.statusCode, String(data: data, encoding: .utf8) ?? "")
         }
-        return try decoder.decode(SyncResponse.self, from: data)
+        let result = try decoder.decode(SyncResponse.self, from: data)
+        if let pendingKey { snapshotStore?.clearPendingOperationID(for: pendingKey) }
+        return result
+    }
+
+    private func makeWireRequest(_ payload: SyncRequest, operationID: String) -> SyncWireRequest {
+        SyncWireRequest(
+            contractVersion: payload.contractVersion,
+            operationID: operationID,
+            installationID: credential.installationID,
+            apnsToken: payload.apnsToken,
+            operation: payload.operation,
+            cursor: payload.cursor,
+            card: payload.card.map(SyncWirePersonCard.init),
+            exchangeToken: payload.exchangeToken,
+            exchangeMethod: payload.exchangeMethod,
+            audioAssetID: payload.audioAssetID,
+            audioSizeBytes: payload.audioSizeBytes,
+            audioDurationMS: payload.audioDurationMS,
+            moderationCategory: payload.moderationCategory,
+            subjectInstallationID: payload.subjectInstallationID
+        )
+    }
+
+    private func operationStorageKey(for payload: SyncRequest) throws -> String {
+        let fingerprint = makeWireRequest(payload, operationID: "stable-operation-fingerprint")
+        let digest = SHA256.hash(data: try encoder.encode(fingerprint))
+        let suffix = digest.map { String(format: "%02x", $0) }.joined()
+        return "\(payload.operation.rawValue):\(suffix)"
     }
 
     private func validateConfigurationShape(_ data: Data) throws {

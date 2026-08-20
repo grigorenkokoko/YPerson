@@ -10,6 +10,7 @@ final class YPersonExperienceBuilder {
     private let apiClient: APIClient
     private let analytics: AppMetricaAnalyticsClient
     private let permissions: PermissionCenter
+    private let credentialStore: InstallationCredentialStore
     private let nearby = NearbyExchangeController()
     private let photoScanner = PhotoCardScanner()
     private let audio = AudioGreetingController()
@@ -17,7 +18,7 @@ final class YPersonExperienceBuilder {
     private weak var output: (any YPersonExperienceOutput)?
     private weak var rootViewController: MainTabBarController?
 
-    init(configuration: AppConfiguration) {
+    init(configuration: AppConfiguration) throws {
         self.configuration = configuration
         let sessionConfiguration = URLSessionConfiguration.ephemeral
         sessionConfiguration.timeoutIntervalForRequest = 12
@@ -26,7 +27,14 @@ final class YPersonExperienceBuilder {
         self.session = URLSession(configuration: sessionConfiguration)
         let store = AppGroupSnapshotStore(appGroupIdentifier: configuration.appGroupIdentifier)
         self.snapshotStore = store
-        self.apiClient = APIClient(baseURL: configuration.apiBaseURL, session: session, snapshotStore: store)
+        let credentialStore = InstallationCredentialStore(service: "\(configuration.appGroupIdentifier).installation")
+        self.credentialStore = credentialStore
+        self.apiClient = APIClient(
+            baseURL: configuration.apiBaseURL,
+            session: session,
+            snapshotStore: store,
+            credential: try credentialStore.credential()
+        )
         self.analytics = AppMetricaAnalyticsClient(apiKey: configuration.appMetricaAPIKey, initialConsent: store?.analyticsConsent ?? false)
         self.permissions = PermissionCenter(notificationCenter: UNUserNotificationCenter.current())
         self.analytics.setRemoteKillSwitch(store?.cachedConfiguration()?.0.analyticsKillSwitch ?? false)
@@ -39,7 +47,7 @@ final class YPersonExperienceBuilder {
         self.output = output
         _ = analytics.activateIfConsented()
         var ownCard = snapshotStore?.readOwnCard()
-        var savedPeople: [PersonCard] = []
+        var savedPeople = snapshotStore?.readPeople() ?? []
         var usesReviewFixtures = false
 #if DEBUG
         if ProcessInfo.processInfo.environment["YP_SCREENSHOT_STATE"] != nil {
@@ -53,15 +61,27 @@ final class YPersonExperienceBuilder {
             CardEditorViewController(card: card, permissions: permissions, audio: audio, makeAppearance: makeAppearance, onSave: onSave)
         }
         let card = CardViewController(card: ownCard, persistsChanges: !usesReviewFixtures, permissions: permissions, audio: audio, imageSaver: imageSaver, apiClient: apiClient, analytics: analytics, snapshotStore: snapshotStore, makeEditor: makeEditor)
-        let exchange = ExchangeViewController(nearby: nearby, photoScanner: photoScanner, permissions: permissions, apiClient: apiClient, analytics: analytics)
-        let person = { [permissions, imageSaver, apiClient, analytics] card in
-            PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, apiClient: apiClient, analytics: analytics)
+        let person = { [permissions, imageSaver, apiClient, analytics, snapshotStore] card in
+            PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, apiClient: apiClient, analytics: analytics, snapshotStore: snapshotStore)
         }
         let people = PeopleViewController(people: savedPeople, permissions: permissions, analytics: analytics, makePerson: person)
+        let exchange = ExchangeViewController(
+            nearby: nearby,
+            photoScanner: photoScanner,
+            permissions: permissions,
+            apiClient: apiClient,
+            analytics: analytics,
+            snapshotStore: snapshotStore,
+            ownCard: { [weak card] in card?.currentCard },
+            onPersonSaved: { [weak people, snapshotStore] _ in
+                people?.reload(people: snapshotStore?.readPeople() ?? [])
+            }
+        )
         let privacy = PrivacyViewController(permissions: permissions, audio: audio, analytics: analytics, snapshotStore: snapshotStore, apiClient: apiClient, configuration: configuration)
         let root = MainTabBarController(card: card, exchange: exchange, people: people, privacy: privacy)
         self.rootViewController = root
         root.route(to: context.entryPoint)
+        if !usesReviewFixtures { refreshPeople() }
 #if DEBUG
         applyVerificationState(to: root, card: card, exchange: exchange, privacy: privacy, makePerson: person, makeEditor: makeEditor, makeAppearance: makeAppearance)
 #endif
@@ -70,15 +90,7 @@ final class YPersonExperienceBuilder {
 
     private func retryPendingProfileDeletion() {
         guard snapshotStore?.profileDeletionPending == true else { return }
-        let payload = SyncRequest(
-            installationID: UIDevice.current.identifierForVendor?.uuidString ?? "pending-installation",
-            bearer: nil,
-            apnsToken: nil,
-            operation: .deleteProfile,
-            card: nil,
-            exchangeToken: nil,
-            moderationCategory: nil
-        )
+        let payload = SyncRequest(operation: .deleteProfile)
         Task { [apiClient, snapshotStore] in
             if (try? await apiClient.sync(payload)) != nil { snapshotStore?.profileDeletionPending = false }
         }
@@ -92,6 +104,7 @@ final class YPersonExperienceBuilder {
         switch event {
         case .didEnterForeground:
             retryPendingProfileDeletion()
+            if snapshotStore?.profileDeletionPending != true { refreshPeople() }
         case .pushTokenChanged(let token):
             updatePushToken(token)
         }
@@ -132,7 +145,7 @@ final class YPersonExperienceBuilder {
             DispatchQueue.main.async { [weak card] in card?.showVerificationQR() }
         case "S8":
             root.selectedIndex = 1
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak exchange] in exchange?.scanQR() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak exchange] in exchange?.showVerificationImport() }
         default: break
         }
     }
@@ -141,15 +154,36 @@ final class YPersonExperienceBuilder {
     private func updatePushToken(_ token: String?) {
         Task { [apiClient] in
             let payload = SyncRequest(
-                installationID: UIDevice.current.identifierForVendor?.uuidString ?? "simulator-installation",
-                bearer: nil,
                 apnsToken: token,
-                operation: token == nil ? .removePushToken : .updatePushToken,
-                card: nil,
-                exchangeToken: nil,
-                moderationCategory: nil
+                operation: token == nil ? .removePushToken : .updatePushToken
             )
             _ = try? await apiClient.sync(payload)
         }
+    }
+
+    private func refreshPeople() {
+        let cursor = snapshotStore?.syncCursor
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let response = try await apiClient.sync(SyncRequest(operation: .refresh, cursor: cursor))
+                let incoming = response.people.map(\.versionedCard)
+                try snapshotStore?.replacePeople(incoming)
+                for id in response.revokedCardIDs { try snapshotStore?.removePerson(id: id) }
+                snapshotStore?.syncCursor = response.nextCursor ?? snapshotStore?.syncCursor
+                guard let rootViewController,
+                      let navigation = rootViewController.viewControllers?[safe: 2] as? UINavigationController,
+                      let people = navigation.viewControllers.first as? PeopleViewController else { return }
+                people.reload(people: snapshotStore?.readPeople() ?? [])
+            } catch {
+                // Previously saved people stay available while the service is offline.
+            }
+        }
+    }
+}
+
+private extension Collection {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

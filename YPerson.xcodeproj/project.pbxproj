@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		052F7348711D22B1253A7A1E /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 6D22DD8D5C703D5A0EB4117E /* InfoPlist.strings */; };
+		0B4B0B7A8801F15BD6B10DFE /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3E940A52F8EAC0CB5F9E5619 /* Security.framework */; };
 		0DC40FF0ADF08360DE334C91 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 750506F4EEAF3B8D1B12E774 /* WidgetSnapshot.swift */; };
 		13CCCAFA15AD9B93B570C5A2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F5EFCA26B0528FD85942ED0E /* PrivacyInfo.xcprivacy */; };
 		1616764F166B74ACAEAB5862 /* AppMetricaAnalyticsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A82460406C63E9A3C7FA221 /* AppMetricaAnalyticsClient.swift */; };
@@ -30,6 +31,7 @@
 		A0A6331485D058047FAC74D2 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38A55AA34CCEEB53EC48D024 /* NotificationService.swift */; };
 		A0FC157A713AA27C3B7E8D9D /* NearbyExchangeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D938FC5C6EE5391F7920B405 /* NearbyExchangeController.swift */; };
 		AA2209FE210BFDD77FF0A64D /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 750506F4EEAF3B8D1B12E774 /* WidgetSnapshot.swift */; };
+		AAE2FC5FCA7708321265DE54 /* InstallationCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E25CDD2FC15A3E7A1F9E6D9 /* InstallationCredentialStore.swift */; };
 		B20D697B2111A0880896340F /* CardEditorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CDBA4E3382BD6229B260BBB /* CardEditorViewController.swift */; };
 		B30EF3E75B860EFE6064BC68 /* AppearanceViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C86F699B3F01C82FEE91E99 /* AppearanceViewController.swift */; };
 		B54A900AEB613F80AE957785 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 8DBF242EE59E958AF301277F /* PrivacyInfo.xcprivacy */; };
@@ -94,9 +96,9 @@
 		0713886AFFF02F8B18A0E405 /* YPersonWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YPersonWidget.swift; sourceTree = "<group>"; };
 		11D3A37C6321DE925FB87955 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		12B135352DA88316B839F315 /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/InfoPlist.strings; sourceTree = "<group>"; };
-		1E7F0A5C4BE5C51180C7B46D /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		1E7F0A5C4BE5C51180C7B46D /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		208993AD3E8746016DEFD75F /* YPerson.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = YPerson.entitlements; sourceTree = "<group>"; };
-		26B16DC13ECBE2DC6B708901 /* YPersonNotificationContent.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = YPersonNotificationContent.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		26B16DC13ECBE2DC6B708901 /* YPersonNotificationContent.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = YPersonNotificationContent.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		28094E2B2A847979C3FC21FB /* YPStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YPStyle.swift; sourceTree = "<group>"; };
 		2A82460406C63E9A3C7FA221 /* AppMetricaAnalyticsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMetricaAnalyticsClient.swift; sourceTree = "<group>"; };
 		2F50AA88F3C6CDCB4EC57C73 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -105,13 +107,15 @@
 		38A55AA34CCEEB53EC48D024 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		3948D64362AB0AC2C1303CBA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		3E01C3165DEB1E0F164958CE /* AudioGreetingController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioGreetingController.swift; sourceTree = "<group>"; };
+		3E25CDD2FC15A3E7A1F9E6D9 /* InstallationCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstallationCredentialStore.swift; sourceTree = "<group>"; };
 		3E26B216E894AF52F079DC3D /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		3E940A52F8EAC0CB5F9E5619 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		444F6266844246A38742F30C /* PersonalDebug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = PersonalDebug.xcconfig; sourceTree = "<group>"; };
 		4742F7034AB58645F7946864 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		4AAC508E043FF6F8B0B457A5 /* PermissionCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionCenter.swift; sourceTree = "<group>"; };
 		4F5BA513D189A26885B9C8C8 /* CardImageSaver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardImageSaver.swift; sourceTree = "<group>"; };
 		5E4D3824E61DD322CFCA7D61 /* CardViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardViewController.swift; sourceTree = "<group>"; };
-		5F679A09D3A27784F01799C3 /* YPersonNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = YPersonNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		5F679A09D3A27784F01799C3 /* YPersonNotificationService.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = YPersonNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		6506B9BE77BAB21F35300A5A /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		6532043854455B0ECB9711D7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		66A9319A79DAA44B02E60A99 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
@@ -121,23 +125,23 @@
 		6D4EC9F123380A9A82AAC30E /* AppGroupSnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupSnapshotStore.swift; sourceTree = "<group>"; };
 		750506F4EEAF3B8D1B12E774 /* WidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshot.swift; sourceTree = "<group>"; };
 		7A13996E6F0278470DBD08AA /* NotificationViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationViewController.swift; sourceTree = "<group>"; };
-		85FF1494661E949011B6F874 /* YPersonWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = YPersonWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		85FF1494661E949011B6F874 /* YPersonWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = YPersonWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		89A99344CEF5B9D4A1670A7F /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
-		8DBF242EE59E958AF301277F /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		8DBF242EE59E958AF301277F /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		95235915DA13A07330BC207D /* AppFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFactory.swift; sourceTree = "<group>"; };
-		982CA5FB80AC4B6B03E1D4C2 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		982CA5FB80AC4B6B03E1D4C2 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		9C5A1EBF234ED2265F80D10C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		9C86F699B3F01C82FEE91E99 /* AppearanceViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceViewController.swift; sourceTree = "<group>"; };
 		A1CE5299D0A8AF20539CCD18 /* YPersonWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = YPersonWidget.entitlements; sourceTree = "<group>"; };
 		ABD1799F52DDF1E713B76582 /* QRCodeScannerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeScannerViewController.swift; sourceTree = "<group>"; };
-		AEE237F9A1DF69B6E996CF21 /* YPerson.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = YPerson.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AEE237F9A1DF69B6E996CF21 /* YPerson.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = YPerson.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B05DF4272FF693CA8C7E28F4 /* MainTabBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabBarController.swift; sourceTree = "<group>"; };
 		CAC46C8858C0D992879AF1C4 /* PersonViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonViewController.swift; sourceTree = "<group>"; };
 		D51EBF735785D82AF276EA87 /* PhotoCardScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCardScanner.swift; sourceTree = "<group>"; };
 		D8231A08DD9861DEC29505A7 /* YPersonIntegrationContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YPersonIntegrationContract.swift; sourceTree = "<group>"; };
 		D938FC5C6EE5391F7920B405 /* NearbyExchangeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearbyExchangeController.swift; sourceTree = "<group>"; };
 		F3E533DAB9E006DADF68EA10 /* ExchangeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExchangeViewController.swift; sourceTree = "<group>"; };
-		F5EFCA26B0528FD85942ED0E /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		F5EFCA26B0528FD85942ED0E /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -145,6 +149,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0B4B0B7A8801F15BD6B10DFE /* Security.framework in Frameworks */,
 				33F0F5281B41F42F0A562F9B /* AppMetricaCore in Frameworks */,
 				D1A9937B73944A0E814FA5EB /* AppMetricaCrashes in Frameworks */,
 				C02851E90F20E280723EB095 /* AppMetricaAdSupport in Frameworks */,
@@ -285,6 +290,7 @@
 				94DFE148B9F9EB58C3FC5AA0 /* YPersonNotificationService */,
 				744FECF23B2C6CF152C857E3 /* YPersonShared */,
 				335112BC36B2C40D0B6A38C5 /* YPersonWidget */,
+				D2CA9A13ABC7F4B871A1FD42 /* Frameworks */,
 				2F12DA7DDF294DA0AF1F7546 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -302,6 +308,7 @@
 			isa = PBXGroup;
 			children = (
 				6D4EC9F123380A9A82AAC30E /* AppGroupSnapshotStore.swift */,
+				3E25CDD2FC15A3E7A1F9E6D9 /* InstallationCredentialStore.swift */,
 			);
 			path = Storage;
 			sourceTree = "<group>";
@@ -347,6 +354,14 @@
 				1E7F0A5C4BE5C51180C7B46D /* PrivacyInfo.xcprivacy */,
 			);
 			path = Resources;
+			sourceTree = "<group>";
+		};
+		D2CA9A13ABC7F4B871A1FD42 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				3E940A52F8EAC0CB5F9E5619 /* Security.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 		E67933B585C2E53B0ECE6ED0 /* Resources */ = {
@@ -590,6 +605,7 @@
 				6633BEE8A465A05C91D7C507 /* CardImageSaver.swift in Sources */,
 				E5F6880399DC6E3FE9AC0671 /* CardViewController.swift in Sources */,
 				EE076FB1C42375DADCAD282A /* ExchangeViewController.swift in Sources */,
+				AAE2FC5FCA7708321265DE54 /* InstallationCredentialStore.swift in Sources */,
 				C1147F7D0E3CC883DB19DAB6 /* MainTabBarController.swift in Sources */,
 				E0007B3B0432DF5036E2720E /* Models.swift in Sources */,
 				A0FC157A713AA27C3B7E8D9D /* NearbyExchangeController.swift in Sources */,
@@ -774,10 +790,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-ObjC",
-				);
+				OTHER_LDFLAGS = "$(inherited) -ObjC";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(YP_PRODUCT_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = YPerson;
 				SDKROOT = iphoneos;
@@ -828,10 +841,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-ObjC",
-				);
+				OTHER_LDFLAGS = "$(inherited) -ObjC";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(YP_PRODUCT_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = YPerson;
 				SDKROOT = iphoneos;
@@ -1119,10 +1129,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-ObjC",
-				);
+				OTHER_LDFLAGS = "$(inherited) -ObjC";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(YP_PRODUCT_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = YPerson;
 				SDKROOT = iphoneos;

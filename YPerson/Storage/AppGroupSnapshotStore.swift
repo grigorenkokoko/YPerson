@@ -8,6 +8,9 @@ final class AppGroupSnapshotStore {
         static let remoteConfigurationETag = "yperson.v1.remote_configuration_etag"
         static let analyticsConsent = "yperson.v1.analytics_consent"
         static let profileDeletionPending = "yperson.v1.profile_deletion_pending"
+        static let people = "yperson.v2.people"
+        static let syncCursor = "yperson.v2.sync_cursor"
+        static let pendingOperationIDs = "yperson.v2.pending_operation_ids"
 
         enum Legacy {
             static let ownCard = "own_card"
@@ -25,6 +28,75 @@ final class AppGroupSnapshotStore {
 
     func writeOwnCard(_ card: PersonCard) throws {
         defaults.set(try encoder.encode(card), forKey: Key.ownCard)
+    }
+
+    func readPeople() -> [PersonCard] {
+        guard let data = defaults.data(forKey: Key.people),
+              let people = try? decoder.decode([PersonCard].self, from: data) else {
+            return []
+        }
+        return people
+    }
+
+    func upsertPerson(_ card: PersonCard) throws {
+        var people = readPeople()
+        if let index = people.firstIndex(where: { $0.id == card.id }) {
+            guard card.version >= people[index].version else { return }
+            var merged = card
+            merged.meetingPlace = people[index].meetingPlace ?? card.meetingPlace
+            people[index] = merged
+        } else {
+            people.append(card)
+        }
+        try storePeople(people)
+    }
+
+    func replacePeople(_ cards: [PersonCard]) throws {
+        var mergedByID: [String: PersonCard] = [:]
+        for local in readPeople() {
+            if let existing = mergedByID[local.id], existing.version > local.version { continue }
+            mergedByID[local.id] = local
+        }
+        for card in cards {
+            guard let local = mergedByID[card.id] else {
+                mergedByID[card.id] = card
+                continue
+            }
+            guard card.version >= local.version else { continue }
+            var merged = card
+            merged.meetingPlace = local.meetingPlace ?? card.meetingPlace
+            mergedByID[card.id] = merged
+        }
+        try storePeople(Array(mergedByID.values))
+    }
+
+    func removePerson(id: String) throws {
+        try storePeople(readPeople().filter { $0.id != id })
+    }
+
+    var syncCursor: String? {
+        get { defaults.string(forKey: Key.syncCursor) }
+        set {
+            if let newValue {
+                defaults.set(newValue, forKey: Key.syncCursor)
+            } else {
+                defaults.removeObject(forKey: Key.syncCursor)
+            }
+        }
+    }
+
+    func pendingOperationID(for key: String, proposed: String) -> String {
+        var operations = defaults.dictionary(forKey: Key.pendingOperationIDs) as? [String: String] ?? [:]
+        if let existing = operations[key] { return existing }
+        operations[key] = proposed
+        defaults.set(operations, forKey: Key.pendingOperationIDs)
+        return proposed
+    }
+
+    func clearPendingOperationID(for key: String) {
+        var operations = defaults.dictionary(forKey: Key.pendingOperationIDs) as? [String: String] ?? [:]
+        operations.removeValue(forKey: key)
+        defaults.set(operations, forKey: Key.pendingOperationIDs)
     }
 
     private let defaults: UserDefaults
@@ -77,6 +149,9 @@ final class AppGroupSnapshotStore {
             Key.remoteConfiguration,
             Key.remoteConfigurationETag,
             Key.analyticsConsent,
+            Key.people,
+            Key.syncCursor,
+            Key.pendingOperationIDs,
             Key.Legacy.ownCard,
             WidgetSnapshotStorage.legacyKey,
             Key.Legacy.remoteConfiguration,
@@ -85,6 +160,14 @@ final class AppGroupSnapshotStore {
         ]
         removableKeys.forEach(defaults.removeObject(forKey:))
         WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    private func storePeople(_ people: [PersonCard]) throws {
+        let ordered = people.sorted {
+            let comparison = $0.name.localizedCaseInsensitiveCompare($1.name)
+            return comparison == .orderedSame ? $0.id < $1.id : comparison == .orderedAscending
+        }
+        defaults.set(try encoder.encode(ordered), forKey: Key.people)
     }
 
     private func migrateLegacyValues() {

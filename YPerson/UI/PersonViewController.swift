@@ -6,14 +6,15 @@ final class PersonViewController: YPBaseViewController {
     private let imageSaver: CardImageSaver
     private let apiClient: APIClient
     private let analytics: AppMetricaAnalyticsClient
+    private let snapshotStore: AppGroupSnapshotStore?
     private var card: PersonCard
     private var summary: CardSummaryView
     private let placeLabel = YPStyle.label("Место знакомства не добавлено", style: .footnote)
 
-    init(card: PersonCard, permissions: PermissionCenter, imageSaver: CardImageSaver, apiClient: APIClient, analytics: AppMetricaAnalyticsClient) {
+    init(card: PersonCard, permissions: PermissionCenter, imageSaver: CardImageSaver, apiClient: APIClient, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?) {
         self.card = card
         self.summary = CardSummaryView(card: card, showPrivate: true)
-        self.permissions = permissions; self.imageSaver = imageSaver; self.apiClient = apiClient; self.analytics = analytics
+        self.permissions = permissions; self.imageSaver = imageSaver; self.apiClient = apiClient; self.analytics = analytics; self.snapshotStore = snapshotStore
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -27,6 +28,9 @@ final class PersonViewController: YPBaseViewController {
         contentStack.addArrangedSubview(summary)
         let update = YPStyle.button("Просмотреть и обновить", symbol: "arrow.triangle.2.circlepath", primary: true); update.addTarget(self, action: #selector(reviewUpdate), for: .touchUpInside); contentStack.addArrangedSubview(update)
         sectionTitle("Контекст знакомства")
+        if let meetingPlace = card.meetingPlace, !meetingPlace.isEmpty {
+            placeLabel.text = "Место: \(meetingPlace) · хранится только на iPhone"
+        }
         contentStack.addArrangedSubview(placeLabel)
         let location = YPStyle.button("Добавить текущее место", symbol: "location"); location.addTarget(self, action: #selector(addLocation), for: .touchUpInside); contentStack.addArrangedSubview(location)
         let contact = YPStyle.button("Сохранить в Контакты", symbol: "person.crop.circle.badge.plus"); contact.addTarget(self, action: #selector(saveContact), for: .touchUpInside); contentStack.addArrangedSubview(contact)
@@ -47,7 +51,9 @@ final class PersonViewController: YPBaseViewController {
         explainPermission(title: "Место знакомства", message: "Геопозиция нужна, чтобы по вашему действию сохранить место знакомства рядом с добавленным человеком.") { [weak self] in
             self?.permissions.requestCurrentPlace { result in
                 switch result {
-                case .success(let label): self?.card.meetingPlace = label; self?.placeLabel.text = "Место: \(label) · хранится только на iPhone"; UIAccessibility.post(notification: .announcement, argument: "Место знакомства добавлено")
+                case .success(let label):
+                    self?.saveMeetingPlace(label)
+                    UIAccessibility.post(notification: .announcement, argument: "Место знакомства добавлено")
                 case .failure: self?.requestManualPlace()
                 }
             }
@@ -59,7 +65,7 @@ final class PersonViewController: YPBaseViewController {
         alert.addTextField { $0.placeholder = "Например, конференция в Москве" }
         alert.addAction(UIAlertAction(title: "Сохранить", style: .default) { [weak self, weak alert] _ in
             let text = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !text.isEmpty { self?.card.meetingPlace = text; self?.placeLabel.text = "Место: \(text) · хранится только на iPhone" }
+            if !text.isEmpty { self?.saveMeetingPlace(text) }
         })
         alert.addAction(UIAlertAction(title: "Пропустить", style: .cancel)); present(alert, animated: true)
     }
@@ -117,9 +123,19 @@ final class PersonViewController: YPBaseViewController {
     private func submitSafety(_ operation: SyncOperation, category: String?) {
         Task { [weak self] in
             guard let self else { return }
-            let request = SyncRequest(installationID: UIDevice.current.identifierForVendor?.uuidString ?? "simulator-installation", bearer: nil, apnsToken: nil, operation: operation, card: nil, exchangeToken: nil, moderationCategory: category)
+            let request = SyncRequest(
+                operation: operation,
+                moderationCategory: category,
+                subjectInstallationID: card.id
+            )
             do { _ = try await self.apiClient.sync(request); self.showMessage("Отправлено", operation == .report ? "Жалоба принята. Карточку можно сразу заблокировать." : "Человек заблокирован.") }
             catch { self.showMessage("Сохранено локально", "Действие будет отправлено после восстановления сети.") }
         }
+    }
+
+    private func saveMeetingPlace(_ place: String) {
+        card.meetingPlace = place
+        placeLabel.text = "Место: \(place) · хранится только на iPhone"
+        try? snapshotStore?.upsertPerson(card)
     }
 }

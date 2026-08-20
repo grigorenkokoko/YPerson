@@ -75,7 +75,7 @@ final class PrivacyViewController: YPBaseViewController {
         analytics.setConsent(false)
         Task { [weak self] in
             guard let self else { return }
-            let payload = SyncRequest(installationID: UIDevice.current.identifierForVendor?.uuidString ?? "simulator-installation", bearer: nil, apnsToken: nil, operation: .deleteProfile, card: nil, exchangeToken: nil, moderationCategory: nil)
+            let payload = SyncRequest(operation: .deleteProfile)
             do {
                 _ = try await apiClient.sync(payload)
                 snapshotStore?.profileDeletionPending = false

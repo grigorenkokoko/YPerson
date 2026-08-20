@@ -10,7 +10,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
         configureNotifications()
         let window = UIWindow(frame: UIScreen.main.bounds)
         do {
-            let builder = YPersonExperienceBuilder(
+            let builder = try YPersonExperienceBuilder(
                 configuration: try AppConfiguration(bundle: .main)
             )
             self.experienceBuilder = builder

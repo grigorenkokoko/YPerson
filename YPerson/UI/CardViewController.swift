@@ -15,6 +15,8 @@ final class CardViewController: YPBaseViewController {
     private var cardView: CardSummaryView?
     private var showsPrivateFields = false
 
+    var currentCard: PersonCard? { card }
+
     init(card: PersonCard?, persistsChanges: Bool, permissions: PermissionCenter, audio: AudioGreetingController, imageSaver: CardImageSaver, apiClient: APIClient, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, makeEditor: @escaping (PersonCard?, @escaping (PersonCard) -> Void) -> UIViewController) {
         self.card = card
         self.persistsChanges = persistsChanges
@@ -97,12 +99,53 @@ final class CardViewController: YPBaseViewController {
 
     @objc private func showQR() {
         guard let card else { return }
-        var payload = "yperson:card:\(card.id)"
+        let showOffline: () -> Void = { [weak self] in
+            guard let self else { return }
+            let payload = ExchangePayload(
+                version: 2,
+                issuerInstallationID: apiClient.installationID,
+                card: card.exchangeCopy,
+                exchangeToken: nil,
+                expiresAt: nil
+            )
+            showQRCode(payload, isOffline: true)
+        }
 #if DEBUG
-        if ProcessInfo.processInfo.environment["YP_SCREENSHOT_STATE"] != nil {
-            payload += ":review-token"
+        if ProcessInfo.processInfo.environment["YP_SCREENSHOT_STATE"] == "REVIEW_QR" {
+            showOffline()
+            return
         }
 #endif
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let response = try await apiClient.sync(SyncRequest(
+                    operation: .prepareExchange,
+                    card: card.exchangeCopy,
+                    exchangeMethod: "qr"
+                ))
+                guard let token = response.exchangeToken, !token.isEmpty else {
+                    showOffline()
+                    return
+                }
+                showQRCode(ExchangePayload(
+                    version: 2,
+                    issuerInstallationID: apiClient.installationID,
+                    card: card.exchangeCopy,
+                    exchangeToken: token,
+                    expiresAt: Date().addingTimeInterval(10 * 60)
+                ), isOffline: false)
+            } catch {
+                showOffline()
+            }
+        }
+    }
+
+    private func showQRCode(_ exchangePayload: ExchangePayload, isOffline: Bool) {
+        guard let payload = try? ExchangePayloadCodec.encode(exchangePayload) else {
+            showMessage("Не удалось создать QR", "Попробуйте ещё раз.")
+            return
+        }
         let filter = CIFilter.qrCodeGenerator()
         filter.message = Data(payload.utf8)
         filter.correctionLevel = "M"
@@ -113,14 +156,27 @@ final class CardViewController: YPBaseViewController {
         controller.view.backgroundColor = YPStyle.canvas
         let imageView = UIImageView(image: image)
         imageView.contentMode = .scaleAspectFit
-        imageView.accessibilityLabel = "QR-код публичной визитки \(card.name)"
+        imageView.accessibilityLabel = "QR-код публичной визитки \(exchangePayload.card.name)"
         imageView.translatesAutoresizingMaskIntoConstraints = false
         controller.view.addSubview(imageView)
+        let status = YPStyle.label(
+            isOffline
+                ? "Офлайн-код: человек сохранит карточку на своём iPhone, но облачные обновления подключатся позже."
+                : "Код действует 10 минут и подключает подтверждённые обновления карточки.",
+            style: .footnote
+        )
+        status.textAlignment = .center
+        status.accessibilityLabel = isOffline ? "Офлайн QR-код" : "Онлайн QR-код"
+        status.translatesAutoresizingMaskIntoConstraints = false
+        controller.view.addSubview(status)
         NSLayoutConstraint.activate([
             imageView.centerXAnchor.constraint(equalTo: controller.view.centerXAnchor),
-            imageView.centerYAnchor.constraint(equalTo: controller.view.centerYAnchor),
+            imageView.centerYAnchor.constraint(equalTo: controller.view.centerYAnchor, constant: -36),
             imageView.widthAnchor.constraint(equalTo: controller.view.widthAnchor, multiplier: 0.72),
-            imageView.heightAnchor.constraint(equalTo: imageView.widthAnchor)
+            imageView.heightAnchor.constraint(equalTo: imageView.widthAnchor),
+            status.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 20),
+            status.leadingAnchor.constraint(equalTo: controller.view.safeAreaLayoutGuide.leadingAnchor, constant: 28),
+            status.trailingAnchor.constraint(equalTo: controller.view.safeAreaLayoutGuide.trailingAnchor, constant: -28)
         ])
         navigationController?.pushViewController(controller, animated: true)
     }
@@ -134,6 +190,16 @@ final class CardViewController: YPBaseViewController {
             if self.persistsChanges { try? self.snapshotStore?.writeOwnCard(updatedCard) }
             if isNew { self.analytics.report(.cardCreated) }
             self.render()
+            guard self.persistsChanges else { return }
+            Task { [weak self] in
+                guard let self else { return }
+                guard let response = try? await apiClient.sync(SyncRequest(operation: .publishCard, card: updatedCard.exchangeCopy)),
+                      let version = response.ownCardVersion else { return }
+                var published = updatedCard
+                published.version = version
+                self.card = published
+                try? snapshotStore?.writeOwnCard(published)
+            }
         }
         navigationController?.pushViewController(editor, animated: true)
     }
