@@ -168,7 +168,7 @@ final class YPersonExperienceBuilder {
                 editor.loadViewIfNeeded()
                 navigation?.pushViewController(editor, animated: false)
                 DispatchQueue.main.async {
-                    navigation?.pushViewController(makeAppearance(.reviewOwn, .reviewOwn.templateID, { _ in }), animated: false)
+                    navigation?.pushViewController(makeAppearance(.reviewOwn, PersonCard.reviewOwn.templateID, { _ in }), animated: false)
                 }
             }
         case "S7": root.selectedIndex = 3
