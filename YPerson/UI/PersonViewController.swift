@@ -1,4 +1,3 @@
-import ContactsUI
 import UIKit
 
 final class PersonViewController: YPBaseViewController {
@@ -14,6 +13,7 @@ final class PersonViewController: YPBaseViewController {
     private let placeLabel = YPStyle.label("Место знакомства не добавлено", style: .footnote)
     private var audioButton: UIButton?
     private var audioTask: Task<Void, Never>?
+    private lazy var contactReconciliation = ContactReconciliationPresenter(host: self, permissions: permissions, analytics: analytics)
 
     init(card: PersonCard, permissions: PermissionCenter, imageSaver: CardImageSaver, syncCoordinator: SyncCoordinator, mediaTransfer: MediaTransferClient, audio: AudioGreetingController, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?) {
         self.card = card
@@ -81,31 +81,7 @@ final class PersonViewController: YPBaseViewController {
     }
 
     @objc private func saveContact() {
-        explainPermission(title: "Сохранение в Контакты", message: "Контакты нужны, чтобы находить дубликаты, добавлять визитки YPerson в адресную книгу и обновлять их при изменениях владельца.") { [weak self] in
-            guard let self else { return }
-            let save: () -> Void = { [weak self] in
-                guard let self else { return }
-                do { try self.permissions.saveContact(self.card); self.analytics.report(.contactSaved); self.showMessage("Сохранено", "Карточка добавлена в Контакты.") }
-                catch { self.showMessage("Не удалось сохранить", error.localizedDescription) }
-            }
-            switch self.permissions.contactsState() {
-            case .authorized, .limited: save()
-            case .notDetermined: self.permissions.requestContacts { state in if case .authorized = state { save() } else if case .limited = state { save() } else { self.offerSystemContactFallback() } }
-            default: self.offerSystemContactFallback()
-            }
-        }
-    }
-
-    private func offerSystemContactFallback() {
-        let alert = UIAlertController(title: "Контакты недоступны", message: "Карточка остаётся в YPerson. Можно открыть системную форму одного контакта без чтения адресной книги.", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "Открыть форму", style: .default) { [weak self] _ in
-            guard let self else { return }
-            let controller = CNContactViewController(forNewContact: self.permissions.makeContact(self.card))
-            self.navigationController?.pushViewController(controller, animated: true)
-        })
-        alert.addAction(UIAlertAction(title: "Настройки", style: .default) { [weak self] _ in self?.permissions.openSystemSettings() })
-        alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
-        present(alert, animated: true)
+        contactReconciliation.start(for: card)
     }
 
     @objc private func savePhoto() { imageSaver.save(imageSaver.render(summary), from: self) }
