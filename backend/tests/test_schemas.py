@@ -113,7 +113,7 @@ def test_sync_request_accepts_the_published_person_card_contract() -> None:
                 "hasAudioGreeting": False,
                 "meetingPlace": "Moscow",
                 "isBlocked": False,
-            }
+            },
         }
     )
 
@@ -155,7 +155,7 @@ def test_sync_request_accepts_a_swift_card_without_a_meeting_place() -> None:
 
 
 @pytest.mark.parametrize(
-        ("field", "value"),
+    ("field", "value"),
     [
         ("installationID", "i" * 15),
         ("installationID", "i" * 129),

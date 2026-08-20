@@ -235,10 +235,7 @@ class SyncService:
         requester_installation_id: str,
         people: Sequence[SyncedPerson],
     ) -> list[SyncedPerson]:
-        return [
-            self._person_with_audio(requester_installation_id, person)
-            for person in people
-        ]
+        return [self._person_with_audio(requester_installation_id, person) for person in people]
 
     def _person_with_audio(
         self,

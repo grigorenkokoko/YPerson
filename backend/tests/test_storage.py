@@ -511,17 +511,15 @@ def test_cancel_replay_is_bound_to_original_token_and_never_reopens_exchange() -
 
     def replay_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
         if "FROM operations" in query:
-            return [
-                ResultSet(
-                    [{"operation_type": "cancelExchange", "result_json": persisted}]
-                )
-            ]
+            return [ResultSet([{"operation_type": "cancelExchange", "result_json": persisted}])]
         return []
 
     replay_pool = ScriptedPool(transaction_handler=replay_handler)
     store = YDBSyncStore(replay_pool)  # type: ignore[arg-type]
     store.cancel_exchange("installation-owner", "cancel-operation-1", raw_token)
-    assert not any("FROM exchange_claims AS claim" in query for query, _ in replay_pool.transaction_calls)
+    assert not any(
+        "FROM exchange_claims AS claim" in query for query, _ in replay_pool.transaction_calls
+    )
 
     conflict_pool = ScriptedPool(transaction_handler=replay_handler)
     conflict_store = YDBSyncStore(conflict_pool)  # type: ignore[arg-type]

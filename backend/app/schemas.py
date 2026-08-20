@@ -130,9 +130,7 @@ class SyncRequest(BaseModel):
             if getattr(self, field_name) is None
         ]
         if missing_fields:
-            raise ValueError(
-                f"{self.operation.value} requires {', '.join(sorted(missing_fields))}"
-            )
+            raise ValueError(f"{self.operation.value} requires {', '.join(sorted(missing_fields))}")
 
         prohibited_fields = supplied_fields - allowed_by_operation[self.operation]
         if prohibited_fields:

@@ -1319,10 +1319,10 @@ def _authorized_media(
         if _stored_text(row, "status") == "confirmed"
     }
     owner_installation_id = record.owner_installation_id
-    if (
-        (requester_installation_id, owner_installation_id) in confirmed_connections
-        and (owner_installation_id, requester_installation_id) in confirmed_connections
-    ):
+    if (requester_installation_id, owner_installation_id) in confirmed_connections and (
+        owner_installation_id,
+        requester_installation_id,
+    ) in confirmed_connections:
         return record
     return None
 
