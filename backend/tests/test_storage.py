@@ -527,7 +527,17 @@ def test_malformed_persisted_claim_result_is_storage_integrity_failure(card: Per
         adapter.claim_exchange("installation-peer", "op-claim-1", "original-token")
 
 
-def test_malformed_persisted_prepare_exchange_digest_is_storage_integrity_failure() -> None:
+@pytest.mark.parametrize(
+    "stored_digest",
+    [
+        "not-hex",
+        sha256(b"raw-token").hexdigest().upper(),
+        f" {sha256(b'raw-token').hexdigest()}",
+    ],
+)
+def test_noncanonical_persisted_prepare_exchange_digest_is_storage_integrity_failure(
+    stored_digest: str,
+) -> None:
     def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
         if "FROM operations" in query:
             return [
@@ -535,7 +545,7 @@ def test_malformed_persisted_prepare_exchange_digest_is_storage_integrity_failur
                     [
                         {
                             "operation_type": "prepareExchange",
-                            "result_json": json.dumps({"tokenHash": "not-hex"}),
+                            "result_json": json.dumps({"tokenHash": stored_digest}),
                         }
                     ]
                 )
@@ -554,7 +564,10 @@ def test_malformed_persisted_prepare_exchange_digest_is_storage_integrity_failur
         )
 
 
-@pytest.mark.parametrize("corruption", ["credential", "object_key"])
+@pytest.mark.parametrize(
+    "corruption",
+    ["credential", "object_key", "empty_object_key", "whitespace_object_key"],
+)
 def test_malformed_persisted_delete_state_is_storage_integrity_failure(
     corruption: str,
 ) -> None:
@@ -565,7 +578,12 @@ def test_malformed_persisted_delete_state_is_storage_integrity_failure(
             credential = "not-binary" if corruption == "credential" else sha256(b"secret").digest()
             return [ResultSet([{"credential_hash": credential}])]
         if "SELECT object_key" in query:
-            object_key = None if corruption == "object_key" else "private/audio.m4a"
+            object_key_by_corruption = {
+                "object_key": None,
+                "empty_object_key": "",
+                "whitespace_object_key": "   ",
+            }
+            object_key = object_key_by_corruption.get(corruption, "private/audio.m4a")
             return [ResultSet([{"object_key": object_key}])]
         if "SELECT card_id FROM cards" in query:
             return [ResultSet([])]
@@ -577,6 +595,125 @@ def test_malformed_persisted_delete_state_is_storage_integrity_failure(
 
     with pytest.raises(StorageIntegrityError):
         store.delete_profile("installation-owner", "op-delete-corrupt")
+
+
+@pytest.mark.parametrize(
+    "stored_digest",
+    [
+        sha256(b"owner-secret").hexdigest().upper(),
+        f"{sha256(b'owner-secret').hexdigest()} ",
+    ],
+)
+def test_noncanonical_persisted_delete_digest_is_storage_integrity_failure(
+    stored_digest: str,
+) -> None:
+    def read_handler(_query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        return [
+            ResultSet(
+                [
+                    {
+                        "operation_type": "deleteProfile",
+                        "result_json": json.dumps(
+                            {"credentialHash": stored_digest, "objectKeys": []}
+                        ),
+                    }
+                ]
+            )
+        ]
+
+    store = YDBSyncStore(  # type: ignore[arg-type]
+        ScriptedPool(transaction_handler=lambda _query, _parameters: [], read_handler=read_handler)
+    )
+
+    with pytest.raises(StorageIntegrityError):
+        store.replay_deleted_profile(
+            "installation-owner",
+            "op-delete-corrupt",
+            "owner-secret",
+        )
+
+
+@pytest.mark.parametrize("invalid_object_key", ["", "   "])
+def test_replayed_delete_rejects_empty_persisted_object_key(invalid_object_key: str) -> None:
+    result = {
+        "credentialHash": sha256(b"owner-secret").hexdigest(),
+        "objectKeys": [invalid_object_key],
+    }
+
+    def read_handler(_query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        return [
+            ResultSet(
+                [
+                    {
+                        "operation_type": "deleteProfile",
+                        "result_json": json.dumps(result),
+                    }
+                ]
+            )
+        ]
+
+    store = YDBSyncStore(  # type: ignore[arg-type]
+        ScriptedPool(transaction_handler=lambda _query, _parameters: [], read_handler=read_handler)
+    )
+
+    with pytest.raises(StorageIntegrityError):
+        store.replay_deleted_profile(
+            "installation-owner",
+            "op-delete-corrupt",
+            "owner-secret",
+        )
+
+
+@pytest.mark.parametrize("coerced_boolean", ["true", 1])
+def test_persisted_card_uses_strict_boolean_validation(
+    card: PersonCard,
+    coerced_boolean: object,
+) -> None:
+    card_json = card.model_dump(mode="json")
+    card_json["hasAudioGreeting"] = coerced_boolean
+
+    def read_handler(_query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        return [
+            ResultSet([{"version": 1, "card_json": json.dumps(card_json)}]),
+            ResultSet([]),
+            ResultSet([]),
+        ]
+
+    store = YDBSyncStore(  # type: ignore[arg-type]
+        ScriptedPool(transaction_handler=lambda _query, _parameters: [], read_handler=read_handler)
+    )
+
+    with pytest.raises(StorageIntegrityError):
+        store.refresh("installation-owner", None)
+
+
+def test_replayed_claim_uses_strict_nested_card_validation(card: PersonCard) -> None:
+    card_json = card.model_dump(mode="json")
+    card_json["isBlocked"] = 0
+    raw_token = "original-token"
+    previous_result = {
+        "person": {"card": card_json, "version": 1},
+        "tokenHash": sha256(raw_token.encode()).hexdigest(),
+    }
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "operation_type": "claimExchange",
+                            "result_json": json.dumps(previous_result),
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    store = YDBSyncStore(ScriptedPool(transaction_handler=transaction_handler))  # type: ignore[arg-type]
+
+    with pytest.raises(StorageIntegrityError):
+        store.claim_exchange("installation-peer", "op-claim-corrupt", raw_token)
 
 
 def test_malformed_persisted_auth_and_card_are_storage_integrity_failures() -> None:

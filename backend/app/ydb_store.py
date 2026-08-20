@@ -306,7 +306,7 @@ class YDBSyncStore:
                 if not compare_digest(previous_hash, token_hash):
                     raise StorageConflict("operation identifier already used")
                 try:
-                    return SyncedPerson.model_validate(previous["person"])
+                    return SyncedPerson.model_validate(previous["person"], strict=True)
                 except (KeyError, TypeError, ValidationError) as error:
                     raise StorageIntegrityError from error
             claim_rows = self._tx_rows(
@@ -565,7 +565,7 @@ class YDBSyncStore:
                 """,
                 {"$installation_id": _utf8(installation_id)},
             )[0]
-            object_keys = [_stored_text(row, "object_key") for row in media_rows]
+            object_keys = [_stored_object_key(row, "object_key") for row in media_rows]
             card_rows = self._tx_rows(
                 tx,
                 """
@@ -831,7 +831,7 @@ def _json_value(value: Any) -> dict[str, Any]:
 
 def _card(value: Any) -> PersonCard:
     try:
-        return PersonCard.model_validate(_json_value(value))
+        return PersonCard.model_validate(_json_value(value), strict=True)
     except ValidationError as error:
         raise StorageIntegrityError from error
 
@@ -869,6 +869,8 @@ def _stored_bytes(row: Any, key: str, *, expected_length: int | None = None) -> 
 
 def _stored_digest(result: Any, key: str) -> bytes:
     encoded = _stored_text(result, key)
+    if len(encoded) != 64 or any(character not in "0123456789abcdef" for character in encoded):
+        raise StorageIntegrityError
     try:
         digest = bytes.fromhex(encoded)
     except ValueError as error:
@@ -909,9 +911,18 @@ def _stored_card(row: Any) -> PersonCard:
     return _card(_stored_value(row, "card_json"))
 
 
+def _stored_object_key(row: Any, key: str) -> str:
+    object_key = _stored_text(row, key)
+    if not object_key.strip():
+        raise StorageIntegrityError
+    return object_key
+
+
 def _object_keys(result: dict[str, Any]) -> list[str]:
     object_keys = result.get("objectKeys")
-    if not isinstance(object_keys, list) or any(not isinstance(key, str) for key in object_keys):
+    if not isinstance(object_keys, list) or any(
+        not isinstance(key, str) or not key.strip() for key in object_keys
+    ):
         raise StorageIntegrityError
     return object_keys
 
