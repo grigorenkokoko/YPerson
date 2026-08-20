@@ -29,6 +29,24 @@ enum PersonSyncState: String, Codable {
     case synced
 }
 
+struct CardTemplateDefinition: Equatable {
+    let id: String
+    let title: String
+    let sponsoredCategory: String?
+}
+
+enum CardTemplateCatalog {
+    static let standardClean = CardTemplateDefinition(id: "standard-clean", title: "Чистый", sponsoredCategory: nil)
+    static let standardContrast = CardTemplateDefinition(id: "standard-contrast", title: "Контрастный", sponsoredCategory: nil)
+    static let mintConference = CardTemplateDefinition(id: "mint-conference", title: "Mint Conference", sponsoredCategory: "sponsored_event")
+    static let indigoStudio = CardTemplateDefinition(id: "indigo-studio", title: "Indigo Studio", sponsoredCategory: "sponsored_studio")
+    static let all = [standardClean, standardContrast, mintConference, indigoStudio]
+
+    static func resolve(_ id: String?) -> CardTemplateDefinition {
+        all.first(where: { $0.id == id }) ?? standardClean
+    }
+}
+
 struct PersonCard: Codable, Equatable, Identifiable {
     let id: String
     var name: String
@@ -40,6 +58,7 @@ struct PersonCard: Codable, Equatable, Identifiable {
     var hasAudioGreeting: Bool
     var meetingPlace: String?
     var isBlocked: Bool
+    var templateID: String
     var version: Int
     var sourceInstallationID: String?
     var syncState: PersonSyncState
@@ -55,6 +74,7 @@ struct PersonCard: Codable, Equatable, Identifiable {
         hasAudioGreeting: Bool,
         meetingPlace: String?,
         isBlocked: Bool,
+        templateID: String = CardTemplateCatalog.standardClean.id,
         version: Int = 1,
         sourceInstallationID: String? = nil,
         syncState: PersonSyncState = .localOnly
@@ -69,6 +89,7 @@ struct PersonCard: Codable, Equatable, Identifiable {
         self.hasAudioGreeting = hasAudioGreeting
         self.meetingPlace = meetingPlace
         self.isBlocked = isBlocked
+        self.templateID = templateID
         self.version = max(1, version)
         self.sourceInstallationID = sourceInstallationID
         self.syncState = syncState
@@ -77,7 +98,7 @@ struct PersonCard: Codable, Equatable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, name, role, company, phone, email, tagline
         case hasAudioGreeting, meetingPlace, isBlocked, version
-        case sourceInstallationID, syncState
+        case sourceInstallationID, syncState, templateID
     }
 
     init(from decoder: Decoder) throws {
@@ -92,6 +113,8 @@ struct PersonCard: Codable, Equatable, Identifiable {
         hasAudioGreeting = try container.decode(Bool.self, forKey: .hasAudioGreeting)
         meetingPlace = try container.decodeIfPresent(String.self, forKey: .meetingPlace)
         isBlocked = try container.decode(Bool.self, forKey: .isBlocked)
+        templateID = try container.decodeIfPresent(String.self, forKey: .templateID)
+            ?? CardTemplateCatalog.standardClean.id
         version = max(1, try container.decodeIfPresent(Int.self, forKey: .version) ?? 1)
         sourceInstallationID = try container.decodeIfPresent(String.self, forKey: .sourceInstallationID)
         syncState = try container.decodeIfPresent(PersonSyncState.self, forKey: .syncState) ?? .localOnly
@@ -383,6 +406,7 @@ struct SyncWirePersonCard: Codable {
     let hasAudioGreeting: Bool
     let meetingPlace: String?
     let isBlocked: Bool
+    let templateID: String
 
     init(_ card: PersonCard) {
         id = card.id
@@ -395,6 +419,7 @@ struct SyncWirePersonCard: Codable {
         hasAudioGreeting = card.hasAudioGreeting
         meetingPlace = nil
         isBlocked = card.isBlocked
+        templateID = card.templateID
     }
 }
 

@@ -154,6 +154,63 @@ def test_sync_request_accepts_a_swift_card_without_a_meeting_place() -> None:
     assert request.card.meetingPlace is None
 
 
+def test_person_card_template_defaults_for_legacy_clients() -> None:
+    request = SyncRequest.model_validate(
+        valid_request()
+        | {
+            "operation": "publishCard",
+            "card": {
+                "id": "legacy-card",
+                "name": "Legacy",
+                "role": "Designer",
+                "company": "YPerson",
+                "phone": "",
+                "email": "legacy@example.invalid",
+                "tagline": "Hello",
+                "hasAudioGreeting": False,
+                "isBlocked": False,
+            },
+        }
+    )
+
+    assert request.card is not None
+    assert request.card.templateID == "standard-clean"
+
+
+def test_person_card_accepts_a_public_template_identifier() -> None:
+    styled = PersonCard(
+        id="styled-card",
+        name="Styled",
+        role="Designer",
+        company="YPerson",
+        phone="",
+        email="styled@example.invalid",
+        tagline="Hello",
+        hasAudioGreeting=False,
+        isBlocked=False,
+        templateID="mint-conference",
+    )
+
+    assert styled.model_dump(mode="json")["templateID"] == "mint-conference"
+
+
+@pytest.mark.parametrize("template_id", ["", "Mint Conference", "../mint", "a" * 65])
+def test_person_card_rejects_invalid_template_identifiers(template_id: str) -> None:
+    with pytest.raises(ValidationError):
+        PersonCard(
+            id="invalid-template",
+            name="Invalid",
+            role="Designer",
+            company="YPerson",
+            phone="",
+            email="invalid@example.invalid",
+            tagline="Hello",
+            hasAudioGreeting=False,
+            isBlocked=False,
+            templateID=template_id,
+        )
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
