@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from datetime import UTC, datetime
 from hashlib import sha256
 from hmac import compare_digest
@@ -11,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from app.observability import JsonRequestFormatter, request_logger
 from app.schemas import PersonCard, SyncedPerson
 from app.settings import Settings
 from app.storage import InvalidCredential, StorageConflict, StorageIntegrityError, SyncSnapshot
@@ -534,6 +537,59 @@ def test_storage_integrity_failure_returns_sanitized_503() -> None:
     assert response.status_code == 503
     assert set(response.json()) == {"error", "requestID"}
     assert response.json()["error"] == "temporarily_unavailable"
+
+
+def test_unexpected_sync_failure_logs_only_safe_diagnostic_classes() -> None:
+    exception_secret = "exception-message-secret-sentinel"
+    bearer_secret = "bearer-secret-sentinel-000000000000000000000000"
+    installation_secret = "installation-secret-sentinel"
+
+    class ExplodingSyncService:
+        def handle(self, request, bearer):
+            del request, bearer
+            try:
+                raise ValueError(exception_secret)
+            except ValueError as error:
+                raise RuntimeError(exception_secret) from error
+
+    captured: list[str] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(self.format(record))
+
+    logger = request_logger()
+    handler = Capture()
+    handler.setFormatter(JsonRequestFormatter())
+    logger.addHandler(handler)
+    try:
+        with TestClient(
+            create_app(Settings(_env_file=None), sync_service=ExplodingSyncService())
+        ) as client:
+            response = client.post(
+                "/sync",
+                headers={"Authorization": f"Bearer {bearer_secret}"},
+                json={
+                    "contractVersion": 2,
+                    "operationID": "diagnostic-operation-sentinel",
+                    "installationID": installation_secret,
+                    "operation": "refresh",
+                },
+            )
+    finally:
+        logger.removeHandler(handler)
+
+    assert response.status_code == 503
+    failures = [event for line in captured if (event := json.loads(line))["event"] == "sync_failed"]
+    assert len(failures) == 1
+    assert failures[0]["requestID"] == response.json()["requestID"]
+    assert failures[0]["operation"] == "refresh"
+    assert failures[0]["failureTypes"] == ["builtins.RuntimeError", "builtins.ValueError"]
+    output = "\n".join(captured)
+    assert exception_secret not in output
+    assert bearer_secret not in output
+    assert installation_secret not in output
+    assert "diagnostic-operation-sentinel" not in output
 
 
 def test_concurrent_duplicate_delete_replays_tombstone_after_conflict() -> None:

@@ -11,7 +11,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import Lifespan
 
-from app.observability import RequestObservabilityMiddleware
+from app.observability import RequestObservabilityMiddleware, request_logger
 from app.public_pages import PRIVACY_HTML, SUPPORT_HTML
 from app.schemas import PublicConfigResponse, SyncRequest
 from app.settings import Settings
@@ -119,9 +119,11 @@ def create_app(
             return _error_response(request, 401, "unauthorized")
         except StorageConflict:
             return _error_response(request, 409, "conflict")
-        except (StorageIntegrityError, SyncUnavailable):
+        except (StorageIntegrityError, SyncUnavailable) as error:
+            _log_sync_failure(request, sync_request, error)
             return _error_response(request, 503, "temporarily_unavailable")
-        except Exception:  # noqa: BLE001 - cloud adapter failures must stay sanitized.
+        except Exception as error:  # noqa: BLE001 - cloud adapter failures must stay sanitized.
+            _log_sync_failure(request, sync_request, error)
             return _error_response(request, 503, "temporarily_unavailable")
         return JSONResponse(status_code=200, content=response.model_dump(mode="json"))
 
@@ -162,6 +164,38 @@ def _error_response(
     if message is not None:
         content["message"] = message
     return JSONResponse(status_code=status_code, content=content, headers=headers)
+
+
+def _log_sync_failure(
+    request: Request,
+    sync_request: SyncRequest,
+    error: BaseException,
+) -> None:
+    request_logger().error(
+        "sync_failed",
+        extra={
+            "event": "sync_failed",
+            "request_id": request.state.request_id,
+            "method": "POST",
+            "route": "/sync",
+            "status": 503,
+            "latency_ms": 0.0,
+            "operation": sync_request.operation.value,
+            "failure_types": _failure_types(error),
+        },
+    )
+
+
+def _failure_types(error: BaseException) -> list[str]:
+    result: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen and len(result) < 4:
+        seen.add(id(current))
+        error_type = type(current)
+        result.append(f"{error_type.__module__}.{error_type.__qualname__}")
+        current = current.__cause__ or current.__context__
+    return result
 
 
 def _is_json_content_type(content_type: str | None) -> bool:
