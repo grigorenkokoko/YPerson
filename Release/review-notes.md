@@ -10,9 +10,9 @@ Permission paths and fallbacks:
 
 1. Camera: Exchange → Scan QR. Fallback: supplied image/manual code.
 2. Bluetooth: Exchange → Nearby; open this on two iPhones and confirm on both. Fallback: QR/manual code.
-3. Contacts: first import the supplied reviewer card, then People → Contacts Sync; inspect the proposed changes before confirming. Fallback: cards remain in YPerson/system single-contact form.
+3. Contacts: with an empty People list, tap Add from Contacts and select one or more entries in the system picker; this does not request full address-book access and keeps imported cards on device. For full reconciliation, import the supplied reviewer card, then People → Contacts Sync; inspect the proposed changes before confirming. Fallback: cards remain in YPerson/system single-contact form.
 4. Face ID: Card → Open private fields, or enable private fields in Exchange. Device passcode/public card remain available.
-5. Location While Using: after importing the reviewer card, People → Alexey → Add current place. The label remains only on device; manual place/skip is available.
+5. Location While Using: before exchange, enable Save meeting place, then complete the reviewer exchange and inspect the local label on the received person. Cancel a second exchange and verify that its pending label is not persisted. People → Alexey → Add current place remains available afterward; manual place/skip is available and nothing is transmitted.
 6. Microphone: Card → Edit → Record up to 10 seconds. Preview/delete is available; text remains the fallback.
 7. Photos read: Exchange → Find cards in Photos. Limited/single-image alternatives are available; raw images stay on device.
 8. Photos add: Card menu or received card → Save to Photos. Share Sheet remains available.
