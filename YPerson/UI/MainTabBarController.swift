@@ -1,7 +1,10 @@
 import UIKit
 
 final class MainTabBarController: UITabBarController {
-    init(card: UIViewController, exchange: UIViewController, people: UIViewController, privacy: UIViewController) {
+    private weak var exchangeController: ExchangeViewController?
+
+    init(card: UIViewController, exchange: ExchangeViewController, people: UIViewController, privacy: UIViewController) {
+        self.exchangeController = exchange
         super.init(nibName: nil, bundle: nil)
         viewControllers = [
             Self.wrap(card, title: "Карточка", symbol: "person.text.rectangle"),
@@ -17,6 +20,9 @@ final class MainTabBarController: UITabBarController {
         switch entryPoint {
         case .root, .card:
             selectedIndex = 0
+        case .scanQR:
+            selectedIndex = 1
+            exchangeController?.openScannerFromWidget()
         case .privacy:
             selectedIndex = 3
         }

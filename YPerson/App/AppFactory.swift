@@ -53,7 +53,7 @@ final class YPersonExperienceBuilder {
             CardEditorViewController(card: card, permissions: permissions, audio: audio, makeAppearance: makeAppearance, onSave: onSave)
         }
         let card = CardViewController(card: ownCard, persistsChanges: !usesReviewFixtures, permissions: permissions, audio: audio, imageSaver: imageSaver, apiClient: apiClient, analytics: analytics, snapshotStore: snapshotStore, makeEditor: makeEditor)
-        let exchange = ExchangeViewController(nearby: nearby, photoScanner: photoScanner, permissions: permissions, apiClient: apiClient, analytics: analytics)
+        let exchange: ExchangeViewController = ExchangeViewController(nearby: nearby, photoScanner: photoScanner, permissions: permissions, apiClient: apiClient, analytics: analytics)
         let person = { [permissions, imageSaver, apiClient, analytics] card in
             PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, apiClient: apiClient, analytics: analytics)
         }

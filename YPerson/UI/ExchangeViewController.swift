@@ -9,6 +9,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private let apiClient: APIClient
     private let analytics: AppMetricaAnalyticsClient
     private var includePrivate = false
+    private var scannerLaunchGate = QRScannerLaunchGate()
 
     init(nearby: NearbyExchangeController, photoScanner: PhotoCardScanner, permissions: PermissionCenter, apiClient: APIClient, analytics: AppMetricaAnalyticsClient) {
         self.nearby = nearby; self.photoScanner = photoScanner; self.permissions = permissions; self.apiClient = apiClient; self.analytics = analytics
@@ -36,7 +37,27 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
 
     @objc private func showOwnQR() { tabBarController?.selectedIndex = 0 }
 
+    func openScannerFromWidget() {
+        let scannerIsVisible = navigationController?.topViewController
+            is QRCodeScannerViewController
+        let alreadyPresenting = scannerIsVisible || presentedViewController != nil
+        guard scannerLaunchGate.begin(alreadyPresenting: alreadyPresenting) else {
+            return
+        }
+
+        navigationController?.popToRootViewController(animated: false)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.scannerLaunchGate.complete()
+            self.scanQR()
+        }
+    }
+
     @objc func scanQR() {
+        guard presentedViewController == nil,
+              !(navigationController?.topViewController is QRCodeScannerViewController) else {
+            return
+        }
         explainPermission(title: "Сканирование QR", message: "Камера нужна, чтобы сканировать QR-код визитки YPerson и добавить человека.") { [weak self] in
             guard let self else { return }
             let scanner = QRCodeScannerViewController { [weak self] value in

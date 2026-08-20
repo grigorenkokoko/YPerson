@@ -77,6 +77,11 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UIApplicationSupportsIndirectInputEvents: false
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Viewer
+            CFBundleURLName: com.yperson.app.scanner
+            CFBundleURLSchemes:
+              - yperson
         NSBluetoothAlwaysUsageDescription: "Bluetooth нужен, чтобы находить поблизости другой iPhone с открытым экраном обмена YPerson и безопасно передавать выбранную визитку."
         NSCameraUsageDescription: "Камера нужна, чтобы сканировать QR-код визитки YPerson и добавить человека."
         NSContactsUsageDescription: "Контакты нужны, чтобы находить дубликаты, добавлять визитки YPerson в адресную книгу и обновлять их при изменениях владельца."

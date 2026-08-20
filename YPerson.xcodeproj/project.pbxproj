@@ -18,10 +18,13 @@
 		48B8935AECD4A25733526E34 /* QRCodeScannerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD1799F52DDF1E713B76582 /* QRCodeScannerViewController.swift */; };
 		52717EBD27E93DC80BA5D866 /* YPersonWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0713886AFFF02F8B18A0E405 /* YPersonWidget.swift */; };
 		56307796A09DEA57FBCDE1C7 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 1E7F0A5C4BE5C51180C7B46D /* PrivacyInfo.xcprivacy */; };
+		5F90883E088EE1F658318A61 /* ScannerWidgetRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 865202CF29A8D4B5A7005697 /* ScannerWidgetRoute.swift */; };
 		62E75CC79906A07A1ECF6537 /* YPersonNotificationContent.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 26B16DC13ECBE2DC6B708901 /* YPersonNotificationContent.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		6633BEE8A465A05C91D7C507 /* CardImageSaver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F5BA513D189A26885B9C8C8 /* CardImageSaver.swift */; };
+		6FE43A64E27A1AED3AED4626 /* QRScannerLaunchGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5F2F1682CFC85E2B485474F /* QRScannerLaunchGate.swift */; };
 		7003A8F439D23CDAE3BA20D9 /* AppGroupSnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D4EC9F123380A9A82AAC30E /* AppGroupSnapshotStore.swift */; };
 		75033FFC1C035C8D77463E91 /* PeopleViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3337EAFEF3B0198BB5BA9D44 /* PeopleViewController.swift */; };
+		7D5AC138F61871893EE3BA0D /* ScannerWidgetRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 865202CF29A8D4B5A7005697 /* ScannerWidgetRoute.swift */; };
 		825E97AB9DE3077A7A1FB3B3 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6506B9BE77BAB21F35300A5A /* APIClient.swift */; };
 		8BA7E80D97F1A2A25B7864E9 /* YPersonWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 85FF1494661E949011B6F874 /* YPersonWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		8DAEE38A487807265E664A0A /* PhotoCardScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D51EBF735785D82AF276EA87 /* PhotoCardScanner.swift */; };
@@ -120,6 +123,7 @@
 		750506F4EEAF3B8D1B12E774 /* WidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshot.swift; sourceTree = "<group>"; };
 		7A13996E6F0278470DBD08AA /* NotificationViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationViewController.swift; sourceTree = "<group>"; };
 		85FF1494661E949011B6F874 /* YPersonWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = YPersonWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		865202CF29A8D4B5A7005697 /* ScannerWidgetRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScannerWidgetRoute.swift; sourceTree = "<group>"; };
 		89A99344CEF5B9D4A1670A7F /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 		8DBF242EE59E958AF301277F /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		95235915DA13A07330BC207D /* AppFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFactory.swift; sourceTree = "<group>"; };
@@ -132,6 +136,7 @@
 		B05DF4272FF693CA8C7E28F4 /* MainTabBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabBarController.swift; sourceTree = "<group>"; };
 		CAC46C8858C0D992879AF1C4 /* PersonViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonViewController.swift; sourceTree = "<group>"; };
 		D51EBF735785D82AF276EA87 /* PhotoCardScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCardScanner.swift; sourceTree = "<group>"; };
+		D5F2F1682CFC85E2B485474F /* QRScannerLaunchGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerLaunchGate.swift; sourceTree = "<group>"; };
 		D8231A08DD9861DEC29505A7 /* YPersonIntegrationContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YPersonIntegrationContract.swift; sourceTree = "<group>"; };
 		D938FC5C6EE5391F7920B405 /* NearbyExchangeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearbyExchangeController.swift; sourceTree = "<group>"; };
 		F3E533DAB9E006DADF68EA10 /* ExchangeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExchangeViewController.swift; sourceTree = "<group>"; };
@@ -223,6 +228,7 @@
 		514A5A61AB5BF720C91A0944 /* Experience */ = {
 			isa = PBXGroup;
 			children = (
+				D5F2F1682CFC85E2B485474F /* QRScannerLaunchGate.swift */,
 				D8231A08DD9861DEC29505A7 /* YPersonIntegrationContract.swift */,
 			);
 			path = Experience;
@@ -267,6 +273,7 @@
 		744FECF23B2C6CF152C857E3 /* YPersonShared */ = {
 			isa = PBXGroup;
 			children = (
+				865202CF29A8D4B5A7005697 /* ScannerWidgetRoute.swift */,
 				750506F4EEAF3B8D1B12E774 /* WidgetSnapshot.swift */,
 			);
 			path = YPersonShared;
@@ -565,6 +572,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7D5AC138F61871893EE3BA0D /* ScannerWidgetRoute.swift in Sources */,
 				0DC40FF0ADF08360DE334C91 /* WidgetSnapshot.swift in Sources */,
 				52717EBD27E93DC80BA5D866 /* YPersonWidget.swift in Sources */,
 			);
@@ -595,6 +603,8 @@
 				8DAEE38A487807265E664A0A /* PhotoCardScanner.swift in Sources */,
 				DCAB22468D62AE11C281CFE1 /* PrivacyViewController.swift in Sources */,
 				48B8935AECD4A25733526E34 /* QRCodeScannerViewController.swift in Sources */,
+				6FE43A64E27A1AED3AED4626 /* QRScannerLaunchGate.swift in Sources */,
+				5F90883E088EE1F658318A61 /* ScannerWidgetRoute.swift in Sources */,
 				AA2209FE210BFDD77FF0A64D /* WidgetSnapshot.swift in Sources */,
 				D91A4ED9BE788718888C6405 /* YPStyle.swift in Sources */,
 				98290ADBE47289C2AB496557 /* YPersonIntegrationContract.swift in Sources */,
