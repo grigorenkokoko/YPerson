@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
 from .schemas import SyncOperation, SyncRequest, SyncResponse
-from .storage import SyncSnapshot, SyncStore
+from .storage import StorageConflict, SyncSnapshot, SyncStore
 
 EXCHANGE_TOKEN_LIFETIME = timedelta(minutes=10)
 
@@ -55,7 +55,10 @@ class SyncService:
                 self._object_cleanup(replayed_keys)
                 return _response("profile deleted")
 
-        self._store.authenticate_or_create(request.installationID, bearer)
+        if request.operation in {SyncOperation.refresh, SyncOperation.publish_card}:
+            self._store.authenticate_or_create(request.installationID, bearer)
+        else:
+            self._store.authenticate(request.installationID, bearer)
 
         match request.operation:
             case SyncOperation.refresh:
@@ -75,7 +78,7 @@ class SyncService:
             case SyncOperation.report | SyncOperation.block:
                 return self._moderate(request)
             case SyncOperation.delete_profile:
-                return self._delete(request)
+                return self._delete(request, bearer)
 
     def _refresh(self, request: SyncRequest) -> SyncResponse:
         snapshot = self._store.refresh(request.installationID, request.cursor)
@@ -165,8 +168,18 @@ class SyncService:
         )
         return _response(f"{request.operation.value} recorded", update_count=1)
 
-    def _delete(self, request: SyncRequest) -> SyncResponse:
-        object_keys = self._store.delete_profile(request.installationID, request.operationID)
+    def _delete(self, request: SyncRequest, bearer: str) -> SyncResponse:
+        try:
+            object_keys = self._store.delete_profile(request.installationID, request.operationID)
+        except StorageConflict:
+            replayed_keys = self._store.replay_deleted_profile(
+                request.installationID,
+                request.operationID,
+                bearer,
+            )
+            if replayed_keys is None:
+                raise
+            object_keys = replayed_keys
         self._object_cleanup(object_keys)
         return _response("profile deleted")
 
@@ -178,8 +191,9 @@ def derive_exchange_token(bearer: str, installation_id: str, operation_id: str) 
     YDB adapter stores only SHA-256 of the returned base64url token.
     """
 
-    message = b"\0".join(
-        (
+    message = b"".join(
+        _length_prefixed(component)
+        for component in (
             b"yperson.exchange.v1",
             SyncOperation.prepare_exchange.value.encode("utf-8"),
             installation_id.encode("utf-8"),
@@ -188,6 +202,10 @@ def derive_exchange_token(bearer: str, installation_id: str, operation_id: str) 
     )
     digest = hmac.new(bearer.encode("utf-8"), message, sha256).digest()
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def _length_prefixed(component: bytes) -> bytes:
+    return len(component).to_bytes(4, "big") + component
 
 
 def _sub_operation_id(operation_id: str, purpose: str) -> str:

@@ -17,6 +17,10 @@ class StorageConflict(Exception):
     """A stable mutation could not be completed in the current state."""
 
 
+class StorageIntegrityError(Exception):
+    """Persisted state was malformed and cannot be trusted or exposed."""
+
+
 @dataclass(frozen=True, slots=True)
 class InstallationRecord:
     """Secret-safe installation state used by adapters and deterministic tests."""
@@ -45,6 +49,9 @@ class SyncStore(Protocol):
 
     def authenticate_or_create(self, installation_id: str, bearer: str) -> None:
         """Create an installation digest or validate the existing digest."""
+
+    def authenticate(self, installation_id: str, bearer: str) -> None:
+        """Validate an existing installation without creating any state."""
 
     def publish_card(
         self,

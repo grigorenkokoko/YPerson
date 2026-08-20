@@ -13,8 +13,8 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 from app.schemas import PersonCard, SyncedPerson
 from app.settings import Settings
-from app.storage import InvalidCredential, StorageConflict, SyncSnapshot
-from app.sync_service import SyncService
+from app.storage import InvalidCredential, StorageConflict, StorageIntegrityError, SyncSnapshot
+from app.sync_service import SyncService, derive_exchange_token
 
 NOW = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
 OWNER = ("installation-owner-0001", "owner-bearer-secret-000000000000000000000000")
@@ -54,6 +54,13 @@ class MemoryStore:
         candidate = sha256(bearer.encode()).digest()
         stored = self.installations.setdefault(installation_id, candidate)
         if not compare_digest(stored, candidate):
+            raise InvalidCredential
+
+    def authenticate(self, installation_id: str, bearer: str) -> None:
+        self.auth_calls.append(installation_id)
+        candidate = sha256(bearer.encode()).digest()
+        stored = self.installations.get(installation_id)
+        if stored is None or not compare_digest(stored, candidate):
             raise InvalidCredential
 
     def publish_card(
@@ -210,6 +217,8 @@ def post_sync(
 def test_two_installations_claim_exchange_and_receive_peer_card() -> None:
     store = MemoryStore()
     with make_client(store) as client:
+        owner_bootstrap = post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-1")
+        peer_bootstrap = post_sync(client, PEER, "refresh", operation_id="peer-bootstrap-01")
         prepared = post_sync(
             client,
             OWNER,
@@ -225,11 +234,29 @@ def test_two_installations_claim_exchange_and_receive_peer_card() -> None:
             exchangeToken=prepared.json()["exchangeToken"],
         )
 
+    assert owner_bootstrap.status_code == peer_bootstrap.status_code == 200
     assert prepared.status_code == 200
-    assert prepared.json()["exchangeToken"] == "uz6Aowbd6kL2OnCTXaSRJZfAYLAF10CRzaGTrklmE2g"
+    assert prepared.json()["exchangeToken"] == "eWQup1GlqgOm0k5ncRitNgHsikQEtrXKV9uM01_Y-W8"
     assert "=" not in prepared.json()["exchangeToken"]
     assert claimed.status_code == 200
     assert claimed.json()["people"][0]["card"]["id"] == "card-owner"
+
+
+def test_exchange_token_derivation_length_prefixes_ambiguous_components() -> None:
+    bearer = "high-entropy-bearer-secret-00000000000000000000"
+
+    first = derive_exchange_token(
+        bearer,
+        "installation-left\0right",
+        "operation-tail",
+    )
+    second = derive_exchange_token(
+        bearer,
+        "installation-left",
+        "right\0operation-tail",
+    )
+
+    assert first != second
 
 
 def test_wrong_bearer_returns_generic_401_without_installation_enumeration() -> None:
@@ -294,9 +321,11 @@ def test_delete_with_private_objects_fails_closed_without_cleanup_service() -> N
     store.object_keys[OWNER[0]] = ["private/object-key-sentinel"]
     service = SyncService(store, clock=lambda: NOW)
     with TestClient(create_app(Settings(_env_file=None), sync_service=service)) as client:
+        bootstrap = post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-2")
         response = post_sync(client, OWNER, "deleteProfile", operation_id="delete-op-0002")
         retried = post_sync(client, OWNER, "deleteProfile", operation_id="delete-op-0002")
 
+    assert bootstrap.status_code == 200
     assert response.status_code == retried.status_code == 503
     assert response.json()["error"] == "temporarily_unavailable"
     assert store.snapshot(OWNER[0]) is None
@@ -356,6 +385,7 @@ def test_card_refresh_push_and_moderation_operations_use_authenticated_store() -
 def test_audio_upload_preparation_fails_closed_until_media_service_is_injected() -> None:
     store = MemoryStore()
     with make_client(store) as client:
+        bootstrap = post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-3")
         response = post_sync(
             client,
             OWNER,
@@ -365,6 +395,7 @@ def test_audio_upload_preparation_fails_closed_until_media_service_is_injected()
             audioDurationMS=1000,
         )
 
+    assert bootstrap.status_code == 200
     assert response.status_code == 503
     assert response.json()["error"] == "temporarily_unavailable"
 
@@ -372,6 +403,7 @@ def test_audio_upload_preparation_fails_closed_until_media_service_is_injected()
 def test_unavailable_exchange_returns_sanitized_conflict() -> None:
     store = MemoryStore()
     with make_client(store) as client:
+        bootstrap = post_sync(client, PEER, "refresh", operation_id="peer-bootstrap-02")
         response = post_sync(
             client,
             PEER,
@@ -380,10 +412,86 @@ def test_unavailable_exchange_returns_sanitized_conflict() -> None:
             exchangeToken="unknown-exchange-token",
         )
 
+    assert bootstrap.status_code == 200
     assert response.status_code == 409
     assert set(response.json()) == {"error", "requestID"}
     assert response.json()["error"] == "conflict"
     assert "exchange" not in response.text
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "prepareExchange",
+        "claimExchange",
+        "prepareAudioUpload",
+        "updatePushToken",
+        "removePushToken",
+        "deleteProfile",
+        "report",
+        "block",
+    ],
+)
+def test_unknown_non_bootstrap_operation_never_creates_installation(operation: str) -> None:
+    store = MemoryStore()
+    payload: dict[str, object] = {}
+    if operation == "prepareExchange":
+        payload["card"] = card("card-owner", "Owner").model_dump(mode="json")
+    elif operation == "claimExchange":
+        payload["exchangeToken"] = "unknown-exchange-token"
+    elif operation == "prepareAudioUpload":
+        payload.update(audioSizeBytes=1024, audioDurationMS=1000)
+    elif operation == "updatePushToken":
+        payload["apnsToken"] = "apns-token"
+    elif operation == "report":
+        payload.update(subjectInstallationID=OWNER[0], moderationCategory="spam")
+    elif operation == "block":
+        payload["subjectInstallationID"] = OWNER[0]
+    with make_client(store) as client:
+        response = post_sync(
+            client,
+            PEER,
+            operation,
+            operation_id="unknown-operation-01",
+            **payload,
+        )
+
+    assert response.status_code == 401
+    assert response.json()["error"] == "unauthorized"
+    assert store.snapshot(PEER[0]) is None
+
+
+def test_storage_integrity_failure_returns_sanitized_503() -> None:
+    class CorruptStore(MemoryStore):
+        def authenticate_or_create(self, installation_id: str, bearer: str) -> None:
+            del installation_id, bearer
+            raise StorageIntegrityError
+
+    with make_client(CorruptStore()) as client:
+        response = post_sync(client, OWNER, "refresh", operation_id="corrupt-refresh-1")
+
+    assert response.status_code == 503
+    assert set(response.json()) == {"error", "requestID"}
+    assert response.json()["error"] == "temporarily_unavailable"
+
+
+def test_concurrent_duplicate_delete_replays_tombstone_after_conflict() -> None:
+    class ConcurrentDeleteStore(MemoryStore):
+        def delete_profile(self, installation_id: str, operation_id: str) -> list[str]:
+            super().delete_profile(installation_id, operation_id)
+            raise StorageConflict("installation unavailable")
+
+    store = ConcurrentDeleteStore()
+    cleaned: list[list[str]] = []
+    store.object_keys[OWNER[0]] = ["private/object-key-sentinel"]
+    with make_client(store, cleaned=cleaned) as client:
+        bootstrap = post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-4")
+        response = post_sync(client, OWNER, "deleteProfile", operation_id="delete-op-race-1")
+
+    assert bootstrap.status_code == 200
+    assert response.status_code == 200
+    assert cleaned == [["private/object-key-sentinel"]]
+    assert store.snapshot(OWNER[0]) is None
 
 
 @pytest.mark.parametrize(

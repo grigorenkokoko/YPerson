@@ -7,17 +7,27 @@ from hashlib import sha256
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.observability import RequestObservabilityMiddleware
 from app.public_pages import PRIVACY_HTML, SUPPORT_HTML
 from app.schemas import PublicConfigResponse, SyncRequest
 from app.settings import Settings
-from app.storage import InvalidCredential, StorageConflict
+from app.storage import InvalidCredential, StorageConflict, StorageIntegrityError
 from app.sync_service import SyncService, SyncUnavailable
 
 MAX_SYNC_BODY_BYTES = 64 * 1024
-_BEARER_TOKEN = re.compile(r"[A-Za-z0-9\-._~+/]+=*\Z")
+_TOKEN68 = r"[A-Za-z0-9\-._~+/]+=*"
+_BEARER_TOKEN = re.compile(rf"{_TOKEN68}\Z")
+_MIME_TOKEN = r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+"
+_MIME_QUOTED = r'"(?:[\t\x20-\x21\x23-\x5B\x5D-\x7E]|\\[\x20-\x7E])*"'
+_JSON_CONTENT_TYPE = re.compile(
+    rf"\Aapplication/json(?:[ \t]*;[ \t]*{_MIME_TOKEN}[ \t]*=[ \t]*"
+    rf"(?:{_MIME_TOKEN}|{_MIME_QUOTED}))*[ \t]*\Z",
+    re.IGNORECASE,
+)
+_BEARER_AUTHORIZATION = re.compile(rf"\A(?i:Bearer) +(?P<token>{_TOKEN68})\Z")
 
 
 def create_app(
@@ -82,7 +92,7 @@ def create_app(
 
     @application.post("/sync")
     async def sync(request: Request) -> JSONResponse:
-        if _media_type(request.headers.get("content-type")) != "application/json":
+        if not _is_json_content_type(request.headers.get("content-type")):
             return _error_response(request, 415, "unsupported_media_type")
 
         body = await _bounded_body(request)
@@ -102,12 +112,12 @@ def create_app(
             return _error_response(request, 503, "temporarily_unavailable")
 
         try:
-            response = sync_service.handle(sync_request, bearer)
+            response = await run_in_threadpool(sync_service.handle, sync_request, bearer)
         except InvalidCredential:
             return _error_response(request, 401, "unauthorized")
         except StorageConflict:
             return _error_response(request, 409, "conflict")
-        except SyncUnavailable:
+        except (StorageIntegrityError, SyncUnavailable):
             return _error_response(request, 503, "temporarily_unavailable")
         except Exception:  # noqa: BLE001 - cloud adapter failures must stay sanitized.
             return _error_response(request, 503, "temporarily_unavailable")
@@ -152,10 +162,8 @@ def _error_response(
     return JSONResponse(status_code=status_code, content=content, headers=headers)
 
 
-def _media_type(content_type: str | None) -> str:
-    if content_type is None:
-        return ""
-    return content_type.partition(";")[0].strip().lower()
+def _is_json_content_type(content_type: str | None) -> bool:
+    return content_type is not None and _JSON_CONTENT_TYPE.fullmatch(content_type) is not None
 
 
 async def _bounded_body(request: Request) -> bytes | None:
@@ -169,19 +177,20 @@ async def _bounded_body(request: Request) -> bytes | None:
 
     body = bytearray()
     async for chunk in request.stream():
-        body.extend(chunk)
-        if len(body) > MAX_SYNC_BODY_BYTES:
+        if len(chunk) > MAX_SYNC_BODY_BYTES - len(body):
             return None
+        body.extend(chunk)
     return bytes(body)
 
 
 def _bearer(authorization: str | None) -> str | None:
     if authorization is None:
         return None
-    scheme, separator, token = authorization.partition(" ")
-    if scheme != "Bearer" or separator != " " or not 32 <= len(token) <= 512:
+    match = _BEARER_AUTHORIZATION.fullmatch(authorization)
+    if match is None:
         return None
-    if _BEARER_TOKEN.fullmatch(token) is None:
+    token = match.group("token")
+    if not 32 <= len(token) <= 512 or _BEARER_TOKEN.fullmatch(token) is None:
         return None
     return token
 

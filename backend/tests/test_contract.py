@@ -1,12 +1,18 @@
 """FastAPI public boundary tests without persistence dependencies."""
 
+import asyncio
 import json
+import time
 from collections.abc import Generator
 
+import anyio
+import httpx
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
-from app.main import MAX_SYNC_BODY_BYTES, create_app
+from app.main import MAX_SYNC_BODY_BYTES, _bounded_body, create_app
+from app.schemas import SyncResponse
 from app.settings import Settings
 
 EXPECTED_CONFIG = {
@@ -125,6 +131,33 @@ VALID_SYNC_BODY = {
             401,
             "unauthorized",
         ),
+        (
+            json.dumps(VALID_SYNC_BODY).encode(),
+            {
+                "Content-Type": "application/json; charset",
+                "Authorization": "Bearer valid-bearer-value-0000000000000000",
+            },
+            415,
+            "unsupported_media_type",
+        ),
+        (
+            json.dumps(VALID_SYNC_BODY).encode(),
+            {
+                "Content-Type": "application/json; charset=",
+                "Authorization": "Bearer valid-bearer-value-0000000000000000",
+            },
+            415,
+            "unsupported_media_type",
+        ),
+        (
+            json.dumps(VALID_SYNC_BODY).encode(),
+            {
+                "Content-Type": 'application/json; charset="unterminated',
+                "Authorization": "Bearer valid-bearer-value-0000000000000000",
+            },
+            415,
+            "unsupported_media_type",
+        ),
     ],
 )
 def test_sync_rejects_unsafe_transport_before_storage(
@@ -153,6 +186,85 @@ def test_sync_fails_closed_after_valid_authentication_and_validation(
     assert response.status_code == 503
     assert response.json()["error"] == "temporarily_unavailable"
     assert response.json()["requestID"] == response.headers["x-request-id"]
+
+
+@pytest.mark.parametrize(
+    ("content_type", "authorization"),
+    [
+        ("application/json; charset=utf-8", "Bearer valid-bearer-value-0000000000000000"),
+        (
+            'Application/JSON; charset="utf-8"; profile=mobile',
+            "bearer   valid-bearer-value-0000000000000000",
+        ),
+    ],
+)
+def test_sync_accepts_valid_mime_parameters_and_rfc_bearer_spacing(
+    client: TestClient,
+    content_type: str,
+    authorization: str,
+) -> None:
+    response = client.post(
+        "/sync",
+        content=json.dumps(VALID_SYNC_BODY).encode(),
+        headers={"Content-Type": content_type, "Authorization": authorization},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"] == "temporarily_unavailable"
+
+
+def test_bounded_body_accepts_exact_limit_and_rejects_oversized_single_chunk() -> None:
+    async def read_body(chunk: bytes) -> bytes | None:
+        messages = [
+            {"type": "http.request", "body": chunk, "more_body": False},
+        ]
+
+        async def receive():
+            return messages.pop(0)
+
+        request = Request({"type": "http", "headers": []}, receive)
+        return await _bounded_body(request)
+
+    exact = b"x" * MAX_SYNC_BODY_BYTES
+    assert anyio.run(read_body, exact) == exact
+    assert anyio.run(read_body, exact + b"x") is None
+
+
+def test_sync_service_work_runs_off_the_async_request_loop() -> None:
+    class SlowService:
+        def handle(self, request, bearer):
+            del request, bearer
+            time.sleep(0.2)
+            return SyncResponse(
+                accepted=True,
+                serverVersion="2",
+                updateCount=0,
+                message="refreshed",
+            )
+
+    async def scenario() -> tuple[int, int, float]:
+        app = create_app(Settings(_env_file=None), sync_service=SlowService())  # type: ignore[arg-type]
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="https://test.invalid"
+        ) as client:
+            started = time.perf_counter()
+            sync_task = asyncio.create_task(
+                client.post(
+                    "/sync",
+                    json=VALID_SYNC_BODY,
+                    headers={"Authorization": "Bearer valid-bearer-value-0000000000000000"},
+                )
+            )
+            await anyio.sleep(0.02)
+            health = await client.get("/health")
+            elapsed = time.perf_counter() - started
+            sync = await sync_task
+        return health.status_code, sync.status_code, elapsed
+
+    health_status, sync_status, elapsed = anyio.run(scenario)
+    assert health_status == sync_status == 200
+    assert elapsed < 0.12
 
 
 def test_known_route_wrong_method_returns_405_and_allow_header(client: TestClient) -> None:
