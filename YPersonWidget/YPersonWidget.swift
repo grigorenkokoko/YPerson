@@ -1,77 +1,107 @@
 import SwiftUI
 import WidgetKit
 
-private struct Entry: TimelineEntry {
+private struct ScannerEntry: TimelineEntry {
     let date: Date
-    let updateCount: Int
-    let isOffline: Bool
 }
 
 private struct Provider: TimelineProvider {
-    func placeholder(in context: Context) -> Entry { Entry(date: Date(), updateCount: 3, isOffline: false) }
-    func getSnapshot(in context: Context, completion: @escaping (Entry) -> Void) { completion(readEntry()) }
-    func getTimeline(in context: Context, completion: @escaping (Timeline<Entry>) -> Void) {
-        completion(Timeline(entries: [readEntry()], policy: .never))
+    func placeholder(in context: Context) -> ScannerEntry {
+        ScannerEntry(date: Date())
     }
 
-    private func readEntry() -> Entry {
-        guard let group = Bundle.main.object(
-            forInfoDictionaryKey: "APP_GROUP_IDENTIFIER"
-        ) as? String,
-              let defaults = UserDefaults(suiteName: group),
-              let snapshot = WidgetSnapshotStorage.read(from: defaults) else {
-            return Entry(date: Date(), updateCount: 0, isOffline: false)
-        }
-        return Entry(
-            date: snapshot.updatedAt,
-            updateCount: snapshot.updateCount,
-            isOffline: snapshot.isOffline
-        )
+    func getSnapshot(
+        in context: Context,
+        completion: @escaping (ScannerEntry) -> Void
+    ) {
+        completion(ScannerEntry(date: Date()))
+    }
+
+    func getTimeline(
+        in context: Context,
+        completion: @escaping (Timeline<ScannerEntry>) -> Void
+    ) {
+        completion(Timeline(
+            entries: [ScannerEntry(date: Date())],
+            policy: .never
+        ))
     }
 }
 
-private struct WidgetView: View {
+private struct ScannerWidgetView: View {
     @Environment(\.widgetFamily) private var family
-    let entry: Entry
+    let entry: ScannerEntry
 
     var body: some View {
         Group {
-            if #available(iOSApplicationExtension 16.0, *), family == .accessoryRectangular {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("YPerson · Моя карточка").font(.headline)
-                    Text(updateText).font(.caption)
+            if #available(iOSApplicationExtension 16.0, *),
+               family == .accessoryCircular {
+                ZStack {
+                    AccessoryWidgetBackground()
+                    Image(systemName: "qrcode.viewfinder")
+                        .font(.title2.bold())
+                }
+            } else if #available(iOSApplicationExtension 16.0, *),
+                      family == .accessoryRectangular {
+                HStack(spacing: 6) {
+                    Image(systemName: "qrcode.viewfinder")
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Сканировать QR")
+                            .font(.headline)
+                        Text("YPerson")
+                            .font(.caption)
+                    }
                 }
             } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    Image(systemName: "person.text.rectangle.fill").font(.title).foregroundColor(Color(red: 0.31, green: 0.37, blue: 0.91))
-                    Text("YPerson").font(.headline)
-                    Text(updateText).font(.caption).foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    Image(systemName: "qrcode.viewfinder")
+                        .font(.system(size: 42, weight: .semibold))
                     Spacer(minLength: 0)
-                    Text("Моя карточка").font(.caption2).bold()
-                }.padding()
+                    Text("Сканировать QR")
+                        .font(.headline)
+                    Text("Добавить визитку")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.82))
+                }
+                .foregroundColor(.white)
+                .padding(16)
+                .scannerWidgetBackground()
             }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("YPerson, моя карточка, \(updateText)")
+        .widgetURL(ScannerWidgetRoute.url)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Сканировать QR-код визитки в YPerson")
     }
+}
 
-    private var updateText: String {
-        if entry.isOffline { return entry.updateCount == 0 ? "Без сети · обновлений нет" : "Без сети · \(entry.updateCount) обновления" }
-        return entry.updateCount == 0 ? "Обновлений нет" : "\(entry.updateCount) обновления"
+private extension View {
+    @ViewBuilder
+    func scannerWidgetBackground() -> some View {
+        let indigo = Color(red: 0.31, green: 0.37, blue: 0.91)
+        if #available(iOSApplicationExtension 17.0, *) {
+            containerBackground(indigo, for: .widget)
+        } else {
+            background(indigo)
+        }
     }
 }
 
 @main
 struct YPersonWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "com.yperson.app.widget", provider: Provider()) { entry in WidgetView(entry: entry) }
-            .configurationDisplayName("Моя карточка")
-            .description("Безопасный быстрый вход в YPerson и число обновлений.")
-            .supportedFamilies(supportedFamilies)
+        StaticConfiguration(kind: "com.yperson.app.widget", provider: Provider()) {
+            entry in
+            ScannerWidgetView(entry: entry)
+        }
+        .configurationDisplayName("Сканер визиток")
+        .description("Открывает YPerson сразу для сканирования QR-кода визитки.")
+        .supportedFamilies(supportedFamilies)
     }
 
     private var supportedFamilies: [WidgetFamily] {
-        if #available(iOSApplicationExtension 16.0, *) { return [.systemSmall, .accessoryRectangular] }
+        if #available(iOSApplicationExtension 16.0, *) {
+            return [.systemSmall, .accessoryCircular, .accessoryRectangular]
+        }
         return [.systemSmall]
     }
 }
