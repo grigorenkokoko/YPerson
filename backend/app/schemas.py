@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 PROHIBITED_DATA_FIELDS = frozenset(
     {
@@ -106,9 +106,8 @@ class SyncRequest(BaseModel):
             SyncOperation.report: frozenset({"subjectInstallationID", "moderationCategory"}),
             SyncOperation.block: frozenset({"subjectInstallationID"}),
         }
-        supplied_fields = {
-            field_name
-            for field_name in (
+        operation_field_names = frozenset(
+            {
                 "cursor",
                 "apnsToken",
                 "card",
@@ -119,9 +118,9 @@ class SyncRequest(BaseModel):
                 "audioDurationMS",
                 "moderationCategory",
                 "subjectInstallationID",
-            )
-            if getattr(self, field_name) is not None
-        }
+            }
+        )
+        supplied_fields = operation_field_names.intersection(self.model_fields_set)
         missing_fields = [
             field_name
             for field_name in required_by_operation[self.operation]
@@ -149,6 +148,11 @@ class AudioAsset(BaseModel):
     downloadURL: AnyHttpUrl
     expiresAt: datetime
 
+    @field_validator("downloadURL")
+    @classmethod
+    def require_https_download_url(cls, value: AnyHttpUrl) -> AnyHttpUrl:
+        return _require_https_url(value)
+
 
 class AudioUpload(BaseModel):
     """A short-lived upload authorization for a pending audio greeting."""
@@ -158,6 +162,11 @@ class AudioUpload(BaseModel):
     assetID: str = Field(min_length=1, max_length=128)
     uploadURL: AnyHttpUrl
     expiresAt: datetime
+
+    @field_validator("uploadURL")
+    @classmethod
+    def require_https_upload_url(cls, value: AnyHttpUrl) -> AnyHttpUrl:
+        return _require_https_url(value)
 
 
 class SyncedPerson(BaseModel):
@@ -233,3 +242,9 @@ def _reject_prohibited_data_fields(value: Any) -> None:
     elif isinstance(value, list):
         for nested_value in value:
             _reject_prohibited_data_fields(nested_value)
+
+
+def _require_https_url(value: AnyHttpUrl) -> AnyHttpUrl:
+    if value.scheme != "https":
+        raise ValueError("signed audio URLs require HTTPS")
+    return value

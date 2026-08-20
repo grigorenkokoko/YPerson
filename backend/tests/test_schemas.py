@@ -2,6 +2,8 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas import (
+    AudioAsset,
+    AudioUpload,
     PersonCard,
     PublicConfigResponse,
     SyncOperation,
@@ -182,6 +184,52 @@ def test_prepare_exchange_requires_card_and_accepts_optional_method() -> None:
     )
 
     assert request.exchangeMethod == "qr"
+
+
+def test_prepare_exchange_accepts_card_without_exchange_method() -> None:
+    request = SyncRequest.model_validate(
+        valid_request()
+        | {
+            "operation": "prepareExchange",
+            "card": {
+                "id": "card-peer",
+                "name": "Peer",
+                "role": "Designer",
+                "company": "Studio",
+                "phone": "",
+                "email": "",
+                "tagline": "Hello",
+                "hasAudioGreeting": False,
+                "isBlocked": False,
+            },
+        }
+    )
+
+    assert request.exchangeMethod is None
+
+
+def test_sync_request_rejects_irrelevant_field_explicitly_set_to_null() -> None:
+    with pytest.raises(ValidationError, match="refresh does not accept card"):
+        SyncRequest.model_validate(valid_request() | {"card": None})
+
+
+@pytest.mark.parametrize(
+    ("model", "url_field"),
+    [
+        (AudioAsset, "downloadURL"),
+        (AudioUpload, "uploadURL"),
+    ],
+)
+def test_audio_signed_urls_require_https(model: type, url_field: str) -> None:
+    payload = {
+        "assetID": "asset-1",
+        url_field: "https://storage.yandexcloud.net/private/object?signature=test",
+        "expiresAt": "2026-08-20T12:05:00Z",
+    }
+
+    assert str(model.model_validate(payload).__getattribute__(url_field)).startswith("https://")
+    with pytest.raises(ValidationError, match="HTTPS"):
+        model.model_validate(payload | {url_field: "http://storage.example/private/object"})
 
 
 def test_sync_v2_models_preserve_v1_fields_and_add_people_audio() -> None:
