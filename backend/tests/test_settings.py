@@ -33,6 +33,22 @@ def test_environment_aliases_override_configuration() -> None:
     assert settings.analytics_kill_switch is True
 
 
-def test_production_is_fail_closed_without_approved_authentication() -> None:
-    with pytest.raises(ValidationError, match="approved authentication"):
-        Settings(YPERSON_ENV="production", _env_file=None)
+def test_production_requires_enabled_durable_storage() -> None:
+    with pytest.raises(ValidationError, match="durable storage"):
+        Settings(YPERSON_ENV="production", YPERSON_SYNC_ENABLED="true", _env_file=None)
+
+
+def test_production_accepts_enabled_durable_storage() -> None:
+    settings = Settings(
+        YPERSON_ENV="production",
+        YPERSON_SYNC_ENABLED="true",
+        YDB_ENDPOINT="grpcs://ydb.example:2135",
+        YDB_DATABASE="/ru-central1/b1g/example",
+        YPERSON_OBJECT_BUCKET="yperson-private-audio",
+        YPERSON_S3_ACCESS_KEY_ID="access-key",
+        YPERSON_S3_SECRET_ACCESS_KEY="secret-key",
+        _env_file=None,
+    )
+
+    assert settings.sync_enabled is True
+    assert settings.ydb_database == "/ru-central1/b1g/example"

@@ -1,6 +1,7 @@
-"""Strict request and response schemas for the existing iOS wire contract."""
+"""Strict request and response schemas for the versioned iOS wire contract."""
 
 from collections.abc import Mapping
+from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
@@ -22,11 +23,13 @@ ModerationCategory = Literal["spam", "abusive_content", "impersonation"]
 
 
 class SyncOperation(str, Enum):
-    """Operations currently emitted by the iOS client."""
+    """Operations available in the version 2 sync contract."""
 
     refresh = "refresh"
     publish_card = "publishCard"
+    prepare_exchange = "prepareExchange"
     claim_exchange = "claimExchange"
+    prepare_audio_upload = "prepareAudioUpload"
     update_push_token = "updatePushToken"
     remove_push_token = "removePushToken"
     delete_profile = "deleteProfile"
@@ -52,17 +55,24 @@ class PersonCard(BaseModel):
 
 
 class SyncRequest(BaseModel):
-    """A sync request constrained to the existing public wire contract."""
+    """A single authenticated, versioned synchronization operation."""
 
     model_config = ConfigDict(extra="forbid")
 
-    installationID: str = Field(min_length=3, max_length=128)
-    bearer: str | None = None
+    contractVersion: Literal[2] = 2
+    operationID: str = Field(min_length=8, max_length=128)
+    installationID: str = Field(min_length=16, max_length=128)
     apnsToken: str | None = Field(default=None, max_length=256)
     operation: SyncOperation
+    cursor: str | None = Field(default=None, max_length=64)
     card: PersonCard | None = None
     exchangeToken: str | None = Field(default=None, max_length=256)
+    exchangeMethod: Literal["qr", "bluetooth", "photo", "manual"] | None = None
+    audioAssetID: str | None = Field(default=None, max_length=128)
+    audioSizeBytes: int | None = Field(default=None, ge=1, le=1_048_576)
+    audioDurationMS: int | None = Field(default=None, ge=1, le=10_000)
     moderationCategory: ModerationCategory | None = None
+    subjectInstallationID: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="before")
     @classmethod
@@ -70,9 +80,98 @@ class SyncRequest(BaseModel):
         _reject_prohibited_data_fields(value)
         return value
 
+    @model_validator(mode="after")
+    def validate_operation_fields(self) -> "SyncRequest":
+        required_by_operation: dict[SyncOperation, tuple[str, ...]] = {
+            SyncOperation.refresh: (),
+            SyncOperation.publish_card: ("card",),
+            SyncOperation.prepare_exchange: ("card",),
+            SyncOperation.claim_exchange: ("exchangeToken",),
+            SyncOperation.prepare_audio_upload: ("audioSizeBytes", "audioDurationMS"),
+            SyncOperation.update_push_token: ("apnsToken",),
+            SyncOperation.remove_push_token: (),
+            SyncOperation.delete_profile: (),
+            SyncOperation.report: ("subjectInstallationID", "moderationCategory"),
+            SyncOperation.block: ("subjectInstallationID",),
+        }
+        allowed_by_operation: dict[SyncOperation, frozenset[str]] = {
+            SyncOperation.refresh: frozenset({"cursor"}),
+            SyncOperation.publish_card: frozenset({"card", "audioAssetID"}),
+            SyncOperation.prepare_exchange: frozenset({"card", "exchangeMethod"}),
+            SyncOperation.claim_exchange: frozenset({"exchangeToken"}),
+            SyncOperation.prepare_audio_upload: frozenset({"audioSizeBytes", "audioDurationMS"}),
+            SyncOperation.update_push_token: frozenset({"apnsToken"}),
+            SyncOperation.remove_push_token: frozenset(),
+            SyncOperation.delete_profile: frozenset(),
+            SyncOperation.report: frozenset({"subjectInstallationID", "moderationCategory"}),
+            SyncOperation.block: frozenset({"subjectInstallationID"}),
+        }
+        supplied_fields = {
+            field_name
+            for field_name in (
+                "cursor",
+                "apnsToken",
+                "card",
+                "exchangeToken",
+                "exchangeMethod",
+                "audioAssetID",
+                "audioSizeBytes",
+                "audioDurationMS",
+                "moderationCategory",
+                "subjectInstallationID",
+            )
+            if getattr(self, field_name) is not None
+        }
+        missing_fields = [
+            field_name
+            for field_name in required_by_operation[self.operation]
+            if getattr(self, field_name) is None
+        ]
+        if missing_fields:
+            raise ValueError(
+                f"{self.operation.value} requires {', '.join(sorted(missing_fields))}"
+            )
+
+        prohibited_fields = supplied_fields - allowed_by_operation[self.operation]
+        if prohibited_fields:
+            raise ValueError(
+                f"{self.operation.value} does not accept {', '.join(sorted(prohibited_fields))}"
+            )
+        return self
+
+
+class AudioAsset(BaseModel):
+    """A short-lived download authorization for a ready audio greeting."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    assetID: str = Field(min_length=1, max_length=128)
+    downloadURL: AnyHttpUrl
+    expiresAt: datetime
+
+
+class AudioUpload(BaseModel):
+    """A short-lived upload authorization for a pending audio greeting."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    assetID: str = Field(min_length=1, max_length=128)
+    uploadURL: AnyHttpUrl
+    expiresAt: datetime
+
+
+class SyncedPerson(BaseModel):
+    """A confirmed peer card and, when present, its authorized audio asset."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    card: PersonCard
+    version: int = Field(ge=1)
+    audio: AudioAsset | None = None
+
 
 class SyncResponse(BaseModel):
-    """The response shape consumed by the iOS sync client."""
+    """The response shape consumed by the version 2 iOS sync client."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -80,6 +179,13 @@ class SyncResponse(BaseModel):
     serverVersion: str
     updateCount: int
     message: str
+    nextCursor: str | None = Field(default=None, max_length=64)
+    ownCardVersion: int | None = Field(default=None, ge=1)
+    people: list[SyncedPerson] = Field(default_factory=list)
+    revokedCardIDs: list[str] = Field(default_factory=list)
+    exchangeToken: str | None = Field(default=None, max_length=256)
+    audioUpload: AudioUpload | None = None
+    notificationConfiguration: dict[str, bool] | None = None
 
 
 class FeatureAvailability(BaseModel):
