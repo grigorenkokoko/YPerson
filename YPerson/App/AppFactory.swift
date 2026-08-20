@@ -68,7 +68,23 @@ final class YPersonExperienceBuilder {
         let person = { [permissions, imageSaver, syncCoordinator, analytics, snapshotStore, mediaTransfer, audio] card in
             PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, syncCoordinator: syncCoordinator, mediaTransfer: mediaTransfer, audio: audio, analytics: analytics, snapshotStore: snapshotStore)
         }
-        let people = PeopleViewController(people: savedPeople, permissions: permissions, analytics: analytics, makePerson: person)
+        let people = PeopleViewController(
+            people: savedPeople,
+            permissions: permissions,
+            analytics: analytics,
+            makePerson: person,
+            onContactsImported: { [snapshotStore] cards in
+                guard let snapshotStore else {
+                    throw NSError(
+                        domain: "YPerson.ContactsImport",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Локальное хранилище недоступно"]
+                    )
+                }
+                try snapshotStore.replacePeople(cards)
+                return snapshotStore.readPeople()
+            }
+        )
         let exchange = ExchangeViewController(
             nearby: nearby,
             photoScanner: photoScanner,

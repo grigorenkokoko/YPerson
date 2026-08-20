@@ -108,19 +108,19 @@ permissions:
   contacts:
     required: true
     usage_key: NSContactsUsageDescription
-    feature: whole-address-book duplicate detection and user-confirmed updates for saved YPerson cards
-    trigger: "Люди → Синхронизация с Контактами → Проверить и включить обновления"
+    feature: picker-scoped local import plus whole-address-book duplicate detection and user-confirmed updates for saved YPerson cards
+    trigger: "Люди → Добавить из Контактов (picker only) либо Люди → Синхронизация с Контактами → Проверить и включить обновления"
     screen_location: "S3 Люди"
     purpose_copy: "Контакты нужны, чтобы находить дубликаты, добавлять визитки YPerson в адресную книгу и обновлять их при изменениях владельца."
-    authorized_behavior: normalize locally, show a change plan, and apply only explicitly confirmed add/update actions
+    authorized_behavior: import only picker-selected contacts as local-only YPerson cards; for full-access sync normalize locally, show a change plan, and apply only explicitly confirmed add/update actions
     limited_behavior: on iOS 18+, inspect only selected contacts and offer the system access manager; iOS 15-17 have no limited state; internal YPerson storage remains available on every version
-    denial_behavior: cards remain usable in YPerson and a single card can be exported through the system contact UI
-    reviewer_path: use the supplied duplicate test contacts, run reconciliation, inspect the proposed diff, and approve one update
+    denial_behavior: picker import remains available without full address-book authorization; cards remain usable in YPerson and a single card can be exported through the system contact UI
+    reviewer_path: with an empty People list import one or more contacts through the system picker; then use the supplied duplicate test contacts, run reconciliation, inspect the proposed diff, and approve one update
     data_types:
       - system_contacts_local_only
       - published_yperson_contact_info
-    storage: system address book and match keys remain on device
-    transmission: the system address book is never transmitted; only explicitly published/received YPerson card fields sync
+    storage: system address book, picker-selected local cards, and match keys remain on device
+    transmission: the system address book and picker-imported cards are never transmitted; only explicitly published/received YPerson card fields sync
     app_store_privacy_implication: system Contacts are not collected; published name/email/phone are Contact Info linked to identity for App Functionality
 
   face_id:
@@ -142,13 +142,13 @@ permissions:
   location_when_in_use:
     required: true
     usage_key: NSLocationWhenInUseUsageDescription
-    feature: save a local meeting-place label beside a received person
-    trigger: "Карточка человека → Контекст знакомства → Добавить текущее место"
-    screen_location: "S4 Карточка человека"
+    feature: prepare a local meeting-place label before exchange or add it later beside a received person
+    trigger: "Обмен → Сохранить место знакомства либо Карточка человека → Контекст знакомства → Добавить текущее место"
+    screen_location: "S2 Обмен и S4 Карточка человека"
     purpose_copy: "Геопозиция нужна, чтобы по вашему действию сохранить место знакомства рядом с добавленным человеком."
-    authorized_behavior: convert the current location to a local human-readable label; approximate authorization stores only area/city
+    authorized_behavior: convert the current location to a local human-readable label; before exchange hold the label in memory until one received card is saved; approximate authorization stores only area/city
     denial_behavior: manual place label and skip remain available; no other function is blocked
-    reviewer_path: add a location to the test card and verify approximate and manual alternatives
+    reviewer_path: enable the meeting-place switch before exchange, complete one test exchange, and verify the local label; cancel another exchange and verify that no label is persisted; also verify approximate and manual alternatives
     data_types:
       - precise_location_local_only
       - meeting_place_label_local_only

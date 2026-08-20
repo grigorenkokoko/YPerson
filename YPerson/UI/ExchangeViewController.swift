@@ -13,8 +13,11 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private let snapshotStore: AppGroupSnapshotStore?
     private let ownCard: () -> PersonCard?
     private let onPersonSaved: (PersonCard) -> Void
+    private let meetingPlaceSwitch = UISwitch()
+    private let meetingPlaceStatus = YPStyle.label("Место не выбрано · координаты не передаются другому человеку или на сервер.", style: .footnote)
     private var includePrivate = false
     private var scannerLaunchGate = QRScannerLaunchGate()
+    private var pendingMeetingPlace: String?
     private var nearbySearchAlert: UIAlertController?
     private var prepareTask: Task<Void, Never>?
     private var preparedToken: String?
@@ -37,6 +40,14 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     override func viewDidLoad() {
         super.viewDidLoad()
         contentStack.addArrangedSubview(YPStyle.label("Передайте карточку конкретному человеку. Обмен завершается только после подтверждения.", style: .body))
+        meetingPlaceSwitch.accessibilityLabel = "Сохранить место знакомства"
+        meetingPlaceSwitch.accessibilityHint = "Место сохранится только на этом iPhone после успешного обмена"
+        meetingPlaceSwitch.addTarget(self, action: #selector(toggleMeetingPlace(_:)), for: .valueChanged)
+        let meetingPlaceRow = UIStackView(arrangedSubviews: [YPStyle.label("Сохранить место знакомства", style: .headline), meetingPlaceSwitch])
+        meetingPlaceRow.alignment = .center
+        meetingPlaceRow.distribution = .equalSpacing
+        contentStack.addArrangedSubview(meetingPlaceRow)
+        contentStack.addArrangedSubview(meetingPlaceStatus)
         addButton("Показать мой QR", "qrcode", #selector(showOwnQR), primary: true)
         addButton("Сканировать QR", "camera.viewfinder", #selector(scanQR))
         addButton("Рядом по Bluetooth", "wave.3.right", #selector(startNearby))
@@ -56,8 +67,75 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         nearbySearchAlert = nil
     }
 
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if tabBarController?.selectedViewController !== navigationController {
+            clearPendingMeetingPlace()
+        }
+    }
+
     private func addButton(_ title: String, _ symbol: String, _ action: Selector, primary: Bool = false) {
         let button = YPStyle.button(title, symbol: symbol, primary: primary); button.addTarget(self, action: action, for: .touchUpInside); contentStack.addArrangedSubview(button)
+    }
+
+    @objc private func toggleMeetingPlace(_ sender: UISwitch) {
+        guard sender.isOn else { clearPendingMeetingPlace(); return }
+        let alert = UIAlertController(
+            title: "Место знакомства",
+            message: "Геопозиция нужна, чтобы по вашему действию сохранить место знакомства рядом с добавленным человеком.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Продолжить", style: .default) { [weak self] _ in
+            self?.requestMeetingPlace()
+        })
+        alert.addAction(UIAlertAction(title: "Не сейчас", style: .cancel) { [weak self] _ in
+            self?.clearPendingMeetingPlace()
+        })
+        present(alert, animated: true)
+    }
+
+    private func requestMeetingPlace() {
+        permissions.requestCurrentPlace { [weak self] result in
+            switch result {
+            case .success(let place):
+                self?.setPendingMeetingPlace(place)
+            case .failure:
+                self?.requestManualMeetingPlace()
+            }
+        }
+    }
+
+    private func requestManualMeetingPlace() {
+        let alert = UIAlertController(
+            title: "Введите место вручную",
+            message: "Например, название конференции или кафе. Подпись останется только на этом iPhone.",
+            preferredStyle: .alert
+        )
+        alert.addTextField { $0.placeholder = "Место знакомства" }
+        alert.addAction(UIAlertAction(title: "Сохранить", style: .default) { [weak self, weak alert] _ in
+            let place = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if place.isEmpty { self?.clearPendingMeetingPlace() }
+            else { self?.setPendingMeetingPlace(place) }
+        })
+        alert.addAction(UIAlertAction(title: "Пропустить", style: .cancel) { [weak self] _ in
+            self?.clearPendingMeetingPlace()
+        })
+        present(alert, animated: true)
+    }
+
+    private func setPendingMeetingPlace(_ place: String) {
+        let trimmed = place.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { clearPendingMeetingPlace(); return }
+        pendingMeetingPlace = trimmed
+        meetingPlaceSwitch.setOn(true, animated: true)
+        meetingPlaceStatus.text = "Место: \(trimmed) · сохранится только на этом iPhone."
+        UIAccessibility.post(notification: .announcement, argument: "Место знакомства выбрано: \(trimmed)")
+    }
+
+    private func clearPendingMeetingPlace() {
+        pendingMeetingPlace = nil
+        meetingPlaceSwitch.setOn(false, animated: true)
+        meetingPlaceStatus.text = "Место не выбрано · координаты не передаются другому человеку или на сервер."
     }
 
     @objc private func showOwnQR() { tabBarController?.selectedIndex = 0 }
@@ -176,6 +254,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             self?.cancelPreparedExchange()
             self?.nearby.stop()
             self?.nearbySearchAlert = nil
+            self?.clearPendingMeetingPlace()
         })
         nearbySearchAlert = alert
         present(alert, animated: true)
@@ -217,7 +296,10 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private func confirmNearby(token: String) {
         let alert = UIAlertController(title: "Человек найден", message: "Подтвердите обмен на обоих iPhone. До подтверждения карточка и токен не отправляются на сервер.", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Подтвердить обмен", style: .default) { [weak self] _ in self?.claimNearby(token: token) })
-        alert.addAction(UIAlertAction(title: "Отмена", style: .cancel) { [weak self] _ in self?.cancelPreparedExchange() })
+        alert.addAction(UIAlertAction(title: "Отмена", style: .cancel) { [weak self] _ in
+            self?.cancelPreparedExchange()
+            self?.clearPendingMeetingPlace()
+        })
         present(alert, animated: true)
     }
 
@@ -226,13 +308,15 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             guard let self else { return }
             do {
                 let response = try await claimExchange(token: token, expiresAt: nil, localCardID: nil)
-                let saved = try persist(response: response)
+                let saved = try persist(response: response, meetingPlace: pendingMeetingPlace)
                 guard !saved.isEmpty else { throw ExchangeError.missingPeerCard }
                 preparedToken = nil
+                clearPendingMeetingPlace()
                 analytics.report(.cardReceived("bluetooth"))
                 showMessage("Человек добавлен", "Карточка сохранена в YPerson и связана с подтверждённым Bluetooth-обменом.")
             } catch {
                 cancelPreparedExchange()
+                clearPendingMeetingPlace()
                 showMessage("Обмен не подтверждён", "Не удалось связаться с сервером. Токен не сохранён; повторите обмен после восстановления сети.")
             }
         }
@@ -267,7 +351,9 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         alert.addAction(UIAlertAction(title: "Добавить человека", style: .default) { [weak self] _ in
             self?.saveImportedCard(payload, allowsCloudClaim: hasCloudClaim)
         })
-        alert.addAction(UIAlertAction(title: "Не добавлять", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Не добавлять", style: .cancel) { [weak self] _ in
+            self?.clearPendingMeetingPlace()
+        })
         present(alert, animated: true)
     }
 
@@ -277,8 +363,10 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             var localCard = payload.card.exchangeCopy
             localCard.sourceInstallationID = nil
             localCard.syncState = allowsCloudClaim ? .pending : .localOnly
+            localCard.meetingPlace = pendingMeetingPlace
             try snapshotStore.upsertPerson(localCard)
             onPersonSaved(localCard)
+            clearPendingMeetingPlace()
         } catch {
             showMessage("Не удалось добавить человека", "Карточка не записана на iPhone. Попробуйте ещё раз.")
             return
@@ -306,9 +394,12 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     }
 
     @discardableResult
-    private func persist(response: SyncResponse) throws -> [PersonCard] {
+    private func persist(response: SyncResponse, meetingPlace: String? = nil) throws -> [PersonCard] {
         guard let snapshotStore else { throw ExchangeError.localStorageUnavailable }
-        let cards = response.people.map(\.versionedCard)
+        var cards = response.people.map(\.versionedCard)
+        if let meetingPlace, let index = cards.indices.first {
+            cards[index].meetingPlace = meetingPlace
+        }
         try snapshotStore.replacePeople(cards)
         for id in response.revokedCardIDs { try snapshotStore.removePerson(id: id) }
         snapshotStore.syncCursor = response.nextCursor ?? snapshotStore.syncCursor
@@ -347,7 +438,10 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         picker.dismiss(animated: true)
-        guard let provider = results.first?.itemProvider, provider.canLoadObject(ofClass: UIImage.self) else { return }
+        guard let provider = results.first?.itemProvider, provider.canLoadObject(ofClass: UIImage.self) else {
+            clearPendingMeetingPlace()
+            return
+        }
         provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
             guard let self, let image = object as? UIImage else { return }
             let payloads = photoScanner.scan(image: image)
@@ -366,7 +460,9 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             }
             self?.claimManualCode(code)
         })
-        alert.addAction(UIAlertAction(title: "Отмена", style: .cancel)); present(alert, animated: true)
+        alert.addAction(UIAlertAction(title: "Отмена", style: .cancel) { [weak self] _ in
+            self?.clearPendingMeetingPlace()
+        }); present(alert, animated: true)
     }
 
     private func claimManualCode(_ code: String) {
@@ -374,11 +470,13 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             guard let self else { return }
             do {
                 let response = try await claimExchange(token: code, expiresAt: nil, localCardID: nil)
-                let saved = try persist(response: response)
+                let saved = try persist(response: response, meetingPlace: pendingMeetingPlace)
                 guard !saved.isEmpty else { throw ExchangeError.missingPeerCard }
+                clearPendingMeetingPlace()
                 analytics.report(.cardReceived("manual"))
                 showMessage("Человек добавлен", "Карточка сохранена после подтверждения кода сервером.")
             } catch {
+                clearPendingMeetingPlace()
                 showMessage("Код не подтверждён", "Проверьте код и подключение к интернету.")
             }
         }
