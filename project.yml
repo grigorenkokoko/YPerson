@@ -124,8 +124,8 @@ targets:
       - path: YPersonWidget
       - path: YPersonShared
     configFiles:
-      Debug: Config/Debug.xcconfig
-      Release: Config/Release.xcconfig
+      Debug: Config/WidgetDebug.xcconfig
+      Release: Config/WidgetRelease.xcconfig
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "1"
