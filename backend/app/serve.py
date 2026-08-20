@@ -1,5 +1,8 @@
 """Production-style executable entry point for the YPerson ASGI service."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 import uvicorn
 import ydb
 from fastapi import FastAPI
@@ -45,6 +48,14 @@ def build_app(settings: Settings | None = None) -> FastAPI:
         app_settings.s3_secret_access_key,
     )
     media_service = MediaService(store, object_storage)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            resources.close()
+
     application = create_app(
         app_settings,
         sync_service=SyncService(
@@ -52,9 +63,9 @@ def build_app(settings: Settings | None = None) -> FastAPI:
             media_service=media_service,
             object_cleanup=media_service.delete_objects,
         ),
+        lifespan=lifespan,
     )
     application.state.runtime_resources = resources
-    application.add_event_handler("shutdown", resources.close)
     return application
 
 
