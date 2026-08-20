@@ -539,6 +539,9 @@ extensions:
     role: stateless QR-scanner shortcut that opens the existing app-owned scanner through yperson://scan
     availability: iOS 16+ accessoryCircular and accessoryRectangular WidgetKit families on the Lock Screen
     ios_15_fallback: systemSmall WidgetKit scanner shortcut on the Home Screen
+    app_group_entitlement: false
+    camera_purpose_string: false
+    camera_access: false
     data_handling: no card fields, QR payload, update count, cached snapshot, network request, camera permission, or live camera preview in the extension
     reviewer_path: tap the iOS 15 systemSmall shortcut or an iOS 16+ accessory family, verify YPerson opens Exchange and begins the existing scanner permission or recovery flow
     private_data_on_lock_screen: false
