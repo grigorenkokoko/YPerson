@@ -1,11 +1,12 @@
 """FastAPI public boundary tests without persistence dependencies."""
 
+import json
 from collections.abc import Generator
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import create_app
+from app.main import MAX_SYNC_BODY_BYTES, create_app
 from app.settings import Settings
 
 EXPECTED_CONFIG = {
@@ -68,22 +69,89 @@ def test_config_etag_is_stable_and_if_none_match_returns_empty_304(client: TestC
     assert second.headers["cache-control"] == "public, max-age=60"
 
 
+VALID_SYNC_BODY = {
+    "contractVersion": 2,
+    "operationID": "contract-op-0001",
+    "installationID": "installation-contract-0001",
+    "operation": "refresh",
+}
+
+
 @pytest.mark.parametrize(
-    ("content", "content_type"),
+    ("content", "headers", "status", "error"),
     [
-        (b"{}", "application/json"),
-        (b"not-json", "text/plain"),
-        (b"x" * 65_537, "application/octet-stream"),
+        (
+            b"{}",
+            {
+                "Content-Type": "text/plain",
+                "Authorization": "Bearer valid-bearer-value-0000000000000000",
+            },
+            415,
+            "unsupported_media_type",
+        ),
+        (
+            b"{" + b" " * MAX_SYNC_BODY_BYTES,
+            {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer valid-bearer-value-0000000000000000",
+            },
+            413,
+            "payload_too_large",
+        ),
+        (
+            b"{",
+            {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer valid-bearer-value-0000000000000000",
+            },
+            400,
+            "invalid_request",
+        ),
+        (
+            json.dumps(VALID_SYNC_BODY).encode(),
+            {"Content-Type": "application/json"},
+            401,
+            "unauthorized",
+        ),
+        (
+            json.dumps(VALID_SYNC_BODY).encode(),
+            {"Content-Type": "application/json", "Authorization": "Basic secret"},
+            401,
+            "unauthorized",
+        ),
+        (
+            json.dumps(VALID_SYNC_BODY).encode(),
+            {"Content-Type": "application/json", "Authorization": "Bearer short"},
+            401,
+            "unauthorized",
+        ),
     ],
 )
-def test_sync_is_disabled_before_parsing(
-    client: TestClient, content: bytes, content_type: str
+def test_sync_rejects_unsafe_transport_before_storage(
+    client: TestClient,
+    content: bytes,
+    headers: dict[str, str],
+    status: int,
+    error: str,
 ) -> None:
-    response = client.post("/sync", content=content, headers={"Content-Type": content_type})
+    response = client.post("/sync", content=content, headers=headers)
+
+    assert response.status_code == status
+    assert response.json()["error"] == error
+    assert response.json()["requestID"] == response.headers["x-request-id"]
+
+
+def test_sync_fails_closed_after_valid_authentication_and_validation(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/sync",
+        json=VALID_SYNC_BODY,
+        headers={"Authorization": "Bearer valid-bearer-value-0000000000000000"},
+    )
 
     assert response.status_code == 503
     assert response.json()["error"] == "temporarily_unavailable"
-    assert response.json()["message"] == "sync is not enabled"
     assert response.json()["requestID"] == response.headers["x-request-id"]
 
 

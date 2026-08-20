@@ -1,24 +1,36 @@
 """FastAPI implementation of the established YPerson iOS API contract."""
 
 import json
+import re
 from hashlib import sha256
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.observability import RequestObservabilityMiddleware
 from app.public_pages import PRIVACY_HTML, SUPPORT_HTML
-from app.schemas import PublicConfigResponse
+from app.schemas import PublicConfigResponse, SyncRequest
 from app.settings import Settings
+from app.storage import InvalidCredential, StorageConflict
+from app.sync_service import SyncService, SyncUnavailable
+
+MAX_SYNC_BODY_BYTES = 64 * 1024
+_BEARER_TOKEN = re.compile(r"[A-Za-z0-9\-._~+/]+=*\Z")
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    sync_service: SyncService | None = None,
+) -> FastAPI:
     """Create an isolated app serving the public API contract."""
 
     app_settings = settings or Settings()
     application = FastAPI()
     application.state.settings = app_settings
+    application.state.sync_service = sync_service
     application.add_middleware(RequestObservabilityMiddleware)
 
     @application.exception_handler(StarletteHTTPException)
@@ -69,13 +81,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return HTMLResponse(content=SUPPORT_HTML)
 
     @application.post("/sync")
-    def sync(request: Request) -> JSONResponse:
-        return _error_response(
-            request,
-            503,
-            "temporarily_unavailable",
-            "sync is not enabled",
-        )
+    async def sync(request: Request) -> JSONResponse:
+        if _media_type(request.headers.get("content-type")) != "application/json":
+            return _error_response(request, 415, "unsupported_media_type")
+
+        body = await _bounded_body(request)
+        if body is None:
+            return _error_response(request, 413, "payload_too_large")
+
+        bearer = _bearer(request.headers.get("authorization"))
+        if bearer is None:
+            return _error_response(request, 401, "unauthorized")
+
+        try:
+            sync_request = SyncRequest.model_validate_json(body)
+        except (ValidationError, ValueError):
+            return _error_response(request, 400, "invalid_request")
+
+        if sync_service is None:
+            return _error_response(request, 503, "temporarily_unavailable")
+
+        try:
+            response = sync_service.handle(sync_request, bearer)
+        except InvalidCredential:
+            return _error_response(request, 401, "unauthorized")
+        except StorageConflict:
+            return _error_response(request, 409, "conflict")
+        except SyncUnavailable:
+            return _error_response(request, 503, "temporarily_unavailable")
+        except Exception:  # noqa: BLE001 - cloud adapter failures must stay sanitized.
+            return _error_response(request, 503, "temporarily_unavailable")
+        return JSONResponse(status_code=200, content=response.model_dump(mode="json"))
 
     return application
 
@@ -114,6 +150,40 @@ def _error_response(
     if message is not None:
         content["message"] = message
     return JSONResponse(status_code=status_code, content=content, headers=headers)
+
+
+def _media_type(content_type: str | None) -> str:
+    if content_type is None:
+        return ""
+    return content_type.partition(";")[0].strip().lower()
+
+
+async def _bounded_body(request: Request) -> bytes | None:
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > MAX_SYNC_BODY_BYTES:
+                return None
+        except ValueError:
+            return None
+
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > MAX_SYNC_BODY_BYTES:
+            return None
+    return bytes(body)
+
+
+def _bearer(authorization: str | None) -> str | None:
+    if authorization is None:
+        return None
+    scheme, separator, token = authorization.partition(" ")
+    if scheme != "Bearer" or separator != " " or not 32 <= len(token) <= 512:
+        return None
+    if _BEARER_TOKEN.fullmatch(token) is None:
+        return None
+    return token
 
 
 app = create_app()

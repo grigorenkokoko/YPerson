@@ -91,10 +91,13 @@ def test_logs_exclude_hostile_url_and_sync_secrets(client: TestClient) -> None:
     secrets = [
         "hostile-path-sentinel",
         "hostile-query-sentinel",
-        "installation-sentinel",
-        "bearer-sentinel",
-        "apns-sentinel",
-        "card-sentinel",
+        "installation-sentinel-0001",
+        "bearer-sentinel-000000000000000000000000000",
+        "apns-sentinel-0001",
+        "exchange-sentinel-0001",
+        "https://storage.invalid/signed-url-sentinel",
+        "private/object-key-sentinel",
+        "card-name-sentinel",
     ]
     try:
         client.get("/hostile-path-sentinel?value=hostile-query-sentinel")
@@ -102,11 +105,47 @@ def test_logs_exclude_hostile_url_and_sync_secrets(client: TestClient) -> None:
         client.get("/support")
         client.post(
             "/sync",
+            headers={"Authorization": "Bearer bearer-sentinel-000000000000000000000000000"},
             json={
-                "installationID": "installation-sentinel",
-                "bearer": "bearer-sentinel",
-                "apnsToken": "apns-sentinel",
-                "card": {"tagline": "card-sentinel"},
+                "contractVersion": 2,
+                "operationID": "log-sentinel-op-0001",
+                "installationID": "installation-sentinel-0001",
+                "operation": "updatePushToken",
+                "apnsToken": "apns-sentinel-0001",
+            },
+        )
+        client.post(
+            "/sync",
+            headers={"Authorization": "Bearer bearer-sentinel-000000000000000000000000000"},
+            json={
+                "contractVersion": 2,
+                "operationID": "log-sentinel-op-0002",
+                "installationID": "installation-sentinel-0001",
+                "operation": "claimExchange",
+                "exchangeToken": "exchange-sentinel-0001",
+                "downloadURL": "https://storage.invalid/signed-url-sentinel",
+                "objectKey": "private/object-key-sentinel",
+            },
+        )
+        client.post(
+            "/sync",
+            headers={"Authorization": "Bearer bearer-sentinel-000000000000000000000000000"},
+            json={
+                "contractVersion": 2,
+                "operationID": "log-sentinel-op-0003",
+                "installationID": "installation-sentinel-0001",
+                "operation": "publishCard",
+                "card": {
+                    "id": "card-sentinel-id",
+                    "name": "card-name-sentinel",
+                    "role": "Engineer",
+                    "company": "YPerson",
+                    "phone": "+70000000000",
+                    "email": "sentinel@example.invalid",
+                    "tagline": "Hello",
+                    "hasAudioGreeting": False,
+                    "isBlocked": False,
+                },
             },
         )
     finally:
