@@ -6,7 +6,13 @@ struct InstallationCredential: Codable, Equatable {
     let bearer: String
 }
 
-final class InstallationCredentialStore {
+protocol InstallationCredentialStoring {
+    func existingCredential() throws -> InstallationCredential?
+    func createCredential() throws -> InstallationCredential
+    func deleteCredential() throws
+}
+
+final class InstallationCredentialStore: InstallationCredentialStoring {
     enum CredentialError: LocalizedError {
         case keychain(OSStatus)
         case corruptedCredential

@@ -19,19 +19,20 @@ final class SyncCoordinator {
     private let baseURL: URL
     private let session: URLSession
     private let snapshotStore: AppGroupSnapshotStore?
-    private let credentialStore: InstallationCredentialStore
+    private let credentialStore: any InstallationCredentialStoring
     private var apiClient: APIClient?
     private var bootstrapped = false
 
     var installationID: String? { apiClient?.installationID }
     var onPeopleChanged: (() -> Void)?
     var onOwnCardChanged: ((PersonCard) -> Void)?
+    var onProfileDeleted: (() -> Void)?
 
     init(
         baseURL: URL,
         session: URLSession,
         snapshotStore: AppGroupSnapshotStore?,
-        credentialStore: InstallationCredentialStore
+        credentialStore: any InstallationCredentialStoring
     ) throws {
         self.baseURL = baseURL
         self.session = session
@@ -48,14 +49,25 @@ final class SyncCoordinator {
     }
 
     func fetchConfiguration() async throws -> RemoteConfiguration? {
-        if let apiClient { return try await apiClient.fetchConfiguration() }
-        return snapshotStore?.cachedConfiguration()?.0
+        try await APIClient.fetchPublicConfiguration(
+            baseURL: baseURL,
+            session: session,
+            snapshotStore: snapshotStore
+        )
     }
 
     func bootstrap() async {
         guard snapshotStore?.profileTerminallyDeleted != true else { return }
         if snapshotStore?.profileDeletionPending == true {
-            await retryPendingOperations()
+            if apiClient == nil {
+                do {
+                    try finishDeletion(operationID: nil)
+                } catch {
+                    // Keep the pending state; foreground retry remains fail-closed.
+                }
+            } else {
+                await retryPendingOperations()
+            }
             return
         }
         guard let apiClient else { return }
@@ -180,15 +192,19 @@ final class SyncCoordinator {
     }
 
     func deleteProfile() async -> Bool {
-        guard let apiClient else {
-            snapshotStore?.clearUserData()
-            snapshotStore?.profileTerminallyDeleted = true
-            try? credentialStore.deleteCredential()
-            return true
-        }
-        let request = SyncRequest(operation: .deleteProfile)
+        guard snapshotStore?.profileDeletionPending != true else { return false }
         snapshotStore?.clearUserData()
         snapshotStore?.profileDeletionPending = true
+        onProfileDeleted?()
+        guard let apiClient else {
+            do {
+                try finishDeletion(operationID: nil)
+                return true
+            } catch {
+                return false
+            }
+        }
+        let request = SyncRequest(operation: .deleteProfile)
         snapshotStore?.enqueue(PendingSyncOperation(request: request, expiresAt: nil, localCardID: nil))
         do {
             _ = try await apiClient.sync(request)
@@ -292,9 +308,9 @@ final class SyncCoordinator {
         if !people.isEmpty || !response.revokedCardIDs.isEmpty { onPeopleChanged?() }
     }
 
-    private func finishDeletion(operationID: String) throws {
-        snapshotStore?.removePendingOperation(id: operationID)
+    private func finishDeletion(operationID: String?) throws {
         try credentialStore.deleteCredential()
+        if let operationID { snapshotStore?.removePendingOperation(id: operationID) }
         snapshotStore?.profileDeletionPending = false
         snapshotStore?.profileTerminallyDeleted = true
         apiClient = nil

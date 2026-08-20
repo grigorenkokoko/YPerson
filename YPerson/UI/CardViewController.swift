@@ -15,11 +15,19 @@ final class CardViewController: YPBaseViewController {
     private var cardView: CardSummaryView?
     private var showsPrivateFields = false
     private var preparedQRToken: String?
+    private var prepareQRTask: Task<Void, Never>?
+    private var prepareQRGeneration: UUID?
 
     var currentCard: PersonCard? { card }
 
     func applyPublishedCard(_ published: PersonCard) {
         card = published
+        render()
+    }
+
+    func applyProfileDeletion() {
+        card = nil
+        showsPrivateFields = false
         render()
     }
 
@@ -37,6 +45,13 @@ final class CardViewController: YPBaseViewController {
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        prepareQRTask?.cancel()
+        prepareQRTask = nil
+        prepareQRGeneration = nil
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -107,8 +122,8 @@ final class CardViewController: YPBaseViewController {
         guard let card else { return }
         let showOffline: () -> Void = { [weak self] in
             guard let self else { return }
-            guard let installationID = syncCoordinator.installationID else {
-                showMessage("Сначала сохраните визитку", "После сохранения YPerson создаст защищённый идентификатор для QR-кода.")
+            guard let installationID = self.syncCoordinator.installationID else {
+                self.showMessage("Сначала сохраните визитку", "После сохранения YPerson создаст защищённый идентификатор для QR-кода.")
                 return
             }
             let payload = ExchangePayload(
@@ -118,7 +133,7 @@ final class CardViewController: YPBaseViewController {
                 exchangeToken: nil,
                 expiresAt: nil
             )
-            showQRCode(payload, isOffline: true)
+            self.showQRCode(payload, isOffline: true)
         }
 #if DEBUG
         if ProcessInfo.processInfo.environment["YP_SCREENSHOT_STATE"] == "REVIEW_QR" {
@@ -126,19 +141,37 @@ final class CardViewController: YPBaseViewController {
             return
         }
 #endif
-        Task { [weak self] in
+        prepareQRTask?.cancel()
+        let generation = UUID()
+        prepareQRGeneration = generation
+        prepareQRTask = Task { [weak self] in
             guard let self else { return }
+            defer {
+                if self.prepareQRGeneration == generation {
+                    self.prepareQRTask = nil
+                    self.prepareQRGeneration = nil
+                }
+            }
             do {
-                let token = try await syncCoordinator.prepareExchange(card: card, method: "qr")
-                guard let installationID = syncCoordinator.installationID else { throw SyncCoordinator.CoordinatorError.noProfile }
-                preparedQRToken = token
-                showQRCode(ExchangePayload(
+                let token = try await self.syncCoordinator.prepareExchange(card: card, method: "qr")
+                guard !Task.isCancelled, self.viewIfLoaded?.window != nil else {
+                    await self.syncCoordinator.cancelExchange(token: token)
+                    return
+                }
+                guard let installationID = self.syncCoordinator.installationID else {
+                    await self.syncCoordinator.cancelExchange(token: token)
+                    throw SyncCoordinator.CoordinatorError.noProfile
+                }
+                self.preparedQRToken = token
+                self.showQRCode(ExchangePayload(
                     version: 2,
                     issuerInstallationID: installationID,
                     card: card.exchangeCopy,
                     exchangeToken: token,
                     expiresAt: Date().addingTimeInterval(10 * 60)
                 ), isOffline: false)
+            } catch where Task.isCancelled {
+                return
             } catch {
                 showOffline()
             }
@@ -158,9 +191,9 @@ final class CardViewController: YPBaseViewController {
         let controller = QRExchangeViewController()
         if !isOffline, let token = exchangePayload.exchangeToken {
             controller.onClose = { [weak self] in
-                guard let self, preparedQRToken == token else { return }
-                preparedQRToken = nil
-                Task { await syncCoordinator.cancelExchange(token: token) }
+                guard let self, self.preparedQRToken == token else { return }
+                self.preparedQRToken = nil
+                Task { await self.syncCoordinator.cancelExchange(token: token) }
             }
         }
         controller.title = "Мой QR"
@@ -204,12 +237,12 @@ final class CardViewController: YPBaseViewController {
             guard self.persistsChanges else { return }
             Task { [weak self] in
                 guard let self else { return }
-                guard let response = await syncCoordinator.publish(updatedCard),
+                guard let response = await self.syncCoordinator.publish(updatedCard),
                       let version = response.ownCardVersion else { return }
                 var published = updatedCard
                 published.version = version
                 self.card = published
-                try? snapshotStore?.writeOwnCard(published)
+                try? self.snapshotStore?.writeOwnCard(published)
             }
         }
         navigationController?.pushViewController(editor, animated: true)
@@ -246,6 +279,13 @@ final class CardViewController: YPBaseViewController {
 #if DEBUG
     func showVerificationQR() { showQR() }
 #endif
+
+    deinit {
+        prepareQRTask?.cancel()
+        guard let token = preparedQRToken else { return }
+        let coordinator = syncCoordinator
+        Task { @MainActor in await coordinator.cancelExchange(token: token) }
+    }
 }
 
 private final class QRExchangeViewController: UIViewController {

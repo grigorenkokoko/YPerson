@@ -29,6 +29,14 @@ final class APIClient {
         self.session = session
         self.snapshotStore = snapshotStore
         self.credential = credential
+        self.decoder = Self.makeDecoder()
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        self.encoder = encoder
+    }
+
+    private static func makeDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let value = try decoder.singleValueContainer().decode(String.self)
@@ -45,14 +53,22 @@ final class APIClient {
             }
             return date
         }
-        self.decoder = decoder
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.sortedKeys]
-        self.encoder = encoder
+        return decoder
     }
 
     func fetchConfiguration() async throws -> RemoteConfiguration {
+        try await Self.fetchPublicConfiguration(
+            baseURL: baseURL,
+            session: session,
+            snapshotStore: snapshotStore
+        )
+    }
+
+    static func fetchPublicConfiguration(
+        baseURL: URL,
+        session: URLSession,
+        snapshotStore: AppGroupSnapshotStore?
+    ) async throws -> RemoteConfiguration {
         let url = baseURL.appendingPathComponent("config")
         var request = URLRequest(url: url, timeoutInterval: 8)
         request.httpMethod = "GET"
@@ -69,7 +85,7 @@ final class APIClient {
                 throw ClientError.status(http.statusCode, String(data: data, encoding: .utf8) ?? "")
             }
             try validateConfigurationShape(data)
-            let configuration = try decoder.decode(RemoteConfiguration.self, from: data)
+            let configuration = try makeDecoder().decode(RemoteConfiguration.self, from: data)
             try snapshotStore?.cacheConfiguration(configuration, etag: http.value(forHTTPHeaderField: "ETag"))
             return configuration
         } catch {
@@ -113,7 +129,7 @@ final class APIClient {
         )
     }
 
-    private func validateConfigurationShape(_ data: Data) throws {
+    private static func validateConfigurationShape(_ data: Data) throws {
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ClientError.invalidResponse
         }

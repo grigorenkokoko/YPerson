@@ -86,6 +86,10 @@ final class YPersonExperienceBuilder {
                 people?.reload(people: snapshotStore?.readPeople() ?? [])
             }
             syncCoordinator.onOwnCardChanged = { [weak card] published in card?.applyPublishedCard(published) }
+            syncCoordinator.onProfileDeleted = { [weak card, weak people] in
+                card?.applyProfileDeletion()
+                people?.reload(people: [])
+            }
             refreshPeople()
         }
 #if DEBUG
