@@ -25,6 +25,12 @@ approval_log:
     actor: user
     authorized_next_stage: python-backend-implementation
     evidence_summary: approved the Python/PostgreSQL deployment design and recommended task-by-task implementation mode after the implementation-plan gate
+  - stage: design
+    decision: approved
+    timestamp_utc: "2026-08-20T14:00:42Z"
+    actor: user
+    authorized_next_stage: implementation
+    evidence_summary: user approved replacing the update-count widget with a QR-scanner shortcut and authorized implementation after the written spec
 
 implementation_verification:
   timestamp_utc: "2026-08-17T22:17:46Z"
@@ -530,9 +536,11 @@ backend:
 
 extensions:
   lock_screen_widget:
-    role: show a neutral My Card shortcut and unread update count on the iPhone Lock Screen
-    availability: iOS 16+
-    ios_15_fallback: equivalent systemSmall WidgetKit widget on the Home Screen
+    role: stateless QR-scanner shortcut that opens the existing app-owned scanner through yperson://scan
+    availability: iOS 16+ accessoryCircular and accessoryRectangular WidgetKit families on the Lock Screen
+    ios_15_fallback: systemSmall WidgetKit scanner shortcut on the Home Screen
+    data_handling: no card fields, QR payload, update count, cached snapshot, network request, camera permission, or live camera preview in the extension
+    reviewer_path: tap the iOS 15 systemSmall shortcut or an iOS 16+ accessory family, verify YPerson opens Exchange and begins the existing scanner permission or recovery flow
     private_data_on_lock_screen: false
     activity_kit: false
   notification_service_extension:
@@ -709,7 +717,7 @@ feasibility_gate:
     evidence: every prompt follows a specific user action; denial preserves a functional alternative and ATT denial preserves the core app
   extension_value:
     status: pass
-    evidence: iOS 16+ Lock Screen widget with iOS 15 Home Screen fallback, safe notification enrichment, and review/block content actions expose real product behavior
+    evidence: stateless QR-scanner shortcut opens the existing app-owned scanner through iOS 15 systemSmall and iOS 16+ accessory families; safe notification enrichment and review/block content actions expose real product behavior
   backend_value:
     status: pass
     evidence: sync provides updateable cards, confirmed connection claims, moderation, and push token handling
@@ -718,7 +726,7 @@ feasibility_gate:
     evidence: local-only, backend, APNs, and AppMetrica datasets and deletion rules are separated consistently
   review_access:
     status: pass
-    evidence: deterministic sample cards, QR codes, photos, contacts, two-iPhone BLE steps, an iOS 16+ Lock Screen widget review path, and QR/manual fallbacks are defined
+    evidence: deterministic sample cards, QR codes, photos, contacts, two-iPhone BLE steps, iOS 15 systemSmall and iOS 16+ accessory scanner-widget review paths, and QR/manual fallbacks are defined
   conditional_policy_coverage:
     status: pass
     evidence: account deletion and UGC are selected with paths; all remaining modules are explicitly not-applicable
@@ -760,7 +768,7 @@ current_documentation_checks:
     checked_on: "2026-08-18"
     decisions:
       - set the main app minimum deployment target to iOS 15.0
-      - provide a Home Screen systemSmall widget on iOS 15 and the required Lock Screen accessory widget on iOS 16+
+      - provide a Home Screen systemSmall QR-scanner shortcut on iOS 15 and accessoryCircular and accessoryRectangular scanner shortcuts on iOS 16+
   - title: Apple ContactsUI updates
     url: https://developer.apple.com/documentation/updates/contactsui?changes=_1_9
     checked_on: "2026-08-18"
