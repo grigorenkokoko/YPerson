@@ -238,8 +238,7 @@ def post_sync(
 def test_two_installations_claim_exchange_and_receive_peer_card() -> None:
     store = MemoryStore()
     owner_card = PersonCard.model_validate(
-        card("card-owner", "Owner").model_dump(mode="json")
-        | {"templateID": "indigo-studio"}
+        card("card-owner", "Owner").model_dump(mode="json") | {"templateID": "indigo-studio"}
     )
     with make_client(store) as client:
         owner_bootstrap = post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-1")
