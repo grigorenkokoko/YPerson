@@ -6,12 +6,14 @@ final class SyncCoordinator {
         case noProfile
         case deletionInProgress
         case expiredExchange
+        case noAudio
 
         var errorDescription: String? {
             switch self {
             case .noProfile: return "Сначала сохраните свою визитку."
             case .deletionInProgress: return "Дождитесь завершения удаления профиля."
             case .expiredExchange: return "Код обмена уже истёк. Карточка сохранена только на iPhone."
+            case .noAudio: return "У этой визитки нет доступного аудиоприветствия."
             }
         }
     }
@@ -20,6 +22,7 @@ final class SyncCoordinator {
     private let session: URLSession
     private let snapshotStore: AppGroupSnapshotStore?
     private let credentialStore: any InstallationCredentialStoring
+    private let mediaTransfer: MediaTransferClient
     private var apiClient: APIClient?
     private var bootstrapped = false
 
@@ -27,17 +30,20 @@ final class SyncCoordinator {
     var onPeopleChanged: (() -> Void)?
     var onOwnCardChanged: ((PersonCard) -> Void)?
     var onProfileDeleted: (() -> Void)?
+    var onAudioInvalidated: (() -> Void)?
 
     init(
         baseURL: URL,
         session: URLSession,
         snapshotStore: AppGroupSnapshotStore?,
-        credentialStore: any InstallationCredentialStoring
+        credentialStore: any InstallationCredentialStoring,
+        mediaTransfer: MediaTransferClient
     ) throws {
         self.baseURL = baseURL
         self.session = session
         self.snapshotStore = snapshotStore
         self.credentialStore = credentialStore
+        self.mediaTransfer = mediaTransfer
         if let credential = try credentialStore.existingCredential() {
             apiClient = APIClient(
                 baseURL: baseURL,
@@ -84,10 +90,36 @@ final class SyncCoordinator {
         }
     }
 
-    func publish(_ card: PersonCard) async -> SyncResponse? {
+    func publish(_ card: PersonCard, greeting: RecordedGreeting? = nil) async -> SyncResponse? {
         do {
             let client = try explicitProfileClient()
-            let request = SyncRequest(operation: .publishCard, card: card.exchangeCopy)
+            var cloudCard = card.exchangeCopy
+            var audioAssetID: String?
+            if let greeting {
+                if !bootstrapped {
+                    let bootstrap = try await client.sync(SyncRequest(operation: .refresh))
+                    try apply(bootstrap)
+                    bootstrapped = true
+                }
+                let prepared = try await client.sync(SyncRequest(
+                    operation: .prepareAudioUpload,
+                    audioSizeBytes: greeting.sizeBytes,
+                    audioDurationMS: min(10_000, Int((greeting.duration * 1_000).rounded()))
+                ))
+                guard let upload = prepared.audioUpload else {
+                    throw APIClient.ClientError.invalidResponse
+                }
+                try await mediaTransfer.upload(greeting, to: upload.uploadURL)
+                audioAssetID = upload.assetID
+                cloudCard.hasAudioGreeting = true
+            } else {
+                cloudCard.hasAudioGreeting = false
+            }
+            let request = SyncRequest(
+                operation: .publishCard,
+                card: cloudCard,
+                audioAssetID: audioAssetID
+            )
             snapshotStore?.enqueue(PendingSyncOperation(request: request, expiresAt: nil, localCardID: nil))
             let response = try await client.sync(request)
             snapshotStore?.removePendingOperation(id: request.operationID)
@@ -180,6 +212,19 @@ final class SyncCoordinator {
         snapshotStore?.removePendingOperation(id: request.operationID)
     }
 
+    func audioAsset(for peerInstallationID: String) async throws -> AudioAsset {
+        guard !syncSuppressed else { throw CoordinatorError.deletionInProgress }
+        guard let apiClient else { throw CoordinatorError.noProfile }
+        let response = try await apiClient.sync(
+            SyncRequest(operation: .refresh, cursor: snapshotStore?.syncCursor)
+        )
+        try apply(response)
+        guard let audio = response.people.first(where: {
+            $0.installationID == peerInstallationID
+        })?.audio else { throw CoordinatorError.noAudio }
+        return audio
+    }
+
     func updatePushToken(_ token: String?) async {
         guard !syncSuppressed else { return }
         if snapshotStore?.pendingAPNSToken != token
@@ -248,7 +293,8 @@ final class SyncCoordinator {
                 continue
             }
             do {
-                let response = try await apiClient.sync(operation.request)
+                let request = retrySafeRequest(operation.request)
+                let response = try await apiClient.sync(request)
                 try apply(response)
                 if operation.request.operation == .publishCard { bootstrapped = true }
                 if operation.request.operation == .deleteProfile {
@@ -301,11 +347,32 @@ final class SyncCoordinator {
     }
 
     private func apply(_ response: SyncResponse) throws {
+        var previousVersions: [String: Int] = [:]
+        for card in snapshotStore?.readPeople() ?? [] {
+            previousVersions[card.id] = max(previousVersions[card.id] ?? 0, card.version)
+        }
         let people = response.people.map(\.versionedCard)
+        let audioMayHaveChanged = !response.revokedCardIDs.isEmpty || people.contains {
+            return previousVersions[$0.id] != $0.version
+        }
         try snapshotStore?.replacePeople(people)
         for id in response.revokedCardIDs { try snapshotStore?.removePerson(id: id) }
         snapshotStore?.syncCursor = response.nextCursor ?? snapshotStore?.syncCursor
         if !people.isEmpty || !response.revokedCardIDs.isEmpty { onPeopleChanged?() }
+        if audioMayHaveChanged { onAudioInvalidated?() }
+    }
+
+    private func retrySafeRequest(_ request: SyncRequest) -> SyncRequest {
+        guard request.operation == .publishCard,
+              request.audioAssetID == nil,
+              var card = request.card,
+              card.hasAudioGreeting else { return request }
+        card.hasAudioGreeting = false
+        return SyncRequest(
+            operation: .publishCard,
+            operationID: request.operationID,
+            card: card
+        )
     }
 
     private func finishDeletion(operationID: String?) throws {

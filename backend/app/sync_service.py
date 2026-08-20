@@ -8,7 +8,8 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
-from .schemas import SyncOperation, SyncRequest, SyncResponse
+from .media_service import MediaInvalid, MediaService
+from .schemas import SyncedPerson, SyncOperation, SyncRequest, SyncResponse
 from .storage import StorageConflict, SyncSnapshot, SyncStore
 
 EXCHANGE_TOKEN_LIFETIME = timedelta(minutes=10)
@@ -32,11 +33,13 @@ class SyncService:
         clock: Callable[[], datetime] | None = None,
         exchange_token_deriver: ExchangeTokenDeriver | None = None,
         object_cleanup: ObjectCleanup | None = None,
+        media_service: MediaService | None = None,
     ) -> None:
         self._store = store
         self._clock = clock or (lambda: datetime.now(UTC))
         self._exchange_token_deriver = exchange_token_deriver or derive_exchange_token
         self._object_cleanup = object_cleanup or _fail_closed_object_cleanup
+        self._media_service = media_service
 
     def handle(self, request: SyncRequest, bearer: str) -> SyncResponse:
         """Return a secret-free response for one authenticated request.
@@ -72,7 +75,7 @@ class SyncService:
             case SyncOperation.cancel_exchange:
                 return self._cancel_exchange(request)
             case SyncOperation.prepare_audio_upload:
-                raise SyncUnavailable
+                return self._prepare_audio_upload(request)
             case SyncOperation.update_push_token:
                 return self._update_push(request)
             case SyncOperation.remove_push_token:
@@ -84,18 +87,33 @@ class SyncService:
 
     def _refresh(self, request: SyncRequest) -> SyncResponse:
         snapshot = self._store.refresh(request.installationID, request.cursor)
-        return _snapshot_response(snapshot)
+        people = self._people_with_audio(request.installationID, snapshot.people)
+        return _snapshot_response(snapshot, people=people)
 
     def _publish(self, request: SyncRequest) -> SyncResponse:
         if request.card is None:  # Pydantic enforces this before dispatch.
             raise ValueError("missing card")
+        if request.card.hasAudioGreeting and request.audioAssetID is None:
+            raise StorageConflict("audio unavailable")
+        if request.audioAssetID is not None and not request.card.hasAudioGreeting:
+            raise StorageConflict("audio unavailable")
         if request.audioAssetID is not None:
+            if self._media_service is None:
+                raise SyncUnavailable
+            try:
+                self._media_service.finalize_upload(
+                    request.installationID,
+                    request.audioAssetID,
+                )
+            except MediaInvalid as error:
+                raise StorageConflict("audio unavailable") from error
+        if request.audioAssetID is not None and self._media_service is None:
             raise SyncUnavailable
         version = self._store.publish_card(
             request.installationID,
             request.operationID,
             request.card,
-            None,
+            request.audioAssetID,
         )
         return _response("card published", update_count=1, ownCardVersion=version)
 
@@ -136,7 +154,24 @@ class SyncService:
             request.operationID,
             request.exchangeToken,
         )
+        person = self._person_with_audio(request.installationID, person)
         return _response("exchange claimed", update_count=1, people=[person])
+
+    def _prepare_audio_upload(self, request: SyncRequest) -> SyncResponse:
+        if request.audioSizeBytes is None or request.audioDurationMS is None:
+            raise ValueError("missing audio metadata")
+        if self._media_service is None:
+            raise SyncUnavailable
+        try:
+            upload = self._media_service.prepare_upload(
+                request.installationID,
+                request.operationID,
+                request.audioSizeBytes,
+                request.audioDurationMS,
+            )
+        except MediaInvalid as error:
+            raise StorageConflict("audio unavailable") from error
+        return _response("audio upload prepared", audioUpload=upload)
 
     def _cancel_exchange(self, request: SyncRequest) -> SyncResponse:
         if request.exchangeToken is None:  # Pydantic enforces this before dispatch.
@@ -195,6 +230,29 @@ class SyncService:
         self._object_cleanup(object_keys)
         return _response("profile deleted")
 
+    def _people_with_audio(
+        self,
+        requester_installation_id: str,
+        people: Sequence[SyncedPerson],
+    ) -> list[SyncedPerson]:
+        return [
+            self._person_with_audio(requester_installation_id, person)
+            for person in people
+        ]
+
+    def _person_with_audio(
+        self,
+        requester_installation_id: str,
+        person: SyncedPerson,
+    ) -> SyncedPerson:
+        if self._media_service is None or not person.card.hasAudioGreeting:
+            return person
+        audio = self._media_service.download_for_owner(
+            requester_installation_id,
+            person.installationID,
+        )
+        return person.model_copy(update={"audio": audio})
+
 
 def derive_exchange_token(bearer: str, installation_id: str, operation_id: str) -> str:
     """Derive the stable raw exchange token without storing it or the bearer.
@@ -230,14 +288,18 @@ def _fail_closed_object_cleanup(object_keys: Sequence[str]) -> None:
         raise SyncUnavailable
 
 
-def _snapshot_response(snapshot: SyncSnapshot) -> SyncResponse:
+def _snapshot_response(
+    snapshot: SyncSnapshot,
+    *,
+    people: Sequence[SyncedPerson] | None = None,
+) -> SyncResponse:
     update_count = len(snapshot.people) + len(snapshot.revoked_card_ids)
     return _response(
         "refreshed",
         update_count=update_count,
         nextCursor=snapshot.next_cursor,
         ownCardVersion=snapshot.own_card_version,
-        people=list(snapshot.people),
+        people=list(snapshot.people if people is None else people),
         revokedCardIDs=list(snapshot.revoked_card_ids),
     )
 

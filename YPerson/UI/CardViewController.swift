@@ -237,7 +237,10 @@ final class CardViewController: YPBaseViewController {
             guard self.persistsChanges else { return }
             Task { [weak self] in
                 guard let self else { return }
-                guard let response = await self.syncCoordinator.publish(updatedCard),
+                guard let response = await self.syncCoordinator.publish(
+                    updatedCard,
+                    greeting: self.audio.savedGreeting()
+                ),
                       let version = response.ownCardVersion else { return }
                 var published = updatedCard
                 published.version = version

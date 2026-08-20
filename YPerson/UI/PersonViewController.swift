@@ -5,16 +5,20 @@ final class PersonViewController: YPBaseViewController {
     private let permissions: PermissionCenter
     private let imageSaver: CardImageSaver
     private let syncCoordinator: SyncCoordinator
+    private let mediaTransfer: MediaTransferClient
+    private let audio: AudioGreetingController
     private let analytics: AppMetricaAnalyticsClient
     private let snapshotStore: AppGroupSnapshotStore?
     private var card: PersonCard
     private var summary: CardSummaryView
     private let placeLabel = YPStyle.label("Место знакомства не добавлено", style: .footnote)
+    private var audioButton: UIButton?
+    private var audioTask: Task<Void, Never>?
 
-    init(card: PersonCard, permissions: PermissionCenter, imageSaver: CardImageSaver, syncCoordinator: SyncCoordinator, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?) {
+    init(card: PersonCard, permissions: PermissionCenter, imageSaver: CardImageSaver, syncCoordinator: SyncCoordinator, mediaTransfer: MediaTransferClient, audio: AudioGreetingController, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?) {
         self.card = card
         self.summary = CardSummaryView(card: card, showPrivate: true)
-        self.permissions = permissions; self.imageSaver = imageSaver; self.syncCoordinator = syncCoordinator; self.analytics = analytics; self.snapshotStore = snapshotStore
+        self.permissions = permissions; self.imageSaver = imageSaver; self.syncCoordinator = syncCoordinator; self.mediaTransfer = mediaTransfer; self.audio = audio; self.analytics = analytics; self.snapshotStore = snapshotStore
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -26,6 +30,12 @@ final class PersonViewController: YPBaseViewController {
         navigationItem.largeTitleDisplayMode = .never
         navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "ellipsis.circle"), menu: makeSafetyMenu())
         contentStack.addArrangedSubview(summary)
+        if card.hasAudioGreeting, card.sourceInstallationID != nil {
+            let audioButton = YPStyle.button("Воспроизвести аудиоприветствие", symbol: "waveform")
+            audioButton.addTarget(self, action: #selector(playAudioGreeting), for: .touchUpInside)
+            contentStack.addArrangedSubview(audioButton)
+            self.audioButton = audioButton
+        }
         let update = YPStyle.button("Просмотреть и обновить", symbol: "arrow.triangle.2.circlepath", primary: true); update.addTarget(self, action: #selector(reviewUpdate), for: .touchUpInside); contentStack.addArrangedSubview(update)
         sectionTitle("Контекст знакомства")
         if let meetingPlace = card.meetingPlace, !meetingPlace.isEmpty {
@@ -100,6 +110,32 @@ final class PersonViewController: YPBaseViewController {
 
     @objc private func savePhoto() { imageSaver.save(imageSaver.render(summary), from: self) }
 
+    @objc private func playAudioGreeting() {
+        guard audioTask == nil, let peerInstallationID = card.sourceInstallationID else { return }
+        audioButton?.isEnabled = false
+        audioButton?.configuration?.title = "Загрузка…"
+        audioTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.audioTask = nil
+                self.audioButton?.isEnabled = true
+                self.audioButton?.configuration?.title = "Воспроизвести аудиоприветствие"
+            }
+            do {
+                let asset = try await self.syncCoordinator.audioAsset(for: peerInstallationID)
+                let fileURL = try await self.mediaTransfer.cachedAudio(for: asset) {
+                    try await self.syncCoordinator.audioAsset(for: peerInstallationID)
+                }
+                guard !Task.isCancelled else { return }
+                try self.audio.play(fileURL: fileURL)
+            } catch where Task.isCancelled {
+                return
+            } catch {
+                self.showMessage("Не удалось воспроизвести", "Проверьте интернет и попробуйте ещё раз.")
+            }
+        }
+    }
+
     private func report() {
         let alert = UIAlertController(title: "Пожаловаться", message: "Выберите категорию. Комментарий необязателен.", preferredStyle: .actionSheet)
         [("Нежелательная реклама", "spam"), ("Оскорбительный контент", "abusive_content"), ("Выдаёт себя за другого", "impersonation")].forEach { title, identifier in
@@ -127,7 +163,11 @@ final class PersonViewController: YPBaseViewController {
         }
         Task { [weak self] in
             guard let self else { return }
-            do { try await self.syncCoordinator.submitModeration(operation: operation, peerInstallationID: peerInstallationID, category: category); self.showMessage("Отправлено", operation == .report ? "Жалоба принята. Карточку можно сразу заблокировать." : "Человек заблокирован.") }
+            do {
+                try await self.syncCoordinator.submitModeration(operation: operation, peerInstallationID: peerInstallationID, category: category)
+                if operation == .block { self.mediaTransfer.removeAllCachedAudio() }
+                self.showMessage("Отправлено", operation == .report ? "Жалоба принята. Карточку можно сразу заблокировать." : "Человек заблокирован.")
+            }
             catch { self.showMessage("Сохранено локально", "Действие будет отправлено после восстановления сети.") }
         }
     }
@@ -137,4 +177,6 @@ final class PersonViewController: YPBaseViewController {
         placeLabel.text = "Место: \(place) · хранится только на iPhone"
         try? snapshotStore?.upsertPerson(card)
     }
+
+    deinit { audioTask?.cancel() }
 }

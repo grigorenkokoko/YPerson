@@ -11,6 +11,7 @@ final class YPersonExperienceBuilder {
     private let analytics: AppMetricaAnalyticsClient
     private let permissions: PermissionCenter
     private let credentialStore: InstallationCredentialStore
+    private let mediaTransfer: MediaTransferClient
     private let nearby = NearbyExchangeController()
     private let photoScanner = PhotoCardScanner()
     private let audio = AudioGreetingController()
@@ -29,11 +30,14 @@ final class YPersonExperienceBuilder {
         self.snapshotStore = store
         let credentialStore = InstallationCredentialStore(service: "\(configuration.appGroupIdentifier).installation")
         self.credentialStore = credentialStore
+        let mediaTransfer = MediaTransferClient(session: session)
+        self.mediaTransfer = mediaTransfer
         self.syncCoordinator = try SyncCoordinator(
             baseURL: configuration.apiBaseURL,
             session: session,
             snapshotStore: store,
-            credentialStore: credentialStore
+            credentialStore: credentialStore,
+            mediaTransfer: mediaTransfer
         )
         self.analytics = AppMetricaAnalyticsClient(apiKey: configuration.appMetricaAPIKey, initialConsent: store?.analyticsConsent ?? false)
         self.permissions = PermissionCenter(notificationCenter: UNUserNotificationCenter.current())
@@ -61,8 +65,8 @@ final class YPersonExperienceBuilder {
             CardEditorViewController(card: card, permissions: permissions, audio: audio, makeAppearance: makeAppearance, onSave: onSave)
         }
         let card = CardViewController(card: ownCard, persistsChanges: !usesReviewFixtures, permissions: permissions, audio: audio, imageSaver: imageSaver, syncCoordinator: syncCoordinator, analytics: analytics, snapshotStore: snapshotStore, makeEditor: makeEditor)
-        let person = { [permissions, imageSaver, syncCoordinator, analytics, snapshotStore] card in
-            PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, syncCoordinator: syncCoordinator, analytics: analytics, snapshotStore: snapshotStore)
+        let person = { [permissions, imageSaver, syncCoordinator, analytics, snapshotStore, mediaTransfer, audio] card in
+            PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, syncCoordinator: syncCoordinator, mediaTransfer: mediaTransfer, audio: audio, analytics: analytics, snapshotStore: snapshotStore)
         }
         let people = PeopleViewController(people: savedPeople, permissions: permissions, analytics: analytics, makePerson: person)
         let exchange = ExchangeViewController(
@@ -86,9 +90,13 @@ final class YPersonExperienceBuilder {
                 people?.reload(people: snapshotStore?.readPeople() ?? [])
             }
             syncCoordinator.onOwnCardChanged = { [weak card] published in card?.applyPublishedCard(published) }
-            syncCoordinator.onProfileDeleted = { [weak card, weak people] in
+            syncCoordinator.onProfileDeleted = { [weak card, weak people, mediaTransfer] in
+                mediaTransfer.removeAllCachedAudio()
                 card?.applyProfileDeletion()
                 people?.reload(people: [])
+            }
+            syncCoordinator.onAudioInvalidated = { [mediaTransfer] in
+                mediaTransfer.removeAllCachedAudio()
             }
             refreshPeople()
         }

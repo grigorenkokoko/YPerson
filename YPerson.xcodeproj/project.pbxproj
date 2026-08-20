@@ -12,6 +12,7 @@
 		0DC40FF0ADF08360DE334C91 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 750506F4EEAF3B8D1B12E774 /* WidgetSnapshot.swift */; };
 		13CCCAFA15AD9B93B570C5A2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F5EFCA26B0528FD85942ED0E /* PrivacyInfo.xcprivacy */; };
 		1616764F166B74ACAEAB5862 /* AppMetricaAnalyticsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A82460406C63E9A3C7FA221 /* AppMetricaAnalyticsClient.swift */; };
+		232809C4B65AC451691AC6B6 /* MediaTransferClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0A9390AFFB941DA8CB57AB /* MediaTransferClient.swift */; };
 		245F6C0FB5C326CC2DEB3B73 /* PersonViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAC46C8858C0D992879AF1C4 /* PersonViewController.swift */; };
 		30D248296C4E2B2438218310 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010FD9E77B5F99A011428182 /* AppDelegate.swift */; };
 		33F0F5281B41F42F0A562F9B /* AppMetricaCore in Frameworks */ = {isa = PBXBuildFile; productRef = 3A96293805F4AC31A97C6F0F /* AppMetricaCore */; };
@@ -138,6 +139,7 @@
 		AEE237F9A1DF69B6E996CF21 /* YPerson.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = YPerson.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B05DF4272FF693CA8C7E28F4 /* MainTabBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabBarController.swift; sourceTree = "<group>"; };
 		CAC46C8858C0D992879AF1C4 /* PersonViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonViewController.swift; sourceTree = "<group>"; };
+		CF0A9390AFFB941DA8CB57AB /* MediaTransferClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaTransferClient.swift; sourceTree = "<group>"; };
 		D51EBF735785D82AF276EA87 /* PhotoCardScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCardScanner.swift; sourceTree = "<group>"; };
 		D8231A08DD9861DEC29505A7 /* YPersonIntegrationContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YPersonIntegrationContract.swift; sourceTree = "<group>"; };
 		D938FC5C6EE5391F7920B405 /* NearbyExchangeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearbyExchangeController.swift; sourceTree = "<group>"; };
@@ -206,6 +208,7 @@
 			isa = PBXGroup;
 			children = (
 				6506B9BE77BAB21F35300A5A /* APIClient.swift */,
+				CF0A9390AFFB941DA8CB57AB /* MediaTransferClient.swift */,
 				DF020DA50446199E2CCA120A /* SyncCoordinator.swift */,
 			);
 			path = Networking;
@@ -610,6 +613,7 @@
 				EE076FB1C42375DADCAD282A /* ExchangeViewController.swift in Sources */,
 				AAE2FC5FCA7708321265DE54 /* InstallationCredentialStore.swift in Sources */,
 				C1147F7D0E3CC883DB19DAB6 /* MainTabBarController.swift in Sources */,
+				232809C4B65AC451691AC6B6 /* MediaTransferClient.swift in Sources */,
 				E0007B3B0432DF5036E2720E /* Models.swift in Sources */,
 				A0FC157A713AA27C3B7E8D9D /* NearbyExchangeController.swift in Sources */,
 				75033FFC1C035C8D77463E91 /* PeopleViewController.swift in Sources */,

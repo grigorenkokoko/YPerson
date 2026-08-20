@@ -1,6 +1,12 @@
 import AVFAudio
 import Foundation
 
+struct RecordedGreeting {
+    let url: URL
+    let duration: TimeInterval
+    let sizeBytes: Int
+}
+
 final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioPlayerDelegate {
     enum State: Equatable {
         case empty
@@ -14,6 +20,7 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
     private var recorder: AVAudioRecorder?
     private var player: AVAudioPlayer?
     private var stopWorkItem: DispatchWorkItem?
+    private var stateBeforeExternalPlayback: State?
     private(set) var state: State = .empty { didSet { onStateChange?(state) } }
     var onStateChange: ((State) -> Void)?
 
@@ -75,6 +82,7 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
 
     func play() {
         do {
+            stateBeforeExternalPlayback = nil
             try audioSession.setCategory(.playback, mode: .spokenAudio)
             try audioSession.setActive(true)
             let player = try AVAudioPlayer(contentsOf: recordingURL)
@@ -92,12 +100,47 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
         }
     }
 
+    func savedGreeting() -> RecordedGreeting? {
+        guard case .saved(isPublic: true, _) = state,
+              let attributes = try? FileManager.default.attributesOfItem(atPath: recordingURL.path),
+              let size = (attributes[.size] as? NSNumber)?.intValue,
+              size > 0,
+              size <= 1_048_576,
+              let player = try? AVAudioPlayer(contentsOf: recordingURL),
+              player.duration > 0,
+              player.duration <= 10 else { return nil }
+        return RecordedGreeting(url: recordingURL, duration: player.duration, sizeBytes: size)
+    }
+
+    func play(fileURL: URL) throws {
+        let previousState = state
+        do {
+            try audioSession.setCategory(.playback, mode: .spokenAudio)
+            try audioSession.setActive(true)
+            let player = try AVAudioPlayer(contentsOf: fileURL)
+            player.delegate = self
+            guard player.play() else { throw CocoaError(.fileReadUnknown) }
+            stateBeforeExternalPlayback = previousState
+            self.player = player
+            state = .playing(duration: player.duration)
+        } catch {
+            try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+            stateBeforeExternalPlayback = nil
+            throw error
+        }
+    }
+
     func stopPlayback() {
         guard case .playing(let duration) = state else { return }
         player?.stop()
         player = nil
         try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
-        state = .preview(duration: duration)
+        if let previousState = stateBeforeExternalPlayback {
+            stateBeforeExternalPlayback = nil
+            state = previousState
+        } else {
+            state = .preview(duration: duration)
+        }
     }
 
     func save(isPublic: Bool) {
@@ -116,7 +159,12 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         self.player = nil
         try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
-        state = .preview(duration: player.duration)
+        if let previousState = stateBeforeExternalPlayback {
+            stateBeforeExternalPlayback = nil
+            state = previousState
+        } else {
+            state = .preview(duration: player.duration)
+        }
     }
 
     private func setUnavailable() { state = .empty }

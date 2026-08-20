@@ -12,6 +12,7 @@ from typing import Any
 import ydb
 from pydantic import ValidationError
 
+from .media_service import AUDIO_CONTENT_TYPE, MediaRecord
 from .schemas import PersonCard, SyncedPerson
 from .storage import (
     InstallationRecord,
@@ -20,6 +21,16 @@ from .storage import (
     StorageIntegrityError,
     SyncSnapshot,
 )
+
+_MEDIA_BY_OWNER_QUERY = """
+DECLARE $installation_id AS Utf8;
+DECLARE $asset_id AS Utf8;
+SELECT asset_id, owner_installation_id, object_key, content_type,
+       size_bytes, duration_ms, state
+FROM media_assets
+WHERE asset_id = $asset_id
+  AND owner_installation_id = $installation_id;
+"""
 
 
 class YDBSyncStore:
@@ -106,6 +117,46 @@ class YDBSyncStore:
             if previous is not None:
                 return _stored_positive_int(previous, "version")
 
+            effective_audio_asset_id = audio_asset_id
+            if effective_audio_asset_id is None and card.hasAudioGreeting:
+                current_audio_rows = self._tx_rows(
+                    tx,
+                    """
+                    DECLARE $installation_id AS Utf8;
+                    SELECT audio_asset_id FROM cards
+                    WHERE installation_id = $installation_id;
+                    """,
+                    {"$installation_id": _utf8(installation_id)},
+                )[0]
+                if len(current_audio_rows) != 1:
+                    raise StorageConflict("audio unavailable")
+                effective_audio_asset_id = _stored_optional_text(
+                    current_audio_rows[0],
+                    "audio_asset_id",
+                )
+                if effective_audio_asset_id is None:
+                    raise StorageConflict("audio unavailable")
+
+            if effective_audio_asset_id is not None:
+                media_rows = self._tx_rows(
+                    tx,
+                    """
+                    DECLARE $installation_id AS Utf8;
+                    DECLARE $audio_asset_id AS Utf8;
+                    SELECT asset_id, owner_installation_id, object_key, content_type,
+                           size_bytes, duration_ms, state
+                    FROM media_assets
+                    WHERE asset_id = $audio_asset_id
+                      AND owner_installation_id = $installation_id;
+                    """,
+                    {
+                        "$installation_id": _utf8(installation_id),
+                        "$audio_asset_id": _utf8(effective_audio_asset_id),
+                    },
+                )[0]
+                if len(media_rows) != 1 or _stored_media(media_rows[0]).state != "ready":
+                    raise StorageConflict("audio unavailable")
+
             current_rows = self._tx_rows(
                 tx,
                 """
@@ -151,7 +202,7 @@ class YDBSyncStore:
                     "$card_json": _json_document(
                         _json(card.model_dump(mode="json", exclude={"meetingPlace"}))
                     ),
-                    "$audio_asset_id": _optional_utf8(audio_asset_id),
+                    "$audio_asset_id": _optional_utf8(effective_audio_asset_id),
                     "$result_json": _json_document(result_json),
                     "$now": _timestamp(now),
                 },
@@ -159,6 +210,240 @@ class YDBSyncStore:
             return version
 
         return self._transaction(publish)
+
+    def prepare_media(
+        self,
+        owner_installation_id: str,
+        operation_id: str,
+        asset_id: str,
+        object_key: str,
+        size_bytes: int,
+        duration_ms: int,
+    ) -> MediaRecord:
+        now = self._clock()
+
+        def prepare(tx: ydb.QueryTxContext) -> MediaRecord:
+            self._ensure_active(tx, owner_installation_id)
+            previous = self._operation_result(
+                tx,
+                owner_installation_id,
+                operation_id,
+                "prepareAudioUpload",
+            )
+            if previous is not None:
+                previous_asset_id = _stored_text(previous, "assetID")
+                if previous_asset_id != asset_id:
+                    raise StorageConflict("operation identifier already used")
+                rows = self._media_rows(tx, owner_installation_id, asset_id)
+                if len(rows) != 1:
+                    raise StorageIntegrityError
+                record = _stored_media(rows[0])
+                if (
+                    record.object_key != object_key
+                    or record.size_bytes != size_bytes
+                    or record.duration_ms != duration_ms
+                ):
+                    raise StorageConflict("operation identifier already used")
+                return record
+
+            existing = self._media_rows(tx, owner_installation_id, asset_id)
+            if existing:
+                raise StorageConflict("audio unavailable")
+            self._tx_rows(
+                tx,
+                """
+                DECLARE $installation_id AS Utf8;
+                DECLARE $operation_id AS Utf8;
+                DECLARE $asset_id AS Utf8;
+                DECLARE $object_key AS Utf8;
+                DECLARE $size_bytes AS Uint64;
+                DECLARE $duration_ms AS Uint64;
+                DECLARE $result_json AS JsonDocument;
+                DECLARE $now AS Timestamp;
+
+                UPSERT INTO media_assets (
+                    asset_id, owner_installation_id, object_key, content_type,
+                    size_bytes, duration_ms, state, created_at, updated_at
+                ) VALUES (
+                    $asset_id, $installation_id, $object_key, "audio/mp4"u,
+                    $size_bytes, $duration_ms, "pending"u, $now, $now
+                );
+                UPSERT INTO operations (
+                    installation_id, operation_id, operation_type, result_json, completed_at
+                ) VALUES (
+                    $installation_id, $operation_id,
+                    "prepareAudioUpload"u, $result_json, $now
+                );
+                """,
+                {
+                    "$installation_id": _utf8(owner_installation_id),
+                    "$operation_id": _utf8(operation_id),
+                    "$asset_id": _utf8(asset_id),
+                    "$object_key": _utf8(object_key),
+                    "$size_bytes": _uint64(size_bytes),
+                    "$duration_ms": _uint64(duration_ms),
+                    "$result_json": _json_document(_json({"assetID": asset_id})),
+                    "$now": _timestamp(now),
+                },
+            )
+            return MediaRecord(
+                asset_id=asset_id,
+                owner_installation_id=owner_installation_id,
+                object_key=object_key,
+                content_type=AUDIO_CONTENT_TYPE,
+                size_bytes=size_bytes,
+                duration_ms=duration_ms,
+                state="pending",
+            )
+
+        return self._transaction(prepare)
+
+    def media_for_owner(
+        self,
+        owner_installation_id: str,
+        asset_id: str,
+    ) -> MediaRecord | None:
+        rows = self._execute(
+            _MEDIA_BY_OWNER_QUERY,
+            {
+                "$installation_id": _utf8(owner_installation_id),
+                "$asset_id": _utf8(asset_id),
+            },
+        )[0]
+        if not rows:
+            return None
+        if len(rows) != 1:
+            raise StorageIntegrityError
+        return _stored_media(rows[0])
+
+    def mark_media_ready(
+        self,
+        owner_installation_id: str,
+        asset_id: str,
+        content_type: str,
+        size_bytes: int,
+    ) -> MediaRecord:
+        now = self._clock()
+
+        def mark(tx: ydb.QueryTxContext) -> MediaRecord:
+            self._ensure_active(tx, owner_installation_id)
+            rows = self._media_rows(tx, owner_installation_id, asset_id)
+            if len(rows) != 1:
+                raise StorageConflict("audio unavailable")
+            record = _stored_media(rows[0])
+            if (
+                record.state not in {"pending", "ready"}
+                or record.content_type != content_type
+                or record.size_bytes != size_bytes
+            ):
+                raise StorageConflict("audio unavailable")
+            if record.state == "pending":
+                self._tx_rows(
+                    tx,
+                    """
+                    DECLARE $installation_id AS Utf8;
+                    DECLARE $asset_id AS Utf8;
+                    DECLARE $now AS Timestamp;
+                    UPDATE media_assets
+                    SET state = "ready"u, updated_at = $now
+                    WHERE asset_id = $asset_id
+                      AND owner_installation_id = $installation_id;
+                    """,
+                    {
+                        "$installation_id": _utf8(owner_installation_id),
+                        "$asset_id": _utf8(asset_id),
+                        "$now": _timestamp(now),
+                    },
+                )
+            return MediaRecord(
+                asset_id=record.asset_id,
+                owner_installation_id=record.owner_installation_id,
+                object_key=record.object_key,
+                content_type=record.content_type,
+                size_bytes=record.size_bytes,
+                duration_ms=record.duration_ms,
+                state="ready",
+            )
+
+        return self._transaction(mark)
+
+    def authorized_ready_media(
+        self,
+        requester_installation_id: str,
+        asset_id: str,
+    ) -> MediaRecord | None:
+        result_sets = self._execute(
+            """
+            DECLARE $requester_id AS Utf8;
+            DECLARE $asset_id AS Utf8;
+            SELECT asset_id, owner_installation_id, object_key, content_type,
+                   size_bytes, duration_ms, state
+            FROM media_assets
+            WHERE asset_id = $asset_id AND state = "ready"u;
+
+            SELECT owner_installation_id, peer_installation_id, status
+            FROM connections
+            WHERE (owner_installation_id = $requester_id
+                   OR peer_installation_id = $requester_id)
+              AND status = "confirmed"u;
+            """,
+            {
+                "$requester_id": _utf8(requester_installation_id),
+                "$asset_id": _utf8(asset_id),
+            },
+        )
+        return _authorized_media(requester_installation_id, result_sets)
+
+    def authorized_ready_media_for_owner(
+        self,
+        requester_installation_id: str,
+        owner_installation_id: str,
+    ) -> MediaRecord | None:
+        result_sets = self._execute(
+            """
+            DECLARE $requester_id AS Utf8;
+            DECLARE $owner_id AS Utf8;
+            SELECT media.asset_id AS asset_id,
+                   media.owner_installation_id AS owner_installation_id,
+                   media.object_key AS object_key,
+                   media.content_type AS content_type,
+                   media.size_bytes AS size_bytes,
+                   media.duration_ms AS duration_ms,
+                   media.state AS state
+            FROM cards AS card
+            INNER JOIN media_assets AS media ON media.asset_id = card.audio_asset_id
+            WHERE card.installation_id = $owner_id AND media.state = "ready"u;
+
+            SELECT owner_installation_id, peer_installation_id, status
+            FROM connections
+            WHERE (owner_installation_id = $requester_id
+                   OR peer_installation_id = $requester_id)
+              AND status = "confirmed"u;
+            """,
+            {
+                "$requester_id": _utf8(requester_installation_id),
+                "$owner_id": _utf8(owner_installation_id),
+            },
+        )
+        record = _authorized_media(requester_installation_id, result_sets)
+        if record is not None and record.owner_installation_id != owner_installation_id:
+            raise StorageIntegrityError
+        return record
+
+    @staticmethod
+    def _media_rows(
+        tx: ydb.QueryTxContext,
+        owner_installation_id: str,
+        asset_id: str,
+    ) -> list[Any]:
+        return YDBSyncStore._tx_rows(
+            tx,
+            _MEDIA_BY_OWNER_QUERY,
+            {
+                "$installation_id": _utf8(owner_installation_id),
+                "$asset_id": _utf8(asset_id),
+            },
+        )[0]
 
     def refresh(self, installation_id: str, cursor: str | None) -> SyncSnapshot:
         query = """
@@ -991,6 +1276,55 @@ def _stored_object_key(row: Any, key: str) -> str:
     if not object_key.strip():
         raise StorageIntegrityError
     return object_key
+
+
+def _stored_media(row: Any) -> MediaRecord:
+    content_type = _stored_text(row, "content_type")
+    state = _stored_text(row, "state")
+    if content_type != AUDIO_CONTENT_TYPE or state not in {"pending", "ready", "deleting"}:
+        raise StorageIntegrityError
+    return MediaRecord(
+        asset_id=_stored_text(row, "asset_id"),
+        owner_installation_id=_stored_text(row, "owner_installation_id"),
+        object_key=_stored_object_key(row, "object_key"),
+        content_type=content_type,
+        size_bytes=_stored_positive_int(row, "size_bytes"),
+        duration_ms=_stored_positive_int(row, "duration_ms"),
+        state=state,
+    )
+
+
+def _authorized_media(
+    requester_installation_id: str,
+    result_sets: list[list[Any]],
+) -> MediaRecord | None:
+    if len(result_sets) != 2:
+        raise StorageIntegrityError
+    media_rows, connection_rows = result_sets
+    if not media_rows:
+        return None
+    if len(media_rows) != 1:
+        raise StorageIntegrityError
+    record = _stored_media(media_rows[0])
+    if record.state != "ready":
+        raise StorageIntegrityError
+    if requester_installation_id == record.owner_installation_id:
+        return record
+    confirmed_connections = {
+        (
+            _stored_text(row, "owner_installation_id"),
+            _stored_text(row, "peer_installation_id"),
+        )
+        for row in connection_rows
+        if _stored_text(row, "status") == "confirmed"
+    }
+    owner_installation_id = record.owner_installation_id
+    if (
+        (requester_installation_id, owner_installation_id) in confirmed_connections
+        and (owner_installation_id, requester_installation_id) in confirmed_connections
+    ):
+        return record
+    return None
 
 
 def _object_keys(result: dict[str, Any]) -> list[str]:
