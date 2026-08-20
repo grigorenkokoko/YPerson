@@ -50,6 +50,16 @@ class RecordingTransaction:
     ) -> TransactionResult:
         parameters = parameters or {}
         self._pool.transaction_calls.append((query, parameters))
+        if "authentication-bootstrap" in query:
+            installation_id = str(_parameter(parameters, "$installation_id"))
+            stored = self._pool.installations.get(installation_id)
+            installation_rows = [{"credential_hash": stored}] if stored is not None else []
+            return TransactionResult([ResultSet(installation_rows), ResultSet([])])
+        if "UPSERT INTO installations" in query:
+            installation_id = str(_parameter(parameters, "$installation_id"))
+            candidate_hash = _parameter(parameters, "$credential_hash")
+            self._pool.installations.setdefault(installation_id, candidate_hash)
+            return TransactionResult([])
         if "active-installation-guard" in query:
             return TransactionResult([ResultSet([{"installation_id": "active"}]), ResultSet([])])
         operation_key = (
@@ -281,9 +291,18 @@ def test_installation_secret_is_hashed_and_mismatch_is_rejected(
     pool = RecordingPool()
     adapter = YDBSyncStore(pool)  # type: ignore[arg-type]
     adapter.authenticate_or_create("installation-123", "first-secret")
-    credential_parameter = pool.read_calls[0][1]["$credential_hash"][0]
+    assert pool.transaction_settings
+    assert all(settings.idempotent for _, settings in pool.transaction_settings)
+    assert all(
+        getattr(mode, "_name", None) == "serializable_read_write"
+        for mode, _ in pool.transaction_settings
+    )
+    credential_parameter = next(
+        parameters["$credential_hash"][0]
+        for query, parameters in pool.transaction_calls
+        if "UPSERT INTO installations" in query
+    )
     assert credential_parameter == sha256(b"first-secret").digest()
-    assert pool.read_calls[0][2].idempotent is True
     with pytest.raises(InvalidCredential):
         adapter.authenticate_or_create("installation-123", "wrong-secret")
     adapter.authenticate("installation-123", "first-secret")
@@ -294,8 +313,8 @@ def test_installation_secret_is_hashed_and_mismatch_is_rejected(
         for query, parameters, _ in pool.read_calls
         if _parameter(parameters, "$installation_id") == "installation-unknown"
     )
-    assert "first-secret" not in repr(pool.read_calls)
-    assert "wrong-secret" not in repr(pool.read_calls)
+    assert "first-secret" not in repr(pool.transaction_calls)
+    assert "wrong-secret" not in repr(pool.transaction_calls)
 
 
 def test_published_card_survives_refresh(
@@ -351,6 +370,8 @@ def test_delete_lost_response_replays_tombstone_without_recreating_installation(
     credential_hash = sha256(b"owner-secret").digest()
 
     def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "authentication-bootstrap" in query:
+            return [ResultSet([]), ResultSet([{"operation_id": "op-delete-1"}])]
         if "FROM operations" in query:
             return [ResultSet([])]
         if "SELECT credential_hash" in query:
