@@ -16,6 +16,29 @@ enum AuthorizationState: Equatable {
     case unavailable(String)
 }
 
+enum ContactReconciliationAction: Equatable {
+    case add
+    case update
+    case noChange
+}
+
+struct ContactReconciliationCandidate {
+    let identifier: String
+    let name: String
+    let detail: String
+}
+
+struct ContactReconciliationPlan {
+    let action: ContactReconciliationAction
+    let candidate: ContactReconciliationCandidate?
+    let changedFields: [String]
+}
+
+enum ContactReconciliationResult {
+    case plan(ContactReconciliationPlan)
+    case chooseCandidate([ContactReconciliationCandidate])
+}
+
 final class PermissionCenter: NSObject, CLLocationManagerDelegate {
     private let contactStore = CNContactStore()
     private let locationManager = CLLocationManager()
@@ -49,24 +72,145 @@ final class PermissionCenter: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    func duplicateContactCount(for card: PersonCard) throws -> Int {
-        let keys = [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactPhoneNumbersKey, CNContactEmailAddressesKey] as [CNKeyDescriptor]
+    func reconciliation(for card: PersonCard, choosing candidateIdentifier: String? = nil) throws -> ContactReconciliationResult {
+        let keys = contactKeys
         let request = CNContactFetchRequest(keysToFetch: keys)
-        var count = 0
-        let normalizedPhone = card.phone.filter(\.isNumber)
+        var matches: [CNContact] = []
         try contactStore.enumerateContacts(with: request) { contact, _ in
-            let phoneMatch = contact.phoneNumbers.contains { $0.value.stringValue.filter(\.isNumber).hasSuffix(normalizedPhone.suffix(10)) }
-            let emailMatch = contact.emailAddresses.contains { ($0.value as String).caseInsensitiveCompare(card.email) == .orderedSame }
-            if phoneMatch || emailMatch { count += 1 }
+            if ContactMatchPolicy.matches(
+                phone: card.phone,
+                email: card.email,
+                candidatePhones: contact.phoneNumbers.map { $0.value.stringValue },
+                candidateEmails: contact.emailAddresses.map { $0.value as String }
+            ) {
+                matches.append(contact)
+            }
         }
-        return count
+        guard !matches.isEmpty else { return .plan(plan(for: card, contact: nil)) }
+
+        if matches.count > 1, candidateIdentifier == nil {
+            return .chooseCandidate(matches.map(candidate(from:)))
+        }
+        guard let contact = candidateIdentifier.flatMap({ identifier in matches.first { $0.identifier == identifier } }) ?? (matches.count == 1 ? matches[0] : nil) else {
+            return .chooseCandidate(matches.map(candidate(from:)))
+        }
+        return .plan(plan(for: card, contact: contact))
+    }
+
+    func apply(_ plan: ContactReconciliationPlan, for card: PersonCard) throws -> ContactReconciliationAction {
+        let request = CNSaveRequest()
+        switch plan.action {
+        case .add:
+            request.add(makeContact(card), toContainerWithIdentifier: nil)
+        case .update:
+            guard let identifier = plan.candidate?.identifier else {
+                throw NSError(domain: "YPerson.Contacts", code: 1, userInfo: [NSLocalizedDescriptionKey: "Не удалось определить контакт для обновления."])
+            }
+            let contact = try contactStore.unifiedContact(withIdentifier: identifier, keysToFetch: contactKeys)
+            guard let mutableContact = contact.mutableCopy() as? CNMutableContact else {
+                throw NSError(domain: "YPerson.Contacts", code: 2, userInfo: [NSLocalizedDescriptionKey: "Не удалось подготовить контакт к обновлению."])
+            }
+            apply(card, to: mutableContact)
+            request.update(mutableContact)
+        case .noChange:
+            return .noChange
+        }
+        try contactStore.execute(request)
+        return plan.action
     }
 
     func saveContact(_ card: PersonCard) throws {
-        let contact = makeContact(card)
         let request = CNSaveRequest()
-        request.add(contact, toContainerWithIdentifier: nil)
+        request.add(makeContact(card), toContainerWithIdentifier: nil)
         try contactStore.execute(request)
+    }
+
+    private var contactKeys: [CNKeyDescriptor] {
+        [
+            CNContactIdentifierKey,
+            CNContactGivenNameKey,
+            CNContactFamilyNameKey,
+            CNContactOrganizationNameKey,
+            CNContactJobTitleKey,
+            CNContactPhoneNumbersKey,
+            CNContactEmailAddressesKey
+        ] as [CNKeyDescriptor]
+    }
+
+    private func candidate(from contact: CNContact) -> ContactReconciliationCandidate {
+        let name = [contact.givenName, contact.familyName]
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: " ")
+        let detail = [contact.organizationName, contact.jobTitle]
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: " · ")
+        return ContactReconciliationCandidate(
+            identifier: contact.identifier,
+            name: name.isEmpty ? (contact.organizationName.isEmpty ? "Без имени" : contact.organizationName) : name,
+            detail: detail
+        )
+    }
+
+    private func plan(for card: PersonCard, contact: CNContact?) -> ContactReconciliationPlan {
+        guard let contact else {
+            return ContactReconciliationPlan(action: .add, candidate: nil, changedFields: fieldsForNewContact(card))
+        }
+        let fields = changedFields(from: card, comparedTo: contact)
+        return ContactReconciliationPlan(
+            action: fields.isEmpty ? .noChange : .update,
+            candidate: candidate(from: contact),
+            changedFields: fields
+        )
+    }
+
+    private func fieldsForNewContact(_ card: PersonCard) -> [String] {
+        var fields: [String] = []
+        if !card.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fields.append("Имя") }
+        if !card.company.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fields.append("Компания") }
+        if !card.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fields.append("Должность") }
+        if ContactMatchPolicy.normalizedPhone(card.phone) != nil { fields.append("Телефон") }
+        if ContactMatchPolicy.normalizedEmail(card.email) != nil { fields.append("Email") }
+        return fields
+    }
+
+    private func changedFields(from card: PersonCard, comparedTo contact: CNContact) -> [String] {
+        let names = card.name.split(separator: " ", maxSplits: 1).map(String.init)
+        let givenName = names.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let familyName = names.count > 1 ? names[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        var fields: [String] = []
+        if (!givenName.isEmpty && givenName != contact.givenName) || (!familyName.isEmpty && familyName != contact.familyName) { fields.append("Имя") }
+        if !card.company.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, card.company != contact.organizationName { fields.append("Компания") }
+        if !card.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, card.role != contact.jobTitle { fields.append("Должность") }
+        if let phone = ContactMatchPolicy.normalizedPhone(card.phone), !contact.phoneNumbers.contains(where: { existing in
+            ContactMatchPolicy.normalizedPhone(existing.value.stringValue) == phone || ContactMatchPolicy.phoneMatches(existing.value.stringValue, card.phone)
+        }) { fields.append("Телефон") }
+        if let email = ContactMatchPolicy.normalizedEmail(card.email), !contact.emailAddresses.contains(where: { existing in
+            ContactMatchPolicy.normalizedEmail(existing.value as String) == email
+        }) { fields.append("Email") }
+        return fields
+    }
+
+    private func apply(_ card: PersonCard, to contact: CNMutableContact) {
+        let names = card.name.split(separator: " ", maxSplits: 1).map(String.init)
+        if let givenName = names.first?.trimmingCharacters(in: .whitespacesAndNewlines), !givenName.isEmpty { contact.givenName = givenName }
+        if names.count > 1 {
+            let familyName = names[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !familyName.isEmpty { contact.familyName = familyName }
+        }
+        let company = card.company.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !company.isEmpty { contact.organizationName = company }
+        let role = card.role.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !role.isEmpty { contact.jobTitle = role }
+        if let phone = ContactMatchPolicy.normalizedPhone(card.phone), !contact.phoneNumbers.contains(where: { existing in
+            ContactMatchPolicy.normalizedPhone(existing.value.stringValue) == phone || ContactMatchPolicy.phoneMatches(existing.value.stringValue, card.phone)
+        }) {
+            contact.phoneNumbers.append(CNLabeledValue(label: CNLabelPhoneNumberMain, value: CNPhoneNumber(stringValue: card.phone)))
+        }
+        if let email = ContactMatchPolicy.normalizedEmail(card.email), !contact.emailAddresses.contains(where: { existing in
+            ContactMatchPolicy.normalizedEmail(existing.value as String) == email
+        }) {
+            contact.emailAddresses.append(CNLabeledValue(label: CNLabelWork, value: card.email.trimmingCharacters(in: .whitespacesAndNewlines) as NSString))
+        }
     }
 
     func makeContact(_ card: PersonCard) -> CNMutableContact {
@@ -76,8 +220,12 @@ final class PermissionCenter: NSObject, CLLocationManagerDelegate {
         contact.familyName = names.count > 1 ? names[1] : ""
         contact.organizationName = card.company
         contact.jobTitle = card.role
-        contact.phoneNumbers = [CNLabeledValue(label: CNLabelPhoneNumberMain, value: CNPhoneNumber(stringValue: card.phone))]
-        contact.emailAddresses = [CNLabeledValue(label: CNLabelWork, value: card.email as NSString)]
+        if ContactMatchPolicy.normalizedPhone(card.phone) != nil {
+            contact.phoneNumbers = [CNLabeledValue(label: CNLabelPhoneNumberMain, value: CNPhoneNumber(stringValue: card.phone))]
+        }
+        if ContactMatchPolicy.normalizedEmail(card.email) != nil {
+            contact.emailAddresses = [CNLabeledValue(label: CNLabelWork, value: card.email.trimmingCharacters(in: .whitespacesAndNewlines) as NSString)]
+        }
         return contact
     }
 
