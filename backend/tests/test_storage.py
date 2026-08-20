@@ -12,7 +12,13 @@ import pytest
 import ydb
 
 from app.schemas import PersonCard
-from app.storage import InstallationRecord, InvalidCredential, SyncSnapshot, SyncStore
+from app.storage import (
+    InstallationRecord,
+    InvalidCredential,
+    StorageConflict,
+    SyncSnapshot,
+    SyncStore,
+)
 from app.ydb_store import YDBSyncStore
 
 
@@ -106,7 +112,7 @@ class RecordingPool:
             own_rows = []
             if stored is not None:
                 own_rows = [{"version": stored[0], "card_json": stored[1]}]
-            return [ResultSet(own_rows), ResultSet([])]
+            return [ResultSet(own_rows), ResultSet([]), ResultSet([])]
         raise AssertionError("unexpected read query")
 
     def retry_tx_sync(
@@ -118,6 +124,50 @@ class RecordingPool:
     ) -> Any:
         self.transaction_settings.append((tx_mode, retry_settings))
         return callee(RecordingTransaction(self))
+
+
+class ScriptedTransaction:
+    def __init__(self, pool: ScriptedPool) -> None:
+        self._pool = pool
+
+    def execute(
+        self,
+        query: str,
+        parameters: dict[str, Any] | None = None,
+    ) -> TransactionResult:
+        parameters = parameters or {}
+        self._pool.transaction_calls.append((query, parameters))
+        return TransactionResult(self._pool.transaction_handler(query, parameters))
+
+
+class ScriptedPool:
+    def __init__(self, *, transaction_handler: Any, read_handler: Any = None) -> None:
+        self.transaction_handler = transaction_handler
+        self.read_handler = read_handler or (lambda _query, _parameters: [])
+        self.transaction_calls: list[tuple[str, dict[str, Any]]] = []
+        self.read_calls: list[tuple[str, dict[str, Any]]] = []
+
+    def execute_with_retries(
+        self,
+        query: str,
+        parameters: dict[str, Any],
+        *,
+        retry_settings: ydb.RetrySettings,
+    ) -> list[ResultSet]:
+        assert retry_settings.idempotent
+        self.read_calls.append((query, parameters))
+        return self.read_handler(query, parameters)
+
+    def retry_tx_sync(
+        self,
+        callee: Any,
+        *,
+        tx_mode: object,
+        retry_settings: ydb.RetrySettings,
+    ) -> Any:
+        assert retry_settings.idempotent
+        assert getattr(tx_mode, "_name", None) == "serializable_read_write"
+        return callee(ScriptedTransaction(self))
 
 
 def _parameter(parameters: dict[str, Any], name: str) -> Any:
@@ -257,3 +307,231 @@ def test_published_card_survives_refresh(
     )
     stored_json = json.loads(pool.cards["installation-owner"][1])
     assert "meetingPlace" not in stored_json
+
+
+def test_delete_lost_response_replays_tombstone_without_recreating_installation(
+    card: PersonCard,
+) -> None:
+    credential_hash = sha256(b"owner-secret").digest()
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "SELECT credential_hash" in query:
+            return [ResultSet([{"credential_hash": credential_hash}])]
+        if "SELECT object_key" in query:
+            return [ResultSet([{"object_key": "private/audio.m4a"}])]
+        if "SELECT card_id FROM cards" in query:
+            return [ResultSet([{"card_id": card.id}])]
+        if "SELECT owner_installation_id, peer_installation_id" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "owner_installation_id": "installation-owner",
+                            "peer_installation_id": "installation-peer",
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    deletion_result = {
+        "credentialHash": credential_hash.hex(),
+        "objectKeys": ["private/audio.m4a"],
+    }
+
+    def read_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if 'operation_type = "revocation"' in query:
+            return [
+                ResultSet([]),
+                ResultSet([]),
+                ResultSet(
+                    [
+                        {
+                            "operation_id": f"revocation:op-delete-1:{card.id}",
+                            "result_json": json.dumps({"cardID": card.id}),
+                        }
+                    ]
+                ),
+            ]
+        if 'operation_type = "deleteProfile"' in query and "result_json" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "operation_type": "deleteProfile",
+                            "result_json": json.dumps(deletion_result),
+                        }
+                    ]
+                )
+            ]
+        return [ResultSet([])]
+
+    pool = ScriptedPool(
+        transaction_handler=transaction_handler,
+        read_handler=read_handler,
+    )
+    adapter = YDBSyncStore(pool)  # type: ignore[arg-type]
+    assert adapter.delete_profile("installation-owner", "op-delete-1") == ["private/audio.m4a"]
+    peer_refresh = adapter.refresh("installation-peer", None)
+    assert peer_refresh.people == ()
+    assert peer_refresh.revoked_card_ids == (card.id,)
+    assert adapter.replay_deleted_profile(
+        "installation-owner",
+        "op-delete-1",
+        "owner-secret",
+    ) == ["private/audio.m4a"]
+    with pytest.raises(InvalidCredential):
+        adapter.authenticate_or_create("installation-owner", "owner-secret")
+
+    all_queries = "\n".join(query for query, _ in pool.transaction_calls + pool.read_calls)
+    assert 'operation_type = "deleteProfile"' in all_queries
+    deletion_parameters = next(
+        parameters
+        for query, parameters in pool.transaction_calls
+        if "DELETE FROM installations" in query
+    )
+    stored_result = json.loads(_parameter(deletion_parameters, "$result_json"))
+    assert stored_result == deletion_result
+    assert any(
+        _parameter(parameters, "$revoked_card_id") == card.id
+        for _, parameters in pool.transaction_calls
+        if "$revoked_card_id" in parameters
+    )
+
+
+def test_exchange_token_rejects_second_operation_even_for_same_recipient(
+    card: PersonCard,
+) -> None:
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "FROM exchange_claims AS claim" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "issuer_installation_id": "installation-owner",
+                            "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+                            "claimed_by_installation_id": "installation-peer",
+                            "version": 1,
+                            "card_json": json.dumps(card.model_dump(mode="json")),
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    adapter = YDBSyncStore(pool)  # type: ignore[arg-type]
+    with pytest.raises(StorageConflict):
+        adapter.claim_exchange(
+            "installation-peer",
+            "op-claim-new",
+            "already-claimed-token",
+        )
+    assert not any("UPDATE exchange_claims" in query for query, _ in pool.transaction_calls)
+
+
+def test_block_is_symmetric_and_refresh_returns_durable_revocations(
+    card: PersonCard,
+) -> None:
+    peer_card = card.model_copy(update={"id": "card-peer", "name": "Peer"})
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "SELECT installation_id, card_id" in query:
+            return [
+                ResultSet(
+                    [
+                        {"installation_id": "installation-owner", "card_id": card.id},
+                        {"installation_id": "installation-peer", "card_id": peer_card.id},
+                    ]
+                )
+            ]
+        return []
+
+    def read_handler(_query: str, parameters: dict[str, Any]) -> list[ResultSet]:
+        installation_id = _parameter(parameters, "$installation_id")
+        revoked = peer_card.id if installation_id == "installation-owner" else card.id
+        return [
+            ResultSet([]),
+            ResultSet([]),
+            ResultSet(
+                [
+                    {
+                        "operation_id": f"revoke-{revoked}",
+                        "result_json": json.dumps({"cardID": revoked}),
+                    }
+                ]
+            ),
+        ]
+
+    pool = ScriptedPool(
+        transaction_handler=transaction_handler,
+        read_handler=read_handler,
+    )
+    adapter = YDBSyncStore(pool)  # type: ignore[arg-type]
+    adapter.record_moderation(
+        "installation-owner",
+        "op-block-1",
+        "installation-peer",
+        "block",
+        None,
+    )
+    owner = adapter.refresh("installation-owner", None)
+    peer = adapter.refresh("installation-peer", None)
+    assert owner.people == ()
+    assert peer.people == ()
+    assert owner.revoked_card_ids == (peer_card.id,)
+    assert peer.revoked_card_ids == (card.id,)
+    owner_after_cursor = adapter.refresh("installation-owner", owner.next_cursor)
+    assert owner_after_cursor.revoked_card_ids == ()
+    assert owner_after_cursor.next_cursor == owner.next_cursor
+
+    all_queries = "\n".join(query for query, _ in pool.transaction_calls + pool.read_calls)
+    assert "reverse.status" in all_queries
+    assert "($subject_id, $installation_id" in all_queries
+    revocation_parameters = [
+        parameters for _, parameters in pool.transaction_calls if "$revoked_card_id" in parameters
+    ]
+    assert {_parameter(params, "$revoked_card_id") for params in revocation_parameters} == {
+        card.id,
+        peer_card.id,
+    }
+
+
+def test_schema_rejects_an_incompatible_existing_table() -> None:
+    from app.ydb_schema import EXPECTED_TABLES, SchemaMismatch, apply_schema
+
+    class SchemaPool:
+        def execute_with_retries(
+            self,
+            _query: str,
+            *,
+            retry_settings: ydb.RetrySettings,
+        ) -> None:
+            assert retry_settings.idempotent
+
+    class Description:
+        def __init__(self, columns: list[ydb.Column], primary_key: list[str]) -> None:
+            self.columns = columns
+            self.primary_key = primary_key
+
+    def describe_table(table_name: str) -> Description:
+        table = EXPECTED_TABLES[table_name]
+        columns = [ydb.Column(name, column_type) for name, column_type in table.columns]
+        if table_name == "installations":
+            columns = [
+                ydb.Column(
+                    column.name,
+                    ydb.PrimitiveType.Utf8 if column.name == "credential_hash" else column.type,
+                )
+                for column in columns
+            ]
+        return Description(columns, list(table.primary_key))
+
+    with pytest.raises(SchemaMismatch, match="schema version 1"):
+        apply_schema(SchemaPool(), describe_table)  # type: ignore[arg-type]

@@ -96,3 +96,11 @@ class SyncStore(Protocol):
 
     def delete_profile(self, installation_id: str, operation_id: str) -> list[str]:
         """Remove active profile state and return private object keys to delete."""
+
+    def replay_deleted_profile(
+        self,
+        installation_id: str,
+        operation_id: str,
+        bearer: str,
+    ) -> list[str] | None:
+        """Authenticate and replay a completed deletion without bootstrapping state."""

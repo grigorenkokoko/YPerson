@@ -43,6 +43,11 @@ class YDBSyncStore:
         $existing = SELECT installation_id
                     FROM installations
                     WHERE installation_id = $installation_id;
+        $deleted = SELECT operation_id
+                   FROM operations
+                   WHERE installation_id = $installation_id
+                     AND operation_type = "deleteProfile"u
+                   LIMIT 1;
 
         UPSERT INTO installations (
             installation_id, credential_hash, apns_token,
@@ -50,7 +55,7 @@ class YDBSyncStore:
         )
         SELECT $installation_id, $credential_hash,
                CAST(NULL AS Utf8?), $now, $now, CAST(NULL AS Timestamp?)
-        WHERE NOT EXISTS ($existing);
+        WHERE NOT EXISTS ($existing) AND NOT EXISTS ($deleted);
 
         SELECT credential_hash, apns_token, created_at, updated_at, deleted_at
         FROM installations
@@ -143,10 +148,20 @@ class YDBSyncStore:
 
         SELECT peer.version AS version, peer.card_json AS card_json
         FROM connections AS connection
+        INNER JOIN connections AS reverse
+            ON reverse.owner_installation_id = connection.peer_installation_id
+           AND reverse.peer_installation_id = connection.owner_installation_id
         INNER JOIN cards AS peer
             ON peer.installation_id = connection.peer_installation_id
         WHERE connection.owner_installation_id = $installation_id
-          AND connection.status = "confirmed"u;
+          AND connection.status = "confirmed"u
+          AND reverse.status = "confirmed"u;
+
+        SELECT operation_id, result_json
+        FROM operations
+        WHERE installation_id = $installation_id
+          AND operation_type = "revocation"u
+        ORDER BY completed_at, operation_id;
         """
         result_sets = self._execute(
             query,
@@ -154,6 +169,7 @@ class YDBSyncStore:
         )
         own_rows = result_sets[0]
         people_rows = result_sets[1]
+        revocation_rows = result_sets[2]
         own_card = _card(own_rows[0]["card_json"]) if own_rows else None
         own_version = int(own_rows[0]["version"]) if own_rows else None
         people = tuple(
@@ -163,11 +179,19 @@ class YDBSyncStore:
             )
             for row in people_rows
         )
+        unseen_revocations = _unseen_revocations(revocation_rows, cursor)
+        revoked_card_ids = tuple(
+            dict.fromkeys(
+                str(_json_value(row["result_json"])["cardID"]) for row in unseen_revocations
+            )
+        )
+        next_cursor = str(unseen_revocations[-1]["operation_id"]) if unseen_revocations else cursor
         return SyncSnapshot(
             own_card=own_card,
             own_card_version=own_version,
             people=people,
-            next_cursor=cursor,
+            revoked_card_ids=revoked_card_ids,
+            next_cursor=next_cursor,
         )
 
     def prepare_exchange(
@@ -277,7 +301,7 @@ class YDBSyncStore:
             if (
                 issuer_id == installation_id
                 or _as_utc(row["expires_at"]) <= _as_utc(now)
-                or (claimed_by is not None and str(claimed_by) != installation_id)
+                or claimed_by is not None
             ):
                 raise StorageConflict("exchange unavailable")
             person = SyncedPerson(
@@ -381,6 +405,23 @@ class YDBSyncStore:
             previous = self._operation_result(tx, installation_id, operation_id, action)
             if previous is not None:
                 return
+            card_ids: dict[str, str] = {}
+            if action == "block":
+                card_rows = self._tx_rows(
+                    tx,
+                    """
+                    DECLARE $installation_id AS Utf8;
+                    DECLARE $subject_id AS Utf8;
+                    SELECT installation_id, card_id
+                    FROM cards
+                    WHERE installation_id IN ($installation_id, $subject_id);
+                    """,
+                    {
+                        "$installation_id": _utf8(installation_id),
+                        "$subject_id": _utf8(subject_id),
+                    },
+                )[0]
+                card_ids = {str(row["installation_id"]): str(row["card_id"]) for row in card_rows}
             self._tx_rows(
                 tx,
                 """
@@ -419,10 +460,12 @@ class YDBSyncStore:
                     DECLARE $installation_id AS Utf8;
                     DECLARE $subject_id AS Utf8;
                     DECLARE $now AS Timestamp;
-                    UPDATE connections
-                    SET status = "blocked"u, updated_at = $now
-                    WHERE owner_installation_id = $installation_id
-                      AND peer_installation_id = $subject_id;
+                    UPSERT INTO connections (
+                        owner_installation_id, peer_installation_id,
+                        status, created_at, updated_at
+                    ) VALUES
+                        ($installation_id, $subject_id, "blocked"u, $now, $now),
+                        ($subject_id, $installation_id, "blocked"u, $now, $now);
                     """,
                     {
                         "$installation_id": _utf8(installation_id),
@@ -430,6 +473,22 @@ class YDBSyncStore:
                         "$now": _timestamp(now),
                     },
                 )
+                if subject_card_id := card_ids.get(subject_id):
+                    self._store_revocation(
+                        tx,
+                        installation_id,
+                        operation_id,
+                        subject_card_id,
+                        now,
+                    )
+                if reporter_card_id := card_ids.get(installation_id):
+                    self._store_revocation(
+                        tx,
+                        subject_id,
+                        operation_id,
+                        reporter_card_id,
+                        now,
+                    )
 
         self._transaction(record)
 
@@ -440,6 +499,18 @@ class YDBSyncStore:
             previous = self._operation_result(tx, installation_id, operation_id, "deleteProfile")
             if previous is not None:
                 return [str(key) for key in previous["objectKeys"]]
+            credential_rows = self._tx_rows(
+                tx,
+                """
+                DECLARE $installation_id AS Utf8;
+                SELECT credential_hash FROM installations
+                WHERE installation_id = $installation_id;
+                """,
+                {"$installation_id": _utf8(installation_id)},
+            )[0]
+            if not credential_rows:
+                raise StorageConflict("profile unavailable")
+            credential_hash = bytes(credential_rows[0]["credential_hash"])
             media_rows = self._tx_rows(
                 tx,
                 """
@@ -450,7 +521,48 @@ class YDBSyncStore:
                 {"$installation_id": _utf8(installation_id)},
             )[0]
             object_keys = [str(row["object_key"]) for row in media_rows]
-            result_json = _json({"objectKeys": object_keys})
+            card_rows = self._tx_rows(
+                tx,
+                """
+                DECLARE $installation_id AS Utf8;
+                SELECT card_id FROM cards
+                WHERE installation_id = $installation_id;
+                """,
+                {"$installation_id": _utf8(installation_id)},
+            )[0]
+            connection_rows = self._tx_rows(
+                tx,
+                """
+                DECLARE $installation_id AS Utf8;
+                SELECT owner_installation_id, peer_installation_id
+                FROM connections
+                WHERE owner_installation_id = $installation_id
+                   OR peer_installation_id = $installation_id;
+                """,
+                {"$installation_id": _utf8(installation_id)},
+            )[0]
+            if card_rows:
+                revoked_card_id = str(card_rows[0]["card_id"])
+                peers = {
+                    str(row["peer_installation_id"])
+                    if str(row["owner_installation_id"]) == installation_id
+                    else str(row["owner_installation_id"])
+                    for row in connection_rows
+                }
+                for peer_installation_id in peers:
+                    self._store_revocation(
+                        tx,
+                        peer_installation_id,
+                        operation_id,
+                        revoked_card_id,
+                        now,
+                    )
+            result_json = _json(
+                {
+                    "credentialHash": credential_hash.hex(),
+                    "objectKeys": object_keys,
+                }
+            )
             self._tx_rows(
                 tx,
                 """
@@ -485,6 +597,38 @@ class YDBSyncStore:
             return object_keys
 
         return self._transaction(delete)
+
+    def replay_deleted_profile(
+        self,
+        installation_id: str,
+        operation_id: str,
+        bearer: str,
+    ) -> list[str] | None:
+        rows = self._execute(
+            """
+            DECLARE $installation_id AS Utf8;
+            DECLARE $operation_id AS Utf8;
+            SELECT operation_type, result_json
+            FROM operations
+            WHERE installation_id = $installation_id
+              AND operation_id = $operation_id
+              AND operation_type = "deleteProfile"u;
+            """,
+            {
+                "$installation_id": _utf8(installation_id),
+                "$operation_id": _utf8(operation_id),
+            },
+        )[0]
+        if not rows:
+            return None
+        result = _json_value(rows[0]["result_json"])
+        try:
+            stored_hash = bytes.fromhex(str(result["credentialHash"]))
+        except (KeyError, TypeError, ValueError) as error:
+            raise StorageConflict("invalid operation result") from error
+        if not compare_digest(stored_hash, _digest(bearer)):
+            raise InvalidCredential
+        return [str(key) for key in result["objectKeys"]]
 
     def debug_installation(self, installation_id: str) -> InstallationRecord | None:
         """Return secret-safe adapter state for deterministic injected-pool tests."""
@@ -536,6 +680,38 @@ class YDBSyncStore:
             raise StorageConflict("operation identifier already used")
         return _json_value(rows[0]["result_json"])
 
+    def _store_revocation(
+        self,
+        tx: ydb.QueryTxContext,
+        installation_id: str,
+        source_operation_id: str,
+        revoked_card_id: str,
+        now: datetime,
+    ) -> None:
+        revocation_id = f"revocation:{source_operation_id}:{revoked_card_id}"
+        self._tx_rows(
+            tx,
+            """
+            DECLARE $installation_id AS Utf8;
+            DECLARE $operation_id AS Utf8;
+            DECLARE $revoked_card_id AS Utf8;
+            DECLARE $result_json AS JsonDocument;
+            DECLARE $now AS Timestamp;
+            UPSERT INTO operations (
+                installation_id, operation_id, operation_type, result_json, completed_at
+            ) VALUES (
+                $installation_id, $operation_id, "revocation"u, $result_json, $now
+            );
+            """,
+            {
+                "$installation_id": _utf8(installation_id),
+                "$operation_id": _utf8(revocation_id),
+                "$revoked_card_id": _utf8(revoked_card_id),
+                "$result_json": _json_document(_json({"cardID": revoked_card_id})),
+                "$now": _timestamp(now),
+            },
+        )
+
     def _execute(self, query: str, parameters: dict[str, Any]) -> list[list[Any]]:
         result_sets = self._pool.execute_with_retries(
             query,
@@ -580,6 +756,15 @@ def _json_value(value: Any) -> dict[str, Any]:
 
 def _card(value: Any) -> PersonCard:
     return PersonCard.model_validate(_json_value(value))
+
+
+def _unseen_revocations(rows: list[Any], cursor: str | None) -> list[Any]:
+    if cursor is None:
+        return rows
+    for index, row in enumerate(rows):
+        if str(row["operation_id"]) == cursor:
+            return rows[index + 1 :]
+    return rows
 
 
 def _as_utc(value: datetime) -> datetime:

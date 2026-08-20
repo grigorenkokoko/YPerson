@@ -27,7 +27,12 @@ def main() -> int:
     with ydb.Driver(config) as driver:
         driver.wait(timeout=10, fail_fast=True)
         with ydb.QuerySessionPool(driver) as pool:
-            completed = apply_schema(pool)
+            completed = apply_schema(
+                pool,
+                lambda table_name: driver.table_client.describe_table(
+                    f"{database.rstrip('/')}/{table_name}"
+                ),
+            )
     if completed != len(TABLE_DDL):
         raise RuntimeError("YDB schema application was incomplete")
     return 0
