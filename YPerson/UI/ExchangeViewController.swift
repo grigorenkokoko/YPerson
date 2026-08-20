@@ -6,6 +6,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private let nearby: NearbyExchangeController
     private let photoScanner: PhotoCardScanner
     private let permissions: PermissionCenter
+    private let audio: AudioGreetingController
     private let syncCoordinator: SyncCoordinator
     private let analytics: AppMetricaAnalyticsClient
     private let snapshotStore: AppGroupSnapshotStore?
@@ -16,10 +17,11 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private var prepareTask: Task<Void, Never>?
     private var preparedToken: String?
 
-    init(nearby: NearbyExchangeController, photoScanner: PhotoCardScanner, permissions: PermissionCenter, syncCoordinator: SyncCoordinator, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, ownCard: @escaping () -> PersonCard?, onPersonSaved: @escaping (PersonCard) -> Void) {
+    init(nearby: NearbyExchangeController, photoScanner: PhotoCardScanner, permissions: PermissionCenter, audio: AudioGreetingController, syncCoordinator: SyncCoordinator, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, ownCard: @escaping () -> PersonCard?, onPersonSaved: @escaping (PersonCard) -> Void) {
         self.nearby = nearby
         self.photoScanner = photoScanner
         self.permissions = permissions
+        self.audio = audio
         self.syncCoordinator = syncCoordinator
         self.analytics = analytics
         self.snapshotStore = snapshotStore
@@ -182,7 +184,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         Task { [weak self] in
             guard let self else { return }
             do {
-                let response = try await syncCoordinator.claimExchange(token: token, expiresAt: nil, localCardID: nil)
+                let response = try await claimExchange(token: token, expiresAt: nil, localCardID: nil)
                 let saved = try persist(response: response)
                 guard !saved.isEmpty else { throw ExchangeError.missingPeerCard }
                 preparedToken = nil
@@ -250,7 +252,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         Task { [weak self] in
             guard let self else { return }
             do {
-                let response = try await syncCoordinator.claimExchange(
+                let response = try await claimExchange(
                     token: token,
                     expiresAt: payload.expiresAt,
                     localCardID: payload.card.id
@@ -330,7 +332,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         Task { [weak self] in
             guard let self else { return }
             do {
-                let response = try await syncCoordinator.claimExchange(token: code, expiresAt: nil, localCardID: nil)
+                let response = try await claimExchange(token: code, expiresAt: nil, localCardID: nil)
                 let saved = try persist(response: response)
                 guard !saved.isEmpty else { throw ExchangeError.missingPeerCard }
                 analytics.report(.cardReceived("manual"))
@@ -339,6 +341,21 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                 showMessage("Код не подтверждён", "Проверьте код и подключение к интернету.")
             }
         }
+    }
+
+    private func claimExchange(
+        token: String,
+        expiresAt: Date?,
+        localCardID: String?
+    ) async throws -> SyncResponse {
+        guard let ownCard = ownCard() else { throw SyncCoordinator.CoordinatorError.noProfile }
+        return try await syncCoordinator.claimExchange(
+            token: token,
+            expiresAt: expiresAt,
+            localCardID: localCardID,
+            ownCard: ownCard,
+            greeting: audio.savedGreeting()
+        )
     }
 
     @objc private func togglePrivate(_ sender: UISwitch) {

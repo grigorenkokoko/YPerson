@@ -73,6 +73,7 @@ final class YPersonExperienceBuilder {
             nearby: nearby,
             photoScanner: photoScanner,
             permissions: permissions,
+            audio: audio,
             syncCoordinator: syncCoordinator,
             analytics: analytics,
             snapshotStore: snapshotStore,
