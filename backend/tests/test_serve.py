@@ -12,8 +12,10 @@ def test_production_app_serves_health_with_current_fastapi_lifecycle(
     monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("YDB_ANONYMOUS_CREDENTIALS", "1")
+    monkeypatch.delenv("YPERSON_CONFIG_VERSION", raising=False)
     application = serve.build_app(
         Settings(
+            _env_file=None,
             environment="production",
             ydb_endpoint="grpcs://ydb.serverless.yandexcloud.net:2135",
             ydb_database="/ru-central1/test-folder/test-database",
