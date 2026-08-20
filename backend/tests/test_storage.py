@@ -491,6 +491,39 @@ def test_exchange_token_rejects_second_operation_even_for_same_recipient(
     assert not any("UPDATE exchange_claims" in query for query, _ in pool.transaction_calls)
 
 
+def test_claim_accepts_native_ydb_json_document(card: PersonCard) -> None:
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "FROM exchange_claims AS claim" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "issuer_installation_id": "installation-owner",
+                            "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+                            "claimed_by_installation_id": None,
+                            "version": 1,
+                            "card_json": card.model_dump(mode="json"),
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    adapter = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    person = adapter.claim_exchange(
+        "installation-peer",
+        "op-claim-native-json",
+        "unclaimed-token",
+    )
+
+    assert person.installationID == "installation-owner"
+    assert person.card == card
+
+
 def test_owner_cancel_deletes_unclaimed_exchange_and_persists_only_token_hash() -> None:
     raw_token = "prepared-token-never-persist-me"
     token_hash = sha256(raw_token.encode()).digest()

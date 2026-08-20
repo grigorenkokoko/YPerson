@@ -1190,6 +1190,8 @@ def _json(value: Any) -> str:
 
 
 def _json_value(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
     try:
         if isinstance(value, bytes):
             value = value.decode("utf-8")
