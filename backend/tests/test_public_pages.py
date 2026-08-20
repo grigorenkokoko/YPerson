@@ -32,22 +32,27 @@ def test_public_page_is_small_safe_utf8_html(client: TestClient, path: str, titl
         assert prohibited not in source
 
 
-def test_privacy_page_describes_only_the_database_free_technical_release(
+def test_privacy_page_describes_ydb_audio_and_deletion_without_deployment_claim(
     client: TestClient,
 ) -> None:
     source = client.get("/privacy").text
 
-    assert "GET /config" in source
+    assert "YDB Serverless" in source
+    assert "закрытом Object Storage" in source
     assert "POST /sync" in source
-    assert "не сохраняет профили или APNs-токены" in source
+    assert "Настройки → Данные и конфиденциальность → Удалить профиль" in source
+    assert "в течение 30 дней" in source
+    assert "ещё не подтверждены" in source
     assert "не является окончательной юридической политикой" in source
 
 
-def test_support_page_uses_the_public_issue_tracker_and_discloses_disabled_flows(
+def test_support_page_uses_issue_tracker_and_discloses_external_checks(
     client: TestClient,
 ) -> None:
     source = client.get("/support").text
 
     assert 'href="https://github.com/grigorenkokoko/YPerson/issues"' in source
-    assert "Синхронизация и удалённые push-уведомления пока недоступны" in source
+    assert "внешняя выкладка этой версии ещё не подтверждена" in source
+    assert "production APNs" in source
+    assert "запрос сохраняется и повторяется" in source
     assert source.count("https://") == 1

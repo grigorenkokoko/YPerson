@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
   title: YPerson API
-  version: 1.0.0
+  version: 2.0.0
 paths:
   /health:
     get:
@@ -19,6 +19,8 @@ paths:
       responses:
         "200":
           description: Public application configuration
+        "304":
+          description: Configuration is unchanged
       x-yc-apigateway-integration:
         type: serverless_containers
         container_id: ${YC_HTTP_CONTAINER_ID}
@@ -45,14 +47,23 @@ paths:
         service_account_id: ${YC_GATEWAY_SA_ID}
   /sync:
     post:
-      operationId: syncDisabled
+      operationId: sync
       responses:
+        "200":
+          description: Authenticated sync operation completed
+        "400":
+          description: Invalid sync request
+        "401":
+          description: Invalid installation credential
+        "409":
+          description: Operation conflict or expired exchange
+        "413":
+          description: Request body is too large
+        "415":
+          description: Unsupported media type
         "503":
-          description: Sync is disabled until installation authentication is enabled
+          description: Durable sync dependency is unavailable
       x-yc-apigateway-integration:
-        type: dummy
-        http_code: 503
-        http_headers:
-          Content-Type: application/json
-        content:
-          application/json: '{"error":"temporarily_unavailable","message":"sync is not enabled"}'
+        type: serverless_containers
+        container_id: ${YC_HTTP_CONTAINER_ID}
+        service_account_id: ${YC_GATEWAY_SA_ID}

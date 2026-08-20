@@ -462,21 +462,33 @@ tracking:
     - advertising_data
 
 backend:
-  storage_model: compact profile snapshots plus connections, short-lived exchange claims, moderation state, and push token
-  prototype_storage: PostgreSQL-backed durable storage for the implemented subset; this is not a production-deployment claim
+  storage_model: YDB Serverless stores compact profile snapshots, connections, short-lived exchange claims, moderation state, push token, and audio metadata; private Object Storage stores only audio greeting objects
+  durable_storage_target: implemented locally; YDB schema, private bucket, Lockbox configuration, and external runtime verification remain pending deployment evidence
+  evidence_state:
+    implemented_locally: sync v2 authentication, YDB adapter/schema, private signed audio transfer, idempotent profile deletion, and iOS durable retry
+    deployed_externally: false
+    pending_physical_device: production APNs delivery and mutual Bluetooth exchange on two iPhones
   implementation:
-    runtime: Python 3.12 with FastAPI, SQLAlchemy, Alembic, PostgreSQL, and Uvicorn
-    wire_format: current iOS-compatible camelCase subset; the broader snake_case product inventory below is not implemented as an alternate request shape
+    runtime: Python 3.12 with FastAPI and Uvicorn in a Serverless Container behind API Gateway; YDB and private Object Storage are the approved durable-storage target
+    wire_format: versioned camelCase sync v2; authentication secret is sent only as an HTTPS Bearer header and is stored server-side only as a hash
     sync_request_fields:
+      - contractVersion
+      - operationID
       - installationID
-      - bearer
+      - cursor
       - apnsToken
       - operation
       - card
       - exchangeToken
+      - exchangeMethod
+      - audioAssetID
+      - audioSizeBytes
+      - audioDurationMS
       - moderationCategory
+      - subjectInstallationID
     exchange_token_storage: raw exchange tokens are stored only as SHA-256 hashes and expire after 10 minutes
-    staging_artifacts: Dockerfile, Docker Compose, explicit Alembic migration job, and /health check are authored and configuration-validated; no image build, container run, or production deployment is claimed
+    audio_storage: private Object Storage only; upload and download use short-lived signed URLs, and persistent object credentials stay in Lockbox rather than the app or repository
+    historical_staging_artifacts: Dockerfile, Docker Compose, and PostgreSQL checks remain historical local staging evidence only; they do not demonstrate the approved YDB/Object Storage deployment
   endpoints:
     - method: GET
       path: /health
@@ -502,25 +514,32 @@ backend:
       path: /sync
       purpose: profile/card sync, exchange claims, connection decisions, APNs token, moderation actions, and profile deletion
       request_fields:
-        - installation_id
-        - auth_token
+        - contractVersion
+        - operationID
+        - installationID
+        - operation
         - cursor
-        - config_version
-        - apns_token
-        - own_card_snapshot
-        - exchange_claims
-        - connection_decisions
-        - moderation_actions
-        - delete_profile
+        - apnsToken
+        - card
+        - exchangeToken
+        - exchangeMethod
+        - audioAssetID
+        - audioSizeBytes
+        - audioDurationMS
+        - moderationCategory
+        - subjectInstallationID
       response_fields:
-        - next_cursor
-        - required_config_version
-        - own_card_version_ack
-        - new_or_updated_confirmed_cards
-        - revoked_cards
-        - expired_claims
-        - moderation_status
-        - notification_configuration
+        - accepted
+        - serverVersion
+        - updateCount
+        - message
+        - nextCursor
+        - ownCardVersion
+        - people
+        - revokedCardIDs
+        - exchangeToken
+        - audioUpload
+        - notificationConfiguration
   config_constraints:
     - may disable features or analytics but may not enable undisclosed collection
     - may not change static purpose strings or add permission categories
@@ -670,7 +689,7 @@ policy_modules:
     reason: installation-scoped cloud profile is created
     in_app_path: "Настройки → Данные и конфиденциальность → Удалить профиль"
     scope: published card/assets, connections, exchange claims, APNs/auth tokens, and local data
-    timing: active storage immediately; backups within 30 days
+    timing: active storage after server acknowledgement; offline request persists for retry; configured backups must be removed within 30 days
     exception: closed abuse/security report may remain restricted for up to 180 days
     ui_evidence: "S7 Данные и конфиденциальность → Удалить профиль → подтверждение полного scope и сроков"
   third_party_login:
@@ -802,7 +821,7 @@ release_blockers:
   - id: final_apple_identity
     description: assign final bundle identifier, Apple Developer Team, App Group, signing, and provisioning
   - id: production_api
-    description: provide approved installation authentication; managed PostgreSQL with tested backup/restore and deletion behavior; a reachable production TLS-protected API domain; hosting jurisdiction; processor agreement; and monitoring/alerting evidence
+    description: provide approved installation authentication; YDB Serverless and private Object Storage with tested backup/restore and deletion behavior; a reachable production TLS-protected API domain; hosting jurisdiction; processor agreement; and monitoring/alerting evidence
   - id: privacy_and_support_urls
     description: publish privacy policy, support URL, responsible privacy contact, and moderation contact
   - id: appmetrica_project

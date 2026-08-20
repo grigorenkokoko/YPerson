@@ -27,9 +27,24 @@ class Settings(BaseSettings):
         default=False, validation_alias="YPERSON_ANALYTICS_KILL_SWITCH"
     )
     graceful_shutdown_seconds: int = Field(default=15, validation_alias="GRACEFUL_SHUTDOWN_SECONDS")
+    ydb_endpoint: str = Field(default="", validation_alias="YDB_ENDPOINT")
+    ydb_database: str = Field(default="", validation_alias="YDB_DATABASE")
+    object_bucket: str = Field(default="", validation_alias="YPERSON_OBJECT_BUCKET")
+    s3_access_key_id: str = Field(default="", validation_alias="YPERSON_S3_ACCESS_KEY_ID")
+    s3_secret_access_key: str = Field(default="", validation_alias="YPERSON_S3_SECRET_ACCESS_KEY")
+    sync_enabled: bool = Field(default=False, validation_alias="YPERSON_SYNC_ENABLED")
 
     @model_validator(mode="after")
     def require_approved_production_authentication(self) -> "Settings":
-        if self.environment == "production":
-            raise ValueError("production requires separately approved authentication")
+        durable_storage_values = (
+            self.ydb_endpoint,
+            self.ydb_database,
+            self.object_bucket,
+            self.s3_access_key_id,
+            self.s3_secret_access_key,
+        )
+        if self.environment == "production" and (
+            not self.sync_enabled or any(not value.strip() for value in durable_storage_values)
+        ):
+            raise ValueError("production requires enabled durable storage")
         return self

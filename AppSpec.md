@@ -188,7 +188,7 @@ WidgetKit-расширение — stateless ярлык существующег
 
 ## Минимальный backend
 
-Backend хранит компактный снимок YPerson-профиля на установку, опубликованную карточку, подтверждённые связи, короткоживущие exchange tokens, блокировки/жалобы и APNs-токен. Реализованный subset работает на Python 3.12, FastAPI, SQLAlchemy, Alembic и PostgreSQL: данные сохраняются транзакционно, а migration `20260818_0001` создаёт требуемые таблицы. Контракт ограничен тремя ручками: health, публичная конфигурация и объединённая синхронизация. OCI/Docker Compose артефакты подготовлены и их конфигурация разобрана локально, но образ не собирался и контейнеры не запускались. Это staging-подготовка, а не production deployment: authentication, managed backups/restore, TLS/domain, hosting jurisdiction, processor terms, monitoring и moderation operations остаются release blockers.
+Утверждённая целевая архитектура backend хранит структурированные данные YPerson-профиля на установку, опубликованную карточку, подтверждённые связи, короткоживущие exchange tokens, блокировки/жалобы, APNs-токен и метаданные аудио в YDB Serverless. Сами аудиоприветствия хранятся только в приватном Yandex Object Storage; backend выдаёт короткоживущие подписанные ссылки, а не постоянный доступ. Сервис остаётся Python 3.12/FastAPI в Serverless Container за API Gateway. Схема YDB, приватный bucket, секреты и внешняя проверка развёртывания ещё не подтверждены: этот раздел описывает утверждённую цель, а не production deployment.
 
 ### `GET /health`
 
@@ -204,25 +204,18 @@ Backend хранит компактный снимок YPerson-профиля н
 
 ### `POST /sync`
 
-Один объединённый запрос обслуживает регистрацию/обновление снимка, получение изменений, обмен, push token, жалобу, блокировку и удаление профиля.
+Один объединённый version 2 запрос обслуживает регистрацию/обновление снимка, получение изменений, обмен, подготовку аудиозагрузки, push token, жалобу, блокировку и удаление профиля. Каждая операция содержит `contractVersion: 2`, случайный `operationID` и `installationID`; секрет установки передаётся только в HTTP-заголовке `Authorization: Bearer`, а не в JSON.
 
-Поля запроса уровня продукта:
+Поля v2 запроса в camelCase:
 
-- `installation_id`, `auth_token`, `cursor`, `config_version`, `apns_token`;
-- `own_card_snapshot` с версией, публичными/закрытыми полями и ссылками на явно опубликованные avatar/audio assets;
-- `exchange_claims` с короткоживущим токеном и методом `qr`, `bluetooth`, `photo` или `manual`;
-- `connection_decisions` для принятия, отклонения или применения обновления;
-- `moderation_actions` для block/report с фиксированной категорией и необязательным комментарием;
-- `delete_profile`, только после отдельного подтверждения пользователя.
+- `operation`, `operationID`, `installationID`, `cursor`, `apnsToken`;
+- `card`, `exchangeToken`, `exchangeMethod` (`qr`, `bluetooth`, `photo` или `manual`);
+- `audioAssetID`, `audioSizeBytes`, `audioDurationMS`;
+- `moderationCategory` и `subjectInstallationID` для block/report.
 
-Поля ответа уровня продукта:
+Операции строго ограничивают допустимые поля: `publishCard` требует `card`, `prepareExchange` требует `card` и может дополнительно указать способ, `claimExchange` требует токен, `prepareAudioUpload` — размер и длительность, а push/moderation используют только относящиеся к ним поля.
 
-- `next_cursor`, `required_config_version`, подтверждение версии собственной карточки;
-- новые или изменённые карточки подтверждённых связей;
-- отозванные карточки и истёкшие exchange claims;
-- статусы жалоб/блокировок и конфигурация уведомлений.
-
-Этот расширенный snake_case-инвентарь описывает продуктовую модель, а не уже выпущенный wire contract. Реализованный iOS-совместимый subset намеренно остаётся camelCase: `/config` возвращает `version`, `minimumContract`, `maintenance`, `features`, `sponsoredTemplates`, `privacyURL`, `supportURL`, `moderationCategories` и `analyticsKillSwitch`; `/sync` принимает `installationID`, `bearer`, `apnsToken`, `operation`, `card`, `exchangeToken` и `moderationCategory`. Расширять `/sync` до приведённой выше продуктовой модели можно только через версионирование, изменения iOS, повторную privacy reconciliation, backend/iOS tests и новое явное утверждение.
+Поля v2 ответа дополняют сохранённые `accepted`, `serverVersion`, `updateCount` и `message`: `nextCursor`, `ownCardVersion`, `people`, `revokedCardIDs`, `exchangeToken`, `audioUpload` и `notificationConfiguration`. У карточки подтверждённого человека может быть только метаданные и краткоживущая ссылка на аудио, но не секрет или постоянная storage-ссылка. `/config` сохраняет его camelCase-форму: `version`, `minimumContract`, `maintenance`, `features`, `sponsoredTemplates`, `privacyURL`, `supportURL`, `moderationCategories` и `analyticsKillSwitch`.
 
 В `/sync` запрещено включать системную адресную книгу, сырые фото/кадры, неподтверждённые результаты сканирования, точные координаты, локальные заметки о встрече, биометрические данные и параметры пользовательского контента в AppMetrica.
 

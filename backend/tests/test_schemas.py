@@ -1,15 +1,28 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas import PersonCard, PublicConfigResponse, SyncOperation, SyncRequest
+from app.schemas import (
+    AudioAsset,
+    AudioUpload,
+    PersonCard,
+    PublicConfigResponse,
+    SyncOperation,
+    SyncRequest,
+    SyncResponse,
+)
 
 
 def valid_request() -> dict[str, object]:
-    return {"installationID": "ios-installation", "operation": "refresh"}
+    return {
+        "contractVersion": 2,
+        "operationID": "op-12345678",
+        "installationID": "ios-installation-123",
+        "operation": "refresh",
+    }
 
 
 def test_sync_request_rejects_unknown_fields() -> None:
-    payload = valid_request() | {"cursor": "not-in-current-wire-contract"}
+    payload = valid_request() | {"unknown": "not-in-current-wire-contract"}
 
     with pytest.raises(ValidationError):
         SyncRequest.model_validate(payload)
@@ -39,7 +52,10 @@ def test_all_existing_operations_remain_supported() -> None:
     assert {item.value for item in SyncOperation} == {
         "refresh",
         "publishCard",
+        "prepareExchange",
         "claimExchange",
+        "cancelExchange",
+        "prepareAudioUpload",
         "updatePushToken",
         "removePushToken",
         "deleteProfile",
@@ -48,10 +64,44 @@ def test_all_existing_operations_remain_supported() -> None:
     }
 
 
+def test_cancel_exchange_requires_only_the_exchange_token() -> None:
+    request = SyncRequest.model_validate(
+        valid_request()
+        | {
+            "operation": "cancelExchange",
+            "exchangeToken": "prepared-token",
+        }
+    )
+
+    assert request.exchangeToken == "prepared-token"
+    with pytest.raises(ValidationError, match="cancelExchange requires exchangeToken"):
+        SyncRequest.model_validate(valid_request() | {"operation": "cancelExchange"})
+    with pytest.raises(ValidationError, match="cancelExchange does not accept card"):
+        SyncRequest.model_validate(
+            valid_request()
+            | {
+                "operation": "cancelExchange",
+                "exchangeToken": "prepared-token",
+                "card": {
+                    "id": "card-peer",
+                    "name": "Peer",
+                    "role": "Designer",
+                    "company": "Studio",
+                    "phone": "",
+                    "email": "",
+                    "tagline": "Hello",
+                    "hasAudioGreeting": False,
+                    "isBlocked": False,
+                },
+            }
+        )
+
+
 def test_sync_request_accepts_the_published_person_card_contract() -> None:
     request = SyncRequest.model_validate(
         valid_request()
         | {
+            "operation": "publishCard",
             "card": {
                 "id": "person-alexey",
                 "name": "Alexey Morozov",
@@ -63,7 +113,7 @@ def test_sync_request_accepts_the_published_person_card_contract() -> None:
                 "hasAudioGreeting": False,
                 "meetingPlace": "Moscow",
                 "isBlocked": False,
-            }
+            },
         }
     )
 
@@ -107,8 +157,10 @@ def test_sync_request_accepts_a_swift_card_without_a_meeting_place() -> None:
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("installationID", "ab"),
+        ("installationID", "i" * 15),
         ("installationID", "i" * 129),
+        ("operationID", "short"),
+        ("operationID", "o" * 129),
         ("apnsToken", "a" * 257),
         ("exchangeToken", "e" * 257),
     ],
@@ -121,6 +173,138 @@ def test_sync_request_enforces_identifier_and_token_length_limits(field: str, va
 def test_sync_request_rejects_unknown_moderation_categories() -> None:
     with pytest.raises(ValidationError):
         SyncRequest.model_validate(valid_request() | {"moderationCategory": "harassment"})
+
+
+def test_sync_request_requires_a_card_to_publish() -> None:
+    with pytest.raises(ValidationError, match="card"):
+        SyncRequest.model_validate(valid_request() | {"operation": "publishCard"})
+
+
+def test_sync_request_rejects_card_data_for_refresh() -> None:
+    with pytest.raises(ValidationError, match="refresh"):
+        SyncRequest.model_validate(
+            valid_request()
+            | {
+                "card": {
+                    "id": "card-peer",
+                    "name": "Peer",
+                    "role": "Designer",
+                    "company": "Studio",
+                    "phone": "",
+                    "email": "",
+                    "tagline": "Hello",
+                    "hasAudioGreeting": False,
+                    "isBlocked": False,
+                }
+            }
+        )
+
+
+def test_prepare_exchange_requires_card_and_accepts_optional_method() -> None:
+    card = {
+        "id": "card-peer",
+        "name": "Peer",
+        "role": "Designer",
+        "company": "Studio",
+        "phone": "",
+        "email": "",
+        "tagline": "Hello",
+        "hasAudioGreeting": False,
+        "isBlocked": False,
+    }
+
+    request = SyncRequest.model_validate(
+        valid_request() | {"operation": "prepareExchange", "card": card, "exchangeMethod": "qr"}
+    )
+
+    assert request.exchangeMethod == "qr"
+
+
+def test_prepare_exchange_accepts_card_without_exchange_method() -> None:
+    request = SyncRequest.model_validate(
+        valid_request()
+        | {
+            "operation": "prepareExchange",
+            "card": {
+                "id": "card-peer",
+                "name": "Peer",
+                "role": "Designer",
+                "company": "Studio",
+                "phone": "",
+                "email": "",
+                "tagline": "Hello",
+                "hasAudioGreeting": False,
+                "isBlocked": False,
+            },
+        }
+    )
+
+    assert request.exchangeMethod is None
+
+
+def test_sync_request_rejects_irrelevant_field_explicitly_set_to_null() -> None:
+    with pytest.raises(ValidationError, match="refresh does not accept card"):
+        SyncRequest.model_validate(valid_request() | {"card": None})
+
+
+@pytest.mark.parametrize(
+    ("model", "url_field"),
+    [
+        (AudioAsset, "downloadURL"),
+        (AudioUpload, "uploadURL"),
+    ],
+)
+def test_audio_signed_urls_require_https(model: type, url_field: str) -> None:
+    payload = {
+        "assetID": "asset-1",
+        url_field: "https://storage.yandexcloud.net/private/object?signature=test",
+        "expiresAt": "2026-08-20T12:05:00Z",
+    }
+
+    assert str(model.model_validate(payload).__getattribute__(url_field)).startswith("https://")
+    with pytest.raises(ValidationError, match="HTTPS"):
+        model.model_validate(payload | {url_field: "http://storage.example/private/object"})
+
+
+def test_sync_v2_models_preserve_v1_fields_and_add_people_audio() -> None:
+    request = SyncRequest.model_validate(valid_request())
+    response = SyncResponse.model_validate(
+        {
+            "accepted": True,
+            "serverVersion": "2",
+            "updateCount": 1,
+            "message": "refreshed",
+            "nextCursor": "7",
+            "people": [
+                {
+                    "installationID": "installation-peer-00002",
+                    "card": {
+                        "id": "card-peer",
+                        "name": "Peer",
+                        "role": "Designer",
+                        "company": "Studio",
+                        "phone": "",
+                        "email": "",
+                        "tagline": "Hello",
+                        "hasAudioGreeting": True,
+                        "meetingPlace": None,
+                        "isBlocked": False,
+                    },
+                    "version": 3,
+                    "audio": {
+                        "assetID": "asset-1",
+                        "downloadURL": "https://storage.yandexcloud.net/private/object?signature=test",
+                        "expiresAt": "2026-08-20T12:05:00Z",
+                    },
+                }
+            ],
+        }
+    )
+
+    assert request.contractVersion == 2
+    assert response.people[0].audio is not None
+    assert response.people[0].audio.assetID == "asset-1"
+    assert response.model_dump()["accepted"] is True
 
 
 def test_public_configuration_matches_the_ios_contract() -> None:

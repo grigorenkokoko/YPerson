@@ -10,7 +10,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
         configureNotifications()
         let window = UIWindow(frame: UIScreen.main.bounds)
         do {
-            let builder = YPersonExperienceBuilder(
+            let builder = try YPersonExperienceBuilder(
                 configuration: try AppConfiguration(bundle: .main)
             )
             self.experienceBuilder = builder
@@ -60,7 +60,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
     }
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
-        experienceBuilder?.handle(.pushTokenChanged(nil))
+        // Keep the last acknowledged/pending APNs token. A transient registration
+        // failure is not an explicit request to remove it from the server.
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {

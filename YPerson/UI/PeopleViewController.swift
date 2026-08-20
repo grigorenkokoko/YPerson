@@ -1,7 +1,7 @@
 import UIKit
 
 final class PeopleViewController: YPBaseViewController {
-    private let people: [PersonCard]
+    private var people: [PersonCard]
     private let permissions: PermissionCenter
     private let analytics: AppMetricaAnalyticsClient
     private let makePerson: (PersonCard) -> UIViewController
@@ -18,6 +18,20 @@ final class PeopleViewController: YPBaseViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        render()
+    }
+
+    func reload(people: [PersonCard]) {
+        self.people = people
+        guard isViewLoaded else { return }
+        render()
+    }
+
+    private func render() {
+        contentStack.arrangedSubviews.forEach {
+            contentStack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
         guard !people.isEmpty else {
             contentStack.addArrangedSubview(YPStyle.label("Пока никого нет", style: .title2, weight: .bold))
             contentStack.addArrangedSubview(YPStyle.label("После подтверждённого обмена человек появится здесь. YPerson не добавляет примеры и не читает Контакты без вашей команды."))

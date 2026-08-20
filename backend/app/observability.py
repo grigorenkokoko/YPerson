@@ -14,19 +14,21 @@ class JsonRequestFormatter(logging.Formatter):
     """Render only approved request metadata as one JSON line."""
 
     def format(self, record: logging.LogRecord) -> str:
-        return json.dumps(
-            {
-                "timestamp": datetime.now(UTC).isoformat(),
-                "level": record.levelname,
-                "event": record.event,
-                "requestID": record.request_id,
-                "method": record.method,
-                "route": record.route,
-                "status": record.status,
-                "latencyMs": record.latency_ms,
-            },
-            separators=(",", ":"),
-        )
+        payload = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "level": record.levelname,
+            "event": record.event,
+            "requestID": record.request_id,
+            "method": record.method,
+            "route": record.route,
+            "status": record.status,
+            "latencyMs": record.latency_ms,
+        }
+        if hasattr(record, "operation"):
+            payload["operation"] = record.operation
+        if hasattr(record, "failure_types"):
+            payload["failureTypes"] = record.failure_types
+        return json.dumps(payload, separators=(",", ":"))
 
 
 def request_logger() -> logging.Logger:
