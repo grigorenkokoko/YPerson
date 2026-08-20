@@ -104,10 +104,7 @@ class YDBSyncStore:
             self._ensure_active(tx, installation_id)
             previous = self._operation_result(tx, installation_id, operation_id, "publishCard")
             if previous is not None:
-                try:
-                    return int(previous["version"])
-                except (KeyError, TypeError, ValueError) as error:
-                    raise StorageIntegrityError from error
+                return _stored_positive_int(previous, "version")
 
             current_rows = self._tx_rows(
                 tx,
@@ -117,7 +114,9 @@ class YDBSyncStore:
                 """,
                 {"$installation_id": _utf8(installation_id)},
             )[0]
-            version = (int(current_rows[0]["version"]) if current_rows else 0) + 1
+            if len(current_rows) > 1:
+                raise StorageIntegrityError
+            version = (_stored_version(current_rows[0]) if current_rows else 0) + 1
             result_json = _json({"version": version})
             self._tx_rows(
                 tx,
@@ -195,11 +194,13 @@ class YDBSyncStore:
         own_rows = result_sets[0]
         people_rows = result_sets[1]
         revocation_rows = result_sets[2]
-        own_card = _card(own_rows[0]["card_json"]) if own_rows else None
+        if len(own_rows) > 1:
+            raise StorageIntegrityError
+        own_card = _stored_card(own_rows[0]) if own_rows else None
         own_version = _stored_version(own_rows[0]) if own_rows else None
         people = tuple(
             SyncedPerson(
-                card=_card(row["card_json"]),
+                card=_stored_card(row),
                 version=_stored_version(row),
             )
             for row in people_rows
@@ -237,7 +238,7 @@ class YDBSyncStore:
                 "prepareExchange",
             )
             if previous is not None:
-                previous_hash = bytes.fromhex(str(previous["tokenHash"]))
+                previous_hash = _stored_digest(previous, "tokenHash")
                 if not compare_digest(previous_hash, token_hash):
                     raise StorageConflict("operation identifier already used")
                 return
@@ -301,10 +302,7 @@ class YDBSyncStore:
             self._ensure_active(tx, installation_id)
             previous = self._operation_result(tx, installation_id, operation_id, "claimExchange")
             if previous is not None:
-                try:
-                    previous_hash = bytes.fromhex(str(previous["tokenHash"]))
-                except (KeyError, TypeError, ValueError) as error:
-                    raise StorageIntegrityError from error
+                previous_hash = _stored_digest(previous, "tokenHash")
                 if not compare_digest(previous_hash, token_hash):
                     raise StorageConflict("operation identifier already used")
                 try:
@@ -329,18 +327,20 @@ class YDBSyncStore:
             )[0]
             if not claim_rows:
                 raise StorageConflict("exchange unavailable")
+            if len(claim_rows) != 1:
+                raise StorageIntegrityError
             row = claim_rows[0]
-            issuer_id = str(row["issuer_installation_id"])
-            claimed_by = row["claimed_by_installation_id"]
+            issuer_id = _stored_text(row, "issuer_installation_id")
+            claimed_by = _stored_optional_text(row, "claimed_by_installation_id")
             if (
                 issuer_id == installation_id
-                or _as_utc(row["expires_at"]) <= _as_utc(now)
+                or _stored_datetime(row, "expires_at") <= _as_utc(now)
                 or claimed_by is not None
             ):
                 raise StorageConflict("exchange unavailable")
             person = SyncedPerson(
-                card=_card(row["card_json"]),
-                version=int(row["version"]),
+                card=_stored_card(row),
+                version=_stored_version(row),
             )
             result_json = _json(
                 {
@@ -462,7 +462,10 @@ class YDBSyncStore:
                         "$subject_id": _utf8(subject_id),
                     },
                 )[0]
-                card_ids = {str(row["installation_id"]): str(row["card_id"]) for row in card_rows}
+                card_ids = {
+                    _stored_text(row, "installation_id"): _stored_text(row, "card_id")
+                    for row in card_rows
+                }
             self._tx_rows(
                 tx,
                 """
@@ -550,9 +553,9 @@ class YDBSyncStore:
                 """,
                 {"$installation_id": _utf8(installation_id)},
             )[0]
-            if not credential_rows:
+            credential_hash = _stored_credential_hash(credential_rows)
+            if credential_hash is None:
                 raise StorageConflict("profile unavailable")
-            credential_hash = bytes(credential_rows[0]["credential_hash"])
             media_rows = self._tx_rows(
                 tx,
                 """
@@ -562,7 +565,7 @@ class YDBSyncStore:
                 """,
                 {"$installation_id": _utf8(installation_id)},
             )[0]
-            object_keys = [str(row["object_key"]) for row in media_rows]
+            object_keys = [_stored_text(row, "object_key") for row in media_rows]
             card_rows = self._tx_rows(
                 tx,
                 """
@@ -572,6 +575,8 @@ class YDBSyncStore:
                 """,
                 {"$installation_id": _utf8(installation_id)},
             )[0]
+            if len(card_rows) > 1:
+                raise StorageIntegrityError
             connection_rows = self._tx_rows(
                 tx,
                 """
@@ -584,11 +589,11 @@ class YDBSyncStore:
                 {"$installation_id": _utf8(installation_id)},
             )[0]
             if card_rows:
-                revoked_card_id = str(card_rows[0]["card_id"])
+                revoked_card_id = _stored_text(card_rows[0], "card_id")
                 peers = {
-                    str(row["peer_installation_id"])
-                    if str(row["owner_installation_id"]) == installation_id
-                    else str(row["owner_installation_id"])
+                    _stored_text(row, "peer_installation_id")
+                    if _stored_text(row, "owner_installation_id") == installation_id
+                    else _stored_text(row, "owner_installation_id")
                     for row in connection_rows
                 }
                 for peer_installation_id in peers:
@@ -663,11 +668,10 @@ class YDBSyncStore:
         )[0]
         if not rows:
             return None
-        result = _json_value(rows[0]["result_json"])
-        try:
-            stored_hash = bytes.fromhex(str(result["credentialHash"]))
-        except (KeyError, TypeError, ValueError) as error:
-            raise StorageIntegrityError from error
+        if len(rows) != 1:
+            raise StorageIntegrityError
+        result = _stored_json(rows[0], "result_json")
+        stored_hash = _stored_digest(result, "credentialHash")
         if not compare_digest(stored_hash, _digest(bearer)):
             raise InvalidCredential
         return _object_keys(result)
@@ -685,14 +689,16 @@ class YDBSyncStore:
         )[0]
         if not rows:
             return None
+        if len(rows) != 1:
+            raise StorageIntegrityError
         row = rows[0]
         return InstallationRecord(
             installation_id=installation_id,
-            credential_hash=bytes(row["credential_hash"]),
-            apns_token=row["apns_token"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-            deleted_at=row["deleted_at"],
+            credential_hash=_stored_bytes(row, "credential_hash", expected_length=32),
+            apns_token=_stored_optional_text(row, "apns_token"),
+            created_at=_stored_datetime(row, "created_at"),
+            updated_at=_stored_datetime(row, "updated_at"),
+            deleted_at=_stored_optional_datetime(row, "deleted_at"),
         )
 
     def _operation_result(
@@ -718,20 +724,13 @@ class YDBSyncStore:
         )[0]
         if not rows:
             return None
-        row = rows[0]
-        try:
-            operation_type = row["operation_type"]
-        except (KeyError, TypeError) as error:
-            raise StorageIntegrityError from error
-        if not isinstance(operation_type, str):
+        if len(rows) != 1:
             raise StorageIntegrityError
+        row = rows[0]
+        operation_type = _stored_text(row, "operation_type")
         if operation_type != expected_type:
             raise StorageConflict("operation identifier already used")
-        try:
-            result_json = row["result_json"]
-        except KeyError as error:
-            raise StorageIntegrityError from error
-        return _json_value(result_json)
+        return _stored_json(row, "result_json")
 
     def _ensure_active(self, tx: ydb.QueryTxContext, installation_id: str) -> None:
         result_sets = self._tx_rows(
@@ -820,7 +819,9 @@ def _json_value(value: Any) -> dict[str, Any]:
     try:
         if isinstance(value, bytes):
             value = value.decode("utf-8")
-        parsed = json.loads(str(value))
+        if not isinstance(value, str):
+            raise StorageIntegrityError
+        parsed = json.loads(value)
     except (TypeError, ValueError, UnicodeDecodeError) as error:
         raise StorageIntegrityError from error
     if not isinstance(parsed, dict):
@@ -835,6 +836,79 @@ def _card(value: Any) -> PersonCard:
         raise StorageIntegrityError from error
 
 
+def _stored_value(row: Any, key: str) -> Any:
+    try:
+        return row[key]
+    except (KeyError, TypeError) as error:
+        raise StorageIntegrityError from error
+
+
+def _stored_text(row: Any, key: str) -> str:
+    value = _stored_value(row, key)
+    if not isinstance(value, str):
+        raise StorageIntegrityError
+    return value
+
+
+def _stored_optional_text(row: Any, key: str) -> str | None:
+    value = _stored_value(row, key)
+    if value is not None and not isinstance(value, str):
+        raise StorageIntegrityError
+    return value
+
+
+def _stored_bytes(row: Any, key: str, *, expected_length: int | None = None) -> bytes:
+    value = _stored_value(row, key)
+    if not isinstance(value, (bytes, bytearray, memoryview)):
+        raise StorageIntegrityError
+    stored = bytes(value)
+    if expected_length is not None and len(stored) != expected_length:
+        raise StorageIntegrityError
+    return stored
+
+
+def _stored_digest(result: Any, key: str) -> bytes:
+    encoded = _stored_text(result, key)
+    try:
+        digest = bytes.fromhex(encoded)
+    except ValueError as error:
+        raise StorageIntegrityError from error
+    if len(digest) != sha256().digest_size:
+        raise StorageIntegrityError
+    return digest
+
+
+def _stored_positive_int(row: Any, key: str) -> int:
+    value = _stored_value(row, key)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise StorageIntegrityError
+    return value
+
+
+def _stored_datetime(row: Any, key: str) -> datetime:
+    value = _stored_value(row, key)
+    if not isinstance(value, datetime):
+        raise StorageIntegrityError
+    return _as_utc(value)
+
+
+def _stored_optional_datetime(row: Any, key: str) -> datetime | None:
+    value = _stored_value(row, key)
+    if value is None:
+        return None
+    if not isinstance(value, datetime):
+        raise StorageIntegrityError
+    return _as_utc(value)
+
+
+def _stored_json(row: Any, key: str) -> dict[str, Any]:
+    return _json_value(_stored_value(row, key))
+
+
+def _stored_card(row: Any) -> PersonCard:
+    return _card(_stored_value(row, "card_json"))
+
+
 def _object_keys(result: dict[str, Any]) -> list[str]:
     object_keys = result.get("objectKeys")
     if not isinstance(object_keys, list) or any(not isinstance(key, str) for key in object_keys):
@@ -847,41 +921,20 @@ def _stored_credential_hash(rows: list[Any]) -> bytes | None:
         return None
     if len(rows) != 1:
         raise StorageIntegrityError
-    try:
-        value = rows[0]["credential_hash"]
-    except (KeyError, TypeError) as error:
-        raise StorageIntegrityError from error
-    if not isinstance(value, (bytes, bytearray, memoryview)):
-        raise StorageIntegrityError
-    return bytes(value)
+    return _stored_bytes(rows[0], "credential_hash", expected_length=32)
 
 
 def _stored_version(row: Any) -> int:
-    try:
-        version = int(row["version"])
-    except (KeyError, TypeError, ValueError) as error:
-        raise StorageIntegrityError from error
-    if version < 1:
-        raise StorageIntegrityError
-    return version
+    return _stored_positive_int(row, "version")
 
 
 def _stored_revoked_card_id(row: Any) -> str:
-    try:
-        card_id = _json_value(row["result_json"])["cardID"]
-    except (KeyError, TypeError) as error:
-        raise StorageIntegrityError from error
-    if not isinstance(card_id, str):
-        raise StorageIntegrityError
-    return card_id
+    return _stored_text(_stored_json(row, "result_json"), "cardID")
 
 
 def _stored_cursor(row: Any) -> str:
-    try:
-        cursor = row["operation_id"]
-    except (KeyError, TypeError) as error:
-        raise StorageIntegrityError from error
-    if not isinstance(cursor, str) or len(cursor) > 64:
+    cursor = _stored_text(row, "operation_id")
+    if len(cursor) > 64:
         raise StorageIntegrityError
     return cursor
 
@@ -901,7 +954,7 @@ def _unseen_revocations(rows: list[Any], cursor: str | None) -> list[Any]:
     if cursor is None:
         return rows
     for index, row in enumerate(rows):
-        if str(row["operation_id"]) == cursor:
+        if _stored_cursor(row) == cursor:
             return rows[index + 1 :]
     return rows
 

@@ -527,6 +527,58 @@ def test_malformed_persisted_claim_result_is_storage_integrity_failure(card: Per
         adapter.claim_exchange("installation-peer", "op-claim-1", "original-token")
 
 
+def test_malformed_persisted_prepare_exchange_digest_is_storage_integrity_failure() -> None:
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "operation_type": "prepareExchange",
+                            "result_json": json.dumps({"tokenHash": "not-hex"}),
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    store = YDBSyncStore(ScriptedPool(transaction_handler=transaction_handler))  # type: ignore[arg-type]
+
+    with pytest.raises(StorageIntegrityError):
+        store.prepare_exchange(
+            "installation-owner",
+            "op-prepare-corrupt",
+            "qr",
+            "raw-token",
+            datetime.now(UTC) + timedelta(minutes=5),
+        )
+
+
+@pytest.mark.parametrize("corruption", ["credential", "object_key"])
+def test_malformed_persisted_delete_state_is_storage_integrity_failure(
+    corruption: str,
+) -> None:
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "SELECT credential_hash" in query:
+            credential = "not-binary" if corruption == "credential" else sha256(b"secret").digest()
+            return [ResultSet([{"credential_hash": credential}])]
+        if "SELECT object_key" in query:
+            object_key = None if corruption == "object_key" else "private/audio.m4a"
+            return [ResultSet([{"object_key": object_key}])]
+        if "SELECT card_id FROM cards" in query:
+            return [ResultSet([])]
+        if "SELECT owner_installation_id, peer_installation_id" in query:
+            return [ResultSet([])]
+        return []
+
+    store = YDBSyncStore(ScriptedPool(transaction_handler=transaction_handler))  # type: ignore[arg-type]
+
+    with pytest.raises(StorageIntegrityError):
+        store.delete_profile("installation-owner", "op-delete-corrupt")
+
+
 def test_malformed_persisted_auth_and_card_are_storage_integrity_failures() -> None:
     def auth_read(_query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
         return [ResultSet([{"credential_hash": "not-binary"}])]
