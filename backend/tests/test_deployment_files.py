@@ -167,6 +167,16 @@ def test_database_packages_are_absent_from_project_and_locks() -> None:
         assert_every_locked_requirement_has_sha256_hash(lock_path)
 
 
+def test_runtime_includes_ydb_metadata_http_transport() -> None:
+    """Production metadata authentication requires YDB's Requests transport."""
+
+    project = tomllib.loads((BACKEND / "pyproject.toml").read_text())
+    runtime_names = {
+        canonicalize_name(Requirement(value).name) for value in project["project"]["dependencies"]
+    }
+    assert "requests" in runtime_names
+
+
 def test_runtime_image_is_immutable_nonroot_and_executable() -> None:
     """A mutable base, root user, shell command, or curl-only check breaks runtime safety."""
 
