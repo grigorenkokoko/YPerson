@@ -323,17 +323,33 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     }
 
     private func handleScannedCode(_ value: String) {
-        guard value.hasPrefix("yperson:v2:") else {
-            showMessage("Неподдерживаемая визитка", "Сейчас надёжное локальное сохранение доступно для QR-кодов YPerson v2.")
-            return
+        if value.hasPrefix("yperson:v2:") {
+            do {
+                let payload = try ExchangePayloadCodec.decode(value)
+                analytics.report(.cardReceived("qr"))
+                confirmImportedCard(payload)
+            } catch {
+                showMessage("Не удалось прочитать QR", error.localizedDescription)
+            }
+        } else if VCardParser.isCandidate(value) {
+            do {
+                confirmImportedCard(try localVCardPayload(value))
+            } catch {
+                showMessage("Визитка vCard повреждена", error.localizedDescription)
+            }
+        } else {
+            showMessage("Неподдерживаемая визитка", "Поддерживаются QR-коды YPerson v2 и совместимые vCard.")
         }
-        do {
-            let payload = try ExchangePayloadCodec.decode(value)
-            analytics.report(.cardReceived("qr"))
-            confirmImportedCard(payload)
-        } catch {
-            showMessage("Не удалось прочитать QR", error.localizedDescription)
-        }
+    }
+
+    private func localVCardPayload(_ value: String) throws -> ExchangePayload {
+        ExchangePayload(
+            version: 2,
+            issuerInstallationID: UUID().uuidString.lowercased(),
+            card: try VCardParser.parse(value),
+            exchangeToken: nil,
+            expiresAt: nil
+        )
     }
 
     private func confirmImportedCard(_ payload: ExchangePayload) {
@@ -341,7 +357,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         let hasCloudClaim = payload.exchangeToken != nil && !expired
         let cloudNote = hasCloudClaim
             ? "После сохранения YPerson попробует подключить облачные обновления."
-            : "Офлайн-код: карточка сохранится только на этом iPhone без подтверждения облачной связи."
+            : "Офлайн-импорт: карточка сохранится только на этом iPhone без подтверждения облачной связи."
         let companyLine = payload.card.company.isEmpty ? "" : " · \(payload.card.company)"
         let alert = UIAlertController(
             title: payload.card.name,
@@ -410,11 +426,32 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
 
     private func presentPhotoResults(_ payloads: [String]) {
         guard !payloads.isEmpty else { presentPhotoFallback(); return }
-        guard let payload = payloads.lazy.compactMap({ try? ExchangePayloadCodec.decode($0) }).first else {
-            showMessage("Визитка не распознана", "На выбранных изображениях нет поддерживаемого QR-кода YPerson v2.")
-            return
+        var foundYPersonCandidate = false
+        var foundVCardCandidate = false
+
+        for value in payloads {
+            if value.hasPrefix("yperson:") {
+                foundYPersonCandidate = true
+                if let payload = try? ExchangePayloadCodec.decode(value) {
+                    confirmImportedCard(payload)
+                    return
+                }
+            } else if VCardParser.isCandidate(value) {
+                foundVCardCandidate = true
+                if let payload = try? localVCardPayload(value) {
+                    confirmImportedCard(payload)
+                    return
+                }
+            }
         }
-        confirmImportedCard(payload)
+
+        if foundVCardCandidate {
+            showMessage("Визитка vCard повреждена", "Одна или несколько vCard не содержат корректной оболочки или имени.")
+        } else if foundYPersonCandidate {
+            showMessage("Не удалось прочитать QR", "Одна или несколько визиток YPerson повреждены или имеют неподдерживаемую версию.")
+        } else {
+            showMessage("Неподдерживаемая визитка", "На выбранных изображениях нет QR-кода YPerson v2 или совместимой vCard.")
+        }
     }
 
     private func presentPhotoFallback() {

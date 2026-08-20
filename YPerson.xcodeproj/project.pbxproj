@@ -43,6 +43,7 @@
 		C02851E90F20E280723EB095 /* AppMetricaAdSupport in Frameworks */ = {isa = PBXBuildFile; productRef = E5C0346077E98EC229CFD87F /* AppMetricaAdSupport */; };
 		C0748217A794E891A06A7CCC /* YPersonNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5F679A09D3A27784F01799C3 /* YPersonNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C1147F7D0E3CC883DB19DAB6 /* MainTabBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B05DF4272FF693CA8C7E28F4 /* MainTabBarController.swift */; };
+		C0DECAFE0000000000000002 /* VCardParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE0000000000000001 /* VCardParser.swift */; };
 		C7F0484158BF86CE1B2D6328 /* NotificationViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A13996E6F0278470DBD08AA /* NotificationViewController.swift */; };
 		D1A9937B73944A0E814FA5EB /* AppMetricaCrashes in Frameworks */ = {isa = PBXBuildFile; productRef = ADEE88F4EC0C36A4E9868199 /* AppMetricaCrashes */; };
 		D91A4ED9BE788718888C6405 /* YPStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28094E2B2A847979C3FC21FB /* YPStyle.swift */; };
@@ -140,6 +141,7 @@
 		B05DF4272FF693CA8C7E28F4 /* MainTabBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabBarController.swift; sourceTree = "<group>"; };
 		B4489AF682C77B6756F96CD3 /* WidgetDebug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = WidgetDebug.xcconfig; sourceTree = "<group>"; };
 		CAC46C8858C0D992879AF1C4 /* PersonViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonViewController.swift; sourceTree = "<group>"; };
+		C0DECAFE0000000000000001 /* VCardParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VCardParser.swift; sourceTree = "<group>"; };
 		CF0A9390AFFB941DA8CB57AB /* MediaTransferClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaTransferClient.swift; sourceTree = "<group>"; };
 		D51EBF735785D82AF276EA87 /* PhotoCardScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCardScanner.swift; sourceTree = "<group>"; };
 		D5F2F1682CFC85E2B485474F /* QRScannerLaunchGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerLaunchGate.swift; sourceTree = "<group>"; };
@@ -267,6 +269,7 @@
 			isa = PBXGroup;
 			children = (
 				11D3A37C6321DE925FB87955 /* Models.swift */,
+				C0DECAFE0000000000000001 /* VCardParser.swift */,
 			);
 			path = Domain;
 			sourceTree = "<group>";
@@ -620,6 +623,7 @@
 				C1147F7D0E3CC883DB19DAB6 /* MainTabBarController.swift in Sources */,
 				232809C4B65AC451691AC6B6 /* MediaTransferClient.swift in Sources */,
 				E0007B3B0432DF5036E2720E /* Models.swift in Sources */,
+				C0DECAFE0000000000000002 /* VCardParser.swift in Sources */,
 				A0FC157A713AA27C3B7E8D9D /* NearbyExchangeController.swift in Sources */,
 				75033FFC1C035C8D77463E91 /* PeopleViewController.swift in Sources */,
 				DCAE8E00CC6FEF2E6744D77C /* PermissionCenter.swift in Sources */,

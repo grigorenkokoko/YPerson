@@ -26,7 +26,7 @@ final class PhotoCardScanner {
         try? VNImageRequestHandler(cgImage: cgImage).perform([request])
         return (request.results ?? [])
             .compactMap(\.payloadStringValue)
-            .filter { $0.hasPrefix("yperson:") || $0.hasPrefix("BEGIN:VCARD") }
+            .filter { $0.hasPrefix("yperson:") || VCardParser.isCandidate($0) }
     }
 
     private func scanAuthorized(completion: @escaping (Result<[String], Error>) -> Void) {
