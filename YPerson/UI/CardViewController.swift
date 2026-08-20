@@ -57,7 +57,6 @@ final class CardViewController: YPBaseViewController {
             let create = YPStyle.button("Создать визитку", symbol: "person.crop.rectangle.badge.plus", primary: true)
             create.addTarget(self, action: #selector(editCard), for: .touchUpInside)
             cardContent.addArrangedSubview(create)
-            try? snapshotStore?.writeWidgetSnapshot(.empty)
             return
         }
 
@@ -85,7 +84,6 @@ final class CardViewController: YPBaseViewController {
             greeting.addTarget(self, action: #selector(playGreeting), for: .touchUpInside)
             cardContent.addArrangedSubview(greeting)
         }
-        try? snapshotStore?.writeWidgetSnapshot(WidgetSnapshot(updateCount: 0, isOffline: false, updatedAt: Date()))
     }
 
     private func makeMenu() -> UIMenu {

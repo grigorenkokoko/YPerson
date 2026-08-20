@@ -141,14 +141,8 @@ targets:
       path: YPersonWidget/Resources/Info.plist
       properties:
         CFBundleDisplayName: YPerson Widget
-        APP_GROUP_IDENTIFIER: $(APP_GROUP_IDENTIFIER)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
-    entitlements:
-      path: YPersonWidget/YPersonWidget.entitlements
-      properties:
-        com.apple.security.application-groups:
-          - $(APP_GROUP_IDENTIFIER)
   YPersonNotificationService:
     type: app-extension
     platform: iOS
