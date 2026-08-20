@@ -470,7 +470,7 @@ backend:
       - exchangeToken
       - moderationCategory
     exchange_token_storage: raw exchange tokens are stored only as SHA-256 hashes and expire after 10 minutes
-    staging_artifacts: Dockerfile, Docker Compose, explicit Alembic migration job, and /health check are authored and configuration-validated; no image build, container run, or production deployment is claimed
+    staging_artifacts: Dockerfile, Docker Compose, explicit Alembic migration job, and /health check are authored; local Linux/arm64 Docker build and Compose run are verified with hash-locked dependencies, PostgreSQL health, successful migration, non-root UID/GID 10001, live /health and /config, and API-restart persistence; no external staging or production deployment is claimed
   endpoints:
     - method: GET
       path: /health

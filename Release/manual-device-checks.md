@@ -24,7 +24,7 @@
 
 ## Backend, аналитика и расширения
 
-- [ ] На выбранной staging-платформе собрать и запустить уже authored Dockerfile/Compose с PostgreSQL: выполнить explicit `alembic upgrade head`, `/health`, UID non-root и API-restart persistence. Локально разобрана только Compose-конфигурация; image build/run ещё не подтверждены.
+- [ ] На выбранной внешней staging-платформе собрать и запустить Docker image с PostgreSQL, secret injection и утверждённой аутентификацией. Локально Docker build/Compose run уже подтверждены: explicit `alembic upgrade head`, healthy `/health` и `/config`, UID/GID 10001 и API-restart persistence; external staging и production deployment ещё не выполнялись.
 - [ ] Выбрать production TLS-protected domain, подтвердить hosting jurisdiction и processor agreement, заменить placeholder на production API и проверить `/health`, публичный `/config` с ETag/304, last-known-good cache и закрытый `/sync` во всех сетевых состояниях.
 - [ ] Реализовать и проверить утверждённый installation-authentication mechanism; убедиться, что production startup и `/sync` не используют staging unauthenticated behavior.
 - [ ] На выбранной платформе настроить monitoring и alerting для availability, database health, error rate, latency, backup failures и moderation queue; провести и сохранить evidence тестового alert/response.

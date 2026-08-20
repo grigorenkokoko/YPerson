@@ -27,6 +27,12 @@ final class NearbyExchangeController: NSObject, CBCentralManagerDelegate, CBPeri
     func centralManagerDidUpdateState(_ central: CBCentralManager) { updateOperations() }
     func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) { updateOperations() }
 
+    func peripheralManager(_ peripheral: CBPeripheralManager, didStartAdvertising error: Error?) {
+        if let error {
+            stateHandler?(.unavailable("Не удалось начать Bluetooth-поиск: \(error.localizedDescription)"))
+        }
+    }
+
     private func updateOperations() {
         guard central.state != .unknown, peripheral.state != .unknown else { return }
         guard central.state == .poweredOn, peripheral.state == .poweredOn else {
@@ -39,16 +45,16 @@ final class NearbyExchangeController: NSObject, CBCentralManagerDelegate, CBPeri
         peripheral.stopAdvertising()
         peripheral.startAdvertising([
             CBAdvertisementDataServiceUUIDsKey: [Self.serviceUUID],
-            CBAdvertisementDataServiceDataKey: [Self.serviceUUID: Data(token.utf8)]
+            CBAdvertisementDataLocalNameKey: token
         ])
         central.stopScan()
         central.scanForPeripherals(withServices: [Self.serviceUUID], options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
     }
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        guard let serviceData = advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data],
-              let data = serviceData[Self.serviceUUID],
-              let peerToken = String(data: data, encoding: .utf8), peerToken != token else { return }
+        guard let peerToken = advertisementData[CBAdvertisementDataLocalNameKey] as? String,
+              peerToken.count == 8,
+              peerToken != token else { return }
         resultHandler?(peerToken)
         stop()
     }

@@ -75,17 +75,28 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
 
     func play() {
         do {
-            player = try AVAudioPlayer(contentsOf: recordingURL)
-            player?.delegate = self
-            player?.play()
-            state = .playing(duration: player?.duration ?? 0)
-        } catch { state = .empty }
+            try audioSession.setCategory(.playback, mode: .spokenAudio)
+            try audioSession.setActive(true)
+            let player = try AVAudioPlayer(contentsOf: recordingURL)
+            player.delegate = self
+            guard player.play() else {
+                try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+                state = .empty
+                return
+            }
+            self.player = player
+            state = .playing(duration: player.duration)
+        } catch {
+            try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+            state = .empty
+        }
     }
 
     func stopPlayback() {
         guard case .playing(let duration) = state else { return }
         player?.stop()
         player = nil
+        try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
         state = .preview(duration: duration)
     }
 
@@ -103,6 +114,8 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
     }
 
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        self.player = nil
+        try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
         state = .preview(duration: player.duration)
     }
 

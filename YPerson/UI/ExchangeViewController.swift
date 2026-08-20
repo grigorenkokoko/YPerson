@@ -9,6 +9,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private let apiClient: APIClient
     private let analytics: AppMetricaAnalyticsClient
     private var includePrivate = false
+    private var nearbySearchAlert: UIAlertController?
 
     init(nearby: NearbyExchangeController, photoScanner: PhotoCardScanner, permissions: PermissionCenter, apiClient: APIClient, analytics: AppMetricaAnalyticsClient) {
         self.nearby = nearby; self.photoScanner = photoScanner; self.permissions = permissions; self.apiClient = apiClient; self.analytics = analytics
@@ -51,9 +52,59 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         explainPermission(title: "Обмен рядом", message: "Bluetooth нужен, чтобы находить поблизости другой iPhone с открытым экраном обмена YPerson и безопасно передавать выбранную визитку.") { [weak self] in
             self?.analytics.report(.exchangeStarted("bluetooth"))
             self?.nearby.start(onState: { [weak self] state in
-                if state == .denied { self?.showMessage("Bluetooth выключен", "QR и короткий код остаются доступны.", settingsAction: self?.permissions.openSystemSettings) }
-            }, onToken: { [weak self] token in self?.confirmNearby(token: token) })
+                self?.handleNearbyState(state)
+            }, onToken: { [weak self] token in self?.finishNearbySearch(token: token) })
         }
+    }
+
+    private func handleNearbyState(_ state: AuthorizationState) {
+        switch state {
+        case .authorized:
+            showNearbySearch()
+        case .denied:
+            finishNearbySearch(title: "Bluetooth выключен", message: "QR и короткий код остаются доступны.", settingsAction: permissions.openSystemSettings)
+        case .restricted:
+            finishNearbySearch(title: "Bluetooth ограничен", message: "Используйте QR или короткий код.")
+        case .unavailable(let message):
+            finishNearbySearch(title: "Bluetooth недоступен", message: "\(message). Используйте QR или короткий код.")
+        case .notDetermined, .limited:
+            break
+        }
+    }
+
+    private func showNearbySearch() {
+        guard nearbySearchAlert == nil else { return }
+        let alert = UIAlertController(
+            title: "Ищем человека рядом…",
+            message: "На втором iPhone откройте YPerson и также запустите «Рядом по Bluetooth».",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Отменить поиск", style: .cancel) { [weak self] _ in
+            self?.nearby.stop()
+            self?.nearbySearchAlert = nil
+        })
+        nearbySearchAlert = alert
+        present(alert, animated: true)
+        UIAccessibility.post(notification: .announcement, argument: "Идёт поиск человека рядом")
+    }
+
+    private func finishNearbySearch(token: String) {
+        let alert = nearbySearchAlert
+        nearbySearchAlert = nil
+        guard let alert else { confirmNearby(token: token); return }
+        alert.dismiss(animated: true) { [weak self] in self?.confirmNearby(token: token) }
+    }
+
+    private func finishNearbySearch(title: String, message: String, settingsAction: (() -> Void)? = nil) {
+        nearby.stop()
+        let alert = nearbySearchAlert
+        nearbySearchAlert = nil
+        let showFallback: () -> Void = { [weak self] in
+            guard let self else { return }
+            self.showMessage(title, message, settingsAction: settingsAction)
+        }
+        guard let alert else { showFallback(); return }
+        alert.dismiss(animated: true, completion: showFallback)
     }
 
     @objc private func scanPhotos() {
