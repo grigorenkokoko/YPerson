@@ -48,43 +48,57 @@ class YDBSyncStore:
     def authenticate_or_create(self, installation_id: str, bearer: str) -> None:
         candidate_hash = _digest(bearer)
         now = self._clock()
-        query = """
-        DECLARE $installation_id AS Utf8;
-        DECLARE $credential_hash AS String;
-        DECLARE $now AS Timestamp;
 
-        $existing = SELECT installation_id
-                    FROM installations
-                    WHERE installation_id = $installation_id;
-        $deleted = SELECT operation_id
-                   FROM operations
-                   WHERE installation_id = $installation_id
-                     AND operation_type = "deleteProfile"u
-                   LIMIT 1;
+        def authenticate(tx: ydb.QueryTxContext) -> None:
+            existing_rows, deletion_rows = self._tx_rows(
+                tx,
+                """
+                -- authentication-bootstrap
+                DECLARE $installation_id AS Utf8;
+                SELECT credential_hash
+                FROM installations
+                WHERE installation_id = $installation_id
+                  AND deleted_at IS NULL;
 
-        UPSERT INTO installations (
-            installation_id, credential_hash, apns_token,
-            created_at, updated_at, deleted_at
-        )
-        SELECT $installation_id, $credential_hash,
-               CAST(NULL AS Utf8?), $now, $now, CAST(NULL AS Timestamp?)
-        WHERE NOT EXISTS ($existing) AND NOT EXISTS ($deleted);
+                SELECT operation_id
+                FROM operations
+                WHERE installation_id = $installation_id
+                  AND operation_type = "deleteProfile"u
+                LIMIT 1;
+                """,
+                {"$installation_id": _utf8(installation_id)},
+            )
+            if deletion_rows:
+                raise InvalidCredential
 
-        SELECT credential_hash, apns_token, created_at, updated_at, deleted_at
-        FROM installations
-        WHERE installation_id = $installation_id;
-        """
-        rows = self._execute(
-            query,
-            {
-                "$installation_id": _utf8(installation_id),
-                "$credential_hash": _string(candidate_hash),
-                "$now": _timestamp(now),
-            },
-        )[0]
-        stored_hash = _stored_credential_hash(rows)
-        if stored_hash is None or not compare_digest(stored_hash, candidate_hash):
-            raise InvalidCredential
+            stored_hash = _stored_credential_hash(existing_rows)
+            if stored_hash is None:
+                self._tx_rows(
+                    tx,
+                    """
+                    DECLARE $installation_id AS Utf8;
+                    DECLARE $credential_hash AS String;
+                    DECLARE $now AS Timestamp;
+                    UPSERT INTO installations (
+                        installation_id, credential_hash, apns_token,
+                        created_at, updated_at, deleted_at
+                    ) VALUES (
+                        $installation_id, $credential_hash,
+                        CAST(NULL AS Utf8?), $now, $now, CAST(NULL AS Timestamp?)
+                    );
+                    """,
+                    {
+                        "$installation_id": _utf8(installation_id),
+                        "$credential_hash": _string(candidate_hash),
+                        "$now": _timestamp(now),
+                    },
+                )
+                return
+
+            if not compare_digest(stored_hash, candidate_hash):
+                raise InvalidCredential
+
+        self._transaction(authenticate)
 
     def authenticate(self, installation_id: str, bearer: str) -> None:
         candidate_hash = _digest(bearer)
