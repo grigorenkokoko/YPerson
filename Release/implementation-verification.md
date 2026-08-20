@@ -15,6 +15,8 @@
 - На iOS запрос удаления хранится до подтверждения сервера. После подтверждения очищены карточка, люди, legacy widget snapshot keys, sync cursor/pending payloads, analytics consent, аудиофайлы/кэш и Keychain credential; автоматический bootstrap остаётся запрещён до явного создания новой карточки.
 - Публичные `/privacy` и `/support` описывают фактически реализованные данные, путь удаления и сроки, но прямо отмечают отсутствие внешней проверки этой версии.
 - После объединения полный backend-набор завершился с результатом 140 passed; Ruff passed. Чистая Debug-сборка общего iOS-проекта для Generic iOS Simulator без signing завершилась успешно.
+- Автоматизированная contract-проверка шаблонов покрывает default `standard-clean` для legacy payload, валидный public `templateID`, отклонение невалидного идентификатора, YDB persistence и сохранение `templateID` при exchange; Release simulator build является build evidence для этой реализации.
+- Визуальная и device verification шаблонов пока не выполнялась: live preview, все четыре палитры в light/dark, отмена editor draft, VoiceOver/Dynamic Type, save/relaunch, received-card rendering, exported/shared image и ATT-denied availability остаются pending в `Release/manual-device-checks.md`.
 
 ## QR scanner widget
 
