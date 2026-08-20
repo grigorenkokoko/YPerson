@@ -8,7 +8,7 @@
 
 **Architecture:** Add a small Foundation-only vCard parser that returns a local-only `PersonCard`. Reuse the existing confirmation and local persistence path by wrapping the parsed card in an offline `ExchangePayload`; no vCard data is sent to the backend merely because it was scanned. The save path must preserve this already-classified local card directly rather than applying `exchangeCopy` a second time, because that would discard the parsed phone. Genuine YPerson payload producers remain responsible for applying their public/private-field policy before encoding.
 
-**Contract ruling:** `AppSpec.md` and `AppPrivacy.yml` describe a confirmed scanned-card payload as eligible to synchronize, but the current backend has no operation or ownership model for a third-party vCard without a signed YPerson owner/exchange token. This wave keeps such vCards local-only, preserves cloud claim for genuine YPerson payloads, and records the unresolved conformance issue in the roadmap rather than inventing a server owner. A future backend-import contract requires separate approval for ownership, retention, deletion, and update semantics.
+**Contract ruling:** `AppSpec.md` and `AppPrivacy.yml` require a confirmed scanned-card payload to synchronize, but the current backend has no operation or ownership model for a third-party vCard without a signed YPerson owner/exchange token. This wave keeps such vCards local-only, preserves cloud claim for genuine YPerson payloads, and records the unresolved conformance blocker in the roadmap rather than inventing a server owner. A future backend-import contract requires separate approval for ownership, retention, deletion, and update semantics.
 
 ---
 
@@ -37,9 +37,10 @@
 ### Task 3: Verify
 
 1. Run the temporary harness against the production parser.
-2. Regenerate/inspect the project if needed.
-3. Build the complete Release app and embedded extensions for an iPhone simulator with signing disabled.
-4. Inspect the code path to prove raw images and raw vCard content are not uploaded.
-5. Leave camera and full Photo-library device checks pending unless directly exercised.
+2. Run a deterministic route/persistence assertion proving that a confirmed vCard retains its parsed phone while an already-filtered YPerson payload is not broadened.
+3. Regenerate/inspect the project if needed.
+4. Build the complete Release app and embedded extensions for an iPhone simulator with signing disabled.
+5. Inspect the code path to prove raw images and raw vCard content are not uploaded.
+6. Leave camera and full Photo-library device checks pending unless directly exercised.
 
 **Out of scope:** vCard photos, custom labels, social profiles, arbitrary binary properties, automatic Contacts writes, and a new backend ownership/storage contract for third-party vCards.

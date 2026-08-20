@@ -37,7 +37,7 @@ Integration happens only after each stream has its own evidence and review. The 
 
 ## Recorded ruling
 
-`AppSpec.md` and `AppPrivacy.yml` allow a confirmed card payload found in Photos to synchronize, but the current backend can synchronize only a YPerson card tied to an authenticated owner/exchange token. A third-party vCard has neither. Wave 1 therefore keeps a parsed vCard local-only and preserves cloud claim for genuine YPerson payloads that carry a valid token. This is the privacy-minimizing behavior and avoids inventing ownership of third-party contact data. Cost if this ruling is wrong: vCards will not receive cloud backup/update semantics until a separately approved backend import contract and corresponding retention/deletion model exist; the AppSpec wording remains a conformance issue to resolve before release.
+`AppSpec.md` and `AppPrivacy.yml` require a confirmed card payload found in Photos to synchronize, but the current backend can synchronize only a YPerson card tied to an authenticated owner/exchange token. A third-party vCard has neither. Wave 1 therefore keeps a parsed vCard local-only and preserves cloud claim for genuine YPerson payloads that carry a valid token. This is the privacy-minimizing behavior and avoids inventing ownership of third-party contact data. Cost if this ruling is wrong: vCards will not receive cloud backup/update semantics until a separately approved backend import contract and corresponding retention/deletion model exist; this remains an explicit conformance blocker to resolve before release.
 
 ## Completion definition
 
