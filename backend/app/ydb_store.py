@@ -82,6 +82,7 @@ class YDBSyncStore:
         now = self._clock()
 
         def publish(tx: ydb.QueryTxContext) -> int:
+            self._ensure_active(tx, installation_id)
             previous = self._operation_result(tx, installation_id, operation_id, "publishCard")
             if previous is not None:
                 return int(previous["version"])
@@ -206,6 +207,7 @@ class YDBSyncStore:
         now = self._clock()
 
         def prepare(tx: ydb.QueryTxContext) -> None:
+            self._ensure_active(tx, installation_id)
             previous = self._operation_result(
                 tx,
                 installation_id,
@@ -274,8 +276,15 @@ class YDBSyncStore:
         now = self._clock()
 
         def claim(tx: ydb.QueryTxContext) -> SyncedPerson:
+            self._ensure_active(tx, installation_id)
             previous = self._operation_result(tx, installation_id, operation_id, "claimExchange")
             if previous is not None:
+                try:
+                    previous_hash = bytes.fromhex(str(previous["tokenHash"]))
+                except (KeyError, TypeError, ValueError) as error:
+                    raise StorageConflict("invalid operation result") from error
+                if not compare_digest(previous_hash, token_hash):
+                    raise StorageConflict("operation identifier already used")
                 return SyncedPerson.model_validate(previous["person"])
             claim_rows = self._tx_rows(
                 tx,
@@ -308,7 +317,12 @@ class YDBSyncStore:
                 card=_card(row["card_json"]),
                 version=int(row["version"]),
             )
-            result_json = _json({"person": person.model_dump(mode="json")})
+            result_json = _json(
+                {
+                    "person": person.model_dump(mode="json"),
+                    "tokenHash": token_hash.hex(),
+                }
+            )
             self._tx_rows(
                 tx,
                 """
@@ -357,6 +371,7 @@ class YDBSyncStore:
         operation_type = "updatePushToken" if token is not None else "removePushToken"
 
         def save(tx: ydb.QueryTxContext) -> None:
+            self._ensure_active(tx, installation_id)
             previous = self._operation_result(tx, installation_id, operation_id, operation_type)
             if previous is not None:
                 return
@@ -402,6 +417,7 @@ class YDBSyncStore:
         now = self._clock()
 
         def record(tx: ydb.QueryTxContext) -> None:
+            self._ensure_active(tx, installation_id)
             previous = self._operation_result(tx, installation_id, operation_id, action)
             if previous is not None:
                 return
@@ -496,6 +512,7 @@ class YDBSyncStore:
         now = self._clock()
 
         def delete(tx: ydb.QueryTxContext) -> list[str]:
+            self._ensure_active(tx, installation_id)
             previous = self._operation_result(tx, installation_id, operation_id, "deleteProfile")
             if previous is not None:
                 return [str(key) for key in previous["objectKeys"]]
@@ -679,6 +696,24 @@ class YDBSyncStore:
         if str(rows[0]["operation_type"]) != expected_type:
             raise StorageConflict("operation identifier already used")
         return _json_value(rows[0]["result_json"])
+
+    def _ensure_active(self, tx: ydb.QueryTxContext, installation_id: str) -> None:
+        result_sets = self._tx_rows(
+            tx,
+            """
+            -- active-installation-guard
+            DECLARE $installation_id AS Utf8;
+            SELECT installation_id FROM installations
+            WHERE installation_id = $installation_id;
+            SELECT operation_id FROM operations
+            WHERE installation_id = $installation_id
+              AND operation_type = "deleteProfile"u
+            LIMIT 1;
+            """,
+            {"$installation_id": _utf8(installation_id)},
+        )
+        if len(result_sets[0]) != 1 or result_sets[1]:
+            raise StorageConflict("installation unavailable")
 
     def _store_revocation(
         self,

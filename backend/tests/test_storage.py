@@ -49,6 +49,8 @@ class RecordingTransaction:
     ) -> TransactionResult:
         parameters = parameters or {}
         self._pool.transaction_calls.append((query, parameters))
+        if "active-installation-guard" in query:
+            return TransactionResult([ResultSet([{"installation_id": "active"}]), ResultSet([])])
         operation_key = (
             _parameter(parameters, "$installation_id"),
             _parameter(parameters, "$operation_id"),
@@ -137,13 +139,28 @@ class ScriptedTransaction:
     ) -> TransactionResult:
         parameters = parameters or {}
         self._pool.transaction_calls.append((query, parameters))
+        if "active-installation-guard" in query:
+            if self._pool.active:
+                return TransactionResult(
+                    [ResultSet([{"installation_id": "active"}]), ResultSet([])]
+                )
+            return TransactionResult(
+                [ResultSet([]), ResultSet([{"operation_id": "op-delete-committed"}])]
+            )
         return TransactionResult(self._pool.transaction_handler(query, parameters))
 
 
 class ScriptedPool:
-    def __init__(self, *, transaction_handler: Any, read_handler: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        transaction_handler: Any,
+        read_handler: Any = None,
+        active: bool = True,
+    ) -> None:
         self.transaction_handler = transaction_handler
         self.read_handler = read_handler or (lambda _query, _parameters: [])
+        self.active = active
         self.transaction_calls: list[tuple[str, dict[str, Any]]] = []
         self.read_calls: list[tuple[str, dict[str, Any]]] = []
 
@@ -432,6 +449,127 @@ def test_exchange_token_rejects_second_operation_even_for_same_recipient(
             "already-claimed-token",
         )
     assert not any("UPDATE exchange_claims" in query for query, _ in pool.transaction_calls)
+
+
+def test_claim_replay_is_bound_to_the_original_exchange_token(card: PersonCard) -> None:
+    previous_result = {
+        "person": {"card": card.model_dump(mode="json"), "version": 1},
+        "tokenHash": sha256(b"original-token").hexdigest(),
+    }
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "operation_type": "claimExchange",
+                            "result_json": json.dumps(previous_result),
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    adapter = YDBSyncStore(pool)  # type: ignore[arg-type]
+    with pytest.raises(StorageConflict):
+        adapter.claim_exchange(
+            "installation-peer",
+            "op-claim-1",
+            "different-token",
+        )
+    assert not any("FROM exchange_claims AS claim" in query for query, _ in pool.transaction_calls)
+
+
+def test_committed_delete_blocks_delayed_publish_and_claim(card: PersonCard) -> None:
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM installations" in query:
+            return [
+                ResultSet([]),
+                ResultSet([{"operation_id": "op-delete-committed"}]),
+            ]
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "SELECT version FROM cards" in query:
+            return [ResultSet([])]
+        if "FROM exchange_claims AS claim" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "issuer_installation_id": "installation-owner",
+                            "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+                            "claimed_by_installation_id": None,
+                            "version": 1,
+                            "card_json": json.dumps(card.model_dump(mode="json")),
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    publish_pool = ScriptedPool(transaction_handler=transaction_handler, active=False)
+    publish_store = YDBSyncStore(publish_pool)  # type: ignore[arg-type]
+    with pytest.raises(StorageConflict):
+        publish_store.publish_card(
+            "installation-deleted",
+            "op-publish-delayed",
+            card,
+            None,
+        )
+    assert not any("UPSERT INTO cards" in query for query, _ in publish_pool.transaction_calls)
+
+    claim_pool = ScriptedPool(transaction_handler=transaction_handler, active=False)
+    claim_store = YDBSyncStore(claim_pool)  # type: ignore[arg-type]
+    with pytest.raises(StorageConflict):
+        claim_store.claim_exchange(
+            "installation-deleted",
+            "op-claim-delayed",
+            "valid-unclaimed-token",
+        )
+    assert not any("UPDATE exchange_claims" in query for query, _ in claim_pool.transaction_calls)
+
+
+def test_every_other_mutation_uses_the_same_active_installation_guard() -> None:
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "SELECT token_hash FROM exchange_claims" in query:
+            return [ResultSet([])]
+        return []
+
+    actions = (
+        lambda store: store.prepare_exchange(
+            "installation-deleted",
+            "op-prepare-delayed",
+            "qr",
+            "raw-token",
+            datetime.now(UTC) + timedelta(minutes=5),
+        ),
+        lambda store: store.save_push_token(
+            "installation-deleted",
+            "op-push-delayed",
+            "apns-token",
+        ),
+        lambda store: store.record_moderation(
+            "installation-deleted",
+            "op-report-delayed",
+            "installation-subject",
+            "report",
+            "other",
+        ),
+        lambda store: store.delete_profile(
+            "installation-deleted",
+            "op-delete-delayed",
+        ),
+    )
+    for action in actions:
+        pool = ScriptedPool(transaction_handler=transaction_handler, active=False)
+        store = YDBSyncStore(pool)  # type: ignore[arg-type]
+        with pytest.raises(StorageConflict):
+            action(store)
+        assert "active-installation-guard" in pool.transaction_calls[0][0]
 
 
 def test_block_is_symmetric_and_refresh_returns_durable_revocations(
