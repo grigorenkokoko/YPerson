@@ -1,0 +1,610 @@
+"""YDB implementation of the installation-authenticated sync store."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from datetime import UTC, datetime
+from hashlib import sha256
+from hmac import compare_digest
+from typing import Any
+
+import ydb
+
+from .schemas import PersonCard, SyncedPerson
+from .storage import (
+    InstallationRecord,
+    InvalidCredential,
+    StorageConflict,
+    SyncSnapshot,
+)
+
+
+class YDBSyncStore:
+    """Persist sync state through a ready QuerySessionPool."""
+
+    def __init__(
+        self,
+        pool: ydb.QuerySessionPool,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._pool = pool
+        self._clock = clock or (lambda: datetime.now(UTC))
+
+    def authenticate_or_create(self, installation_id: str, bearer: str) -> None:
+        candidate_hash = _digest(bearer)
+        now = self._clock()
+        query = """
+        DECLARE $installation_id AS Utf8;
+        DECLARE $credential_hash AS String;
+        DECLARE $now AS Timestamp;
+
+        $existing = SELECT installation_id
+                    FROM installations
+                    WHERE installation_id = $installation_id;
+
+        UPSERT INTO installations (
+            installation_id, credential_hash, apns_token,
+            created_at, updated_at, deleted_at
+        )
+        SELECT $installation_id, $credential_hash,
+               CAST(NULL AS Utf8?), $now, $now, CAST(NULL AS Timestamp?)
+        WHERE NOT EXISTS ($existing);
+
+        SELECT credential_hash, apns_token, created_at, updated_at, deleted_at
+        FROM installations
+        WHERE installation_id = $installation_id;
+        """
+        rows = self._execute(
+            query,
+            {
+                "$installation_id": _utf8(installation_id),
+                "$credential_hash": _string(candidate_hash),
+                "$now": _timestamp(now),
+            },
+        )[0]
+        if len(rows) != 1 or not compare_digest(bytes(rows[0]["credential_hash"]), candidate_hash):
+            raise InvalidCredential
+
+    def publish_card(
+        self,
+        installation_id: str,
+        operation_id: str,
+        card: PersonCard,
+        audio_asset_id: str | None,
+    ) -> int:
+        now = self._clock()
+
+        def publish(tx: ydb.QueryTxContext) -> int:
+            previous = self._operation_result(tx, installation_id, operation_id, "publishCard")
+            if previous is not None:
+                return int(previous["version"])
+
+            current_rows = self._tx_rows(
+                tx,
+                """
+                DECLARE $installation_id AS Utf8;
+                SELECT version FROM cards WHERE installation_id = $installation_id;
+                """,
+                {"$installation_id": _utf8(installation_id)},
+            )[0]
+            version = (int(current_rows[0]["version"]) if current_rows else 0) + 1
+            result_json = _json({"version": version})
+            self._tx_rows(
+                tx,
+                """
+                DECLARE $installation_id AS Utf8;
+                DECLARE $operation_id AS Utf8;
+                DECLARE $card_id AS Utf8;
+                DECLARE $version AS Uint64;
+                DECLARE $card_json AS JsonDocument;
+                DECLARE $audio_asset_id AS Utf8?;
+                DECLARE $result_json AS JsonDocument;
+                DECLARE $now AS Timestamp;
+
+                UPSERT INTO cards (
+                    installation_id, card_id, version, card_json,
+                    audio_asset_id, published_at, updated_at
+                ) VALUES (
+                    $installation_id, $card_id, $version, $card_json,
+                    $audio_asset_id, $now, $now
+                );
+                UPSERT INTO operations (
+                    installation_id, operation_id, operation_type, result_json, completed_at
+                ) VALUES (
+                    $installation_id, $operation_id, "publishCard"u, $result_json, $now
+                );
+                """,
+                {
+                    "$installation_id": _utf8(installation_id),
+                    "$operation_id": _utf8(operation_id),
+                    "$card_id": _utf8(card.id),
+                    "$version": _uint64(version),
+                    "$card_json": _json_document(
+                        _json(card.model_dump(mode="json", exclude={"meetingPlace"}))
+                    ),
+                    "$audio_asset_id": _optional_utf8(audio_asset_id),
+                    "$result_json": _json_document(result_json),
+                    "$now": _timestamp(now),
+                },
+            )
+            return version
+
+        return self._transaction(publish)
+
+    def refresh(self, installation_id: str, cursor: str | None) -> SyncSnapshot:
+        query = """
+        DECLARE $installation_id AS Utf8;
+
+        SELECT version, card_json
+        FROM cards
+        WHERE installation_id = $installation_id;
+
+        SELECT peer.version AS version, peer.card_json AS card_json
+        FROM connections AS connection
+        INNER JOIN cards AS peer
+            ON peer.installation_id = connection.peer_installation_id
+        WHERE connection.owner_installation_id = $installation_id
+          AND connection.status = "confirmed"u;
+        """
+        result_sets = self._execute(
+            query,
+            {"$installation_id": _utf8(installation_id)},
+        )
+        own_rows = result_sets[0]
+        people_rows = result_sets[1]
+        own_card = _card(own_rows[0]["card_json"]) if own_rows else None
+        own_version = int(own_rows[0]["version"]) if own_rows else None
+        people = tuple(
+            SyncedPerson(
+                card=_card(row["card_json"]),
+                version=int(row["version"]),
+            )
+            for row in people_rows
+        )
+        return SyncSnapshot(
+            own_card=own_card,
+            own_card_version=own_version,
+            people=people,
+            next_cursor=cursor,
+        )
+
+    def prepare_exchange(
+        self,
+        installation_id: str,
+        operation_id: str,
+        method: str,
+        raw_token: str,
+        expires_at: datetime,
+    ) -> None:
+        token_hash = _digest(raw_token)
+        now = self._clock()
+
+        def prepare(tx: ydb.QueryTxContext) -> None:
+            previous = self._operation_result(
+                tx,
+                installation_id,
+                operation_id,
+                "prepareExchange",
+            )
+            if previous is not None:
+                previous_hash = bytes.fromhex(str(previous["tokenHash"]))
+                if not compare_digest(previous_hash, token_hash):
+                    raise StorageConflict("operation identifier already used")
+                return
+            token_rows = self._tx_rows(
+                tx,
+                """
+                DECLARE $token_hash AS String;
+                SELECT token_hash FROM exchange_claims WHERE token_hash = $token_hash;
+                """,
+                {"$token_hash": _string(token_hash)},
+            )[0]
+            if token_rows:
+                raise StorageConflict("exchange unavailable")
+            self._tx_rows(
+                tx,
+                """
+                DECLARE $token_hash AS String;
+                DECLARE $installation_id AS Utf8;
+                DECLARE $operation_id AS Utf8;
+                DECLARE $method AS Utf8;
+                DECLARE $expires_at AS Timestamp;
+                DECLARE $result_json AS JsonDocument;
+                DECLARE $now AS Timestamp;
+
+                UPSERT INTO exchange_claims (
+                    token_hash, issuer_installation_id, method,
+                    expires_at, claimed_by_installation_id
+                ) VALUES (
+                    $token_hash, $installation_id, $method,
+                    $expires_at, CAST(NULL AS Utf8?)
+                );
+                UPSERT INTO operations (
+                    installation_id, operation_id, operation_type, result_json, completed_at
+                ) VALUES (
+                    $installation_id, $operation_id, "prepareExchange"u, $result_json, $now
+                );
+                """,
+                {
+                    "$token_hash": _string(token_hash),
+                    "$installation_id": _utf8(installation_id),
+                    "$operation_id": _utf8(operation_id),
+                    "$method": _utf8(method),
+                    "$expires_at": _timestamp(expires_at),
+                    "$result_json": _json_document(_json({"tokenHash": token_hash.hex()})),
+                    "$now": _timestamp(now),
+                },
+            )
+
+        self._transaction(prepare)
+
+    def claim_exchange(
+        self,
+        installation_id: str,
+        operation_id: str,
+        raw_token: str,
+    ) -> SyncedPerson:
+        token_hash = _digest(raw_token)
+        now = self._clock()
+
+        def claim(tx: ydb.QueryTxContext) -> SyncedPerson:
+            previous = self._operation_result(tx, installation_id, operation_id, "claimExchange")
+            if previous is not None:
+                return SyncedPerson.model_validate(previous["person"])
+            claim_rows = self._tx_rows(
+                tx,
+                """
+                DECLARE $token_hash AS String;
+                SELECT claim.issuer_installation_id AS issuer_installation_id,
+                       claim.expires_at AS expires_at,
+                       claim.claimed_by_installation_id AS claimed_by_installation_id,
+                       card.version AS version,
+                       card.card_json AS card_json
+                FROM exchange_claims AS claim
+                INNER JOIN cards AS card
+                    ON card.installation_id = claim.issuer_installation_id
+                WHERE claim.token_hash = $token_hash;
+                """,
+                {"$token_hash": _string(token_hash)},
+            )[0]
+            if not claim_rows:
+                raise StorageConflict("exchange unavailable")
+            row = claim_rows[0]
+            issuer_id = str(row["issuer_installation_id"])
+            claimed_by = row["claimed_by_installation_id"]
+            if (
+                issuer_id == installation_id
+                or _as_utc(row["expires_at"]) <= _as_utc(now)
+                or (claimed_by is not None and str(claimed_by) != installation_id)
+            ):
+                raise StorageConflict("exchange unavailable")
+            person = SyncedPerson(
+                card=_card(row["card_json"]),
+                version=int(row["version"]),
+            )
+            result_json = _json({"person": person.model_dump(mode="json")})
+            self._tx_rows(
+                tx,
+                """
+                DECLARE $token_hash AS String;
+                DECLARE $issuer_id AS Utf8;
+                DECLARE $installation_id AS Utf8;
+                DECLARE $operation_id AS Utf8;
+                DECLARE $result_json AS JsonDocument;
+                DECLARE $now AS Timestamp;
+
+                UPDATE exchange_claims
+                SET claimed_by_installation_id = $installation_id
+                WHERE token_hash = $token_hash;
+                UPSERT INTO connections (
+                    owner_installation_id, peer_installation_id,
+                    status, created_at, updated_at
+                ) VALUES
+                    ($installation_id, $issuer_id, "confirmed"u, $now, $now),
+                    ($issuer_id, $installation_id, "confirmed"u, $now, $now);
+                UPSERT INTO operations (
+                    installation_id, operation_id, operation_type, result_json, completed_at
+                ) VALUES (
+                    $installation_id, $operation_id, "claimExchange"u, $result_json, $now
+                );
+                """,
+                {
+                    "$token_hash": _string(token_hash),
+                    "$issuer_id": _utf8(issuer_id),
+                    "$installation_id": _utf8(installation_id),
+                    "$operation_id": _utf8(operation_id),
+                    "$result_json": _json_document(result_json),
+                    "$now": _timestamp(now),
+                },
+            )
+            return person
+
+        return self._transaction(claim)
+
+    def save_push_token(
+        self,
+        installation_id: str,
+        operation_id: str,
+        token: str | None,
+    ) -> None:
+        now = self._clock()
+        operation_type = "updatePushToken" if token is not None else "removePushToken"
+
+        def save(tx: ydb.QueryTxContext) -> None:
+            previous = self._operation_result(tx, installation_id, operation_id, operation_type)
+            if previous is not None:
+                return
+            self._tx_rows(
+                tx,
+                """
+                DECLARE $installation_id AS Utf8;
+                DECLARE $operation_id AS Utf8;
+                DECLARE $operation_type AS Utf8;
+                DECLARE $token AS Utf8?;
+                DECLARE $result_json AS JsonDocument;
+                DECLARE $now AS Timestamp;
+
+                UPDATE installations
+                SET apns_token = $token, updated_at = $now
+                WHERE installation_id = $installation_id;
+                UPSERT INTO operations (
+                    installation_id, operation_id, operation_type, result_json, completed_at
+                ) VALUES (
+                    $installation_id, $operation_id, $operation_type, $result_json, $now
+                );
+                """,
+                {
+                    "$installation_id": _utf8(installation_id),
+                    "$operation_id": _utf8(operation_id),
+                    "$operation_type": _utf8(operation_type),
+                    "$token": _optional_utf8(token),
+                    "$result_json": _json_document(_json({})),
+                    "$now": _timestamp(now),
+                },
+            )
+
+        self._transaction(save)
+
+    def record_moderation(
+        self,
+        installation_id: str,
+        operation_id: str,
+        subject_id: str,
+        action: str,
+        category: str | None,
+    ) -> None:
+        now = self._clock()
+
+        def record(tx: ydb.QueryTxContext) -> None:
+            previous = self._operation_result(tx, installation_id, operation_id, action)
+            if previous is not None:
+                return
+            self._tx_rows(
+                tx,
+                """
+                DECLARE $installation_id AS Utf8;
+                DECLARE $operation_id AS Utf8;
+                DECLARE $subject_id AS Utf8;
+                DECLARE $action AS Utf8;
+                DECLARE $category AS Utf8?;
+                DECLARE $result_json AS JsonDocument;
+                DECLARE $now AS Timestamp;
+
+                UPSERT INTO moderation_actions (
+                    reporter_installation_id, subject_installation_id,
+                    action_id, action, category, created_at
+                ) VALUES (
+                    $installation_id, $subject_id, $operation_id, $action, $category, $now
+                );
+                UPSERT INTO operations (
+                    installation_id, operation_id, operation_type, result_json, completed_at
+                ) VALUES ($installation_id, $operation_id, $action, $result_json, $now);
+                """,
+                {
+                    "$installation_id": _utf8(installation_id),
+                    "$operation_id": _utf8(operation_id),
+                    "$subject_id": _utf8(subject_id),
+                    "$action": _utf8(action),
+                    "$category": _optional_utf8(category),
+                    "$result_json": _json_document(_json({})),
+                    "$now": _timestamp(now),
+                },
+            )
+            if action == "block":
+                self._tx_rows(
+                    tx,
+                    """
+                    DECLARE $installation_id AS Utf8;
+                    DECLARE $subject_id AS Utf8;
+                    DECLARE $now AS Timestamp;
+                    UPDATE connections
+                    SET status = "blocked"u, updated_at = $now
+                    WHERE owner_installation_id = $installation_id
+                      AND peer_installation_id = $subject_id;
+                    """,
+                    {
+                        "$installation_id": _utf8(installation_id),
+                        "$subject_id": _utf8(subject_id),
+                        "$now": _timestamp(now),
+                    },
+                )
+
+        self._transaction(record)
+
+    def delete_profile(self, installation_id: str, operation_id: str) -> list[str]:
+        now = self._clock()
+
+        def delete(tx: ydb.QueryTxContext) -> list[str]:
+            previous = self._operation_result(tx, installation_id, operation_id, "deleteProfile")
+            if previous is not None:
+                return [str(key) for key in previous["objectKeys"]]
+            media_rows = self._tx_rows(
+                tx,
+                """
+                DECLARE $installation_id AS Utf8;
+                SELECT object_key FROM media_assets
+                WHERE owner_installation_id = $installation_id;
+                """,
+                {"$installation_id": _utf8(installation_id)},
+            )[0]
+            object_keys = [str(row["object_key"]) for row in media_rows]
+            result_json = _json({"objectKeys": object_keys})
+            self._tx_rows(
+                tx,
+                """
+                DECLARE $installation_id AS Utf8;
+                DECLARE $operation_id AS Utf8;
+                DECLARE $result_json AS JsonDocument;
+                DECLARE $now AS Timestamp;
+
+                DELETE FROM connections
+                WHERE owner_installation_id = $installation_id
+                   OR peer_installation_id = $installation_id;
+                DELETE FROM exchange_claims
+                WHERE issuer_installation_id = $installation_id
+                   OR claimed_by_installation_id = $installation_id;
+                DELETE FROM media_assets WHERE owner_installation_id = $installation_id;
+                DELETE FROM cards WHERE installation_id = $installation_id;
+                DELETE FROM installations WHERE installation_id = $installation_id;
+                DELETE FROM operations WHERE installation_id = $installation_id;
+                UPSERT INTO operations (
+                    installation_id, operation_id, operation_type, result_json, completed_at
+                ) VALUES (
+                    $installation_id, $operation_id, "deleteProfile"u, $result_json, $now
+                );
+                """,
+                {
+                    "$installation_id": _utf8(installation_id),
+                    "$operation_id": _utf8(operation_id),
+                    "$result_json": _json_document(result_json),
+                    "$now": _timestamp(now),
+                },
+            )
+            return object_keys
+
+        return self._transaction(delete)
+
+    def debug_installation(self, installation_id: str) -> InstallationRecord | None:
+        """Return secret-safe adapter state for deterministic injected-pool tests."""
+
+        rows = self._execute(
+            """
+            DECLARE $installation_id AS Utf8;
+            SELECT credential_hash, apns_token, created_at, updated_at, deleted_at
+            FROM installations WHERE installation_id = $installation_id;
+            """,
+            {"$installation_id": _utf8(installation_id)},
+        )[0]
+        if not rows:
+            return None
+        row = rows[0]
+        return InstallationRecord(
+            installation_id=installation_id,
+            credential_hash=bytes(row["credential_hash"]),
+            apns_token=row["apns_token"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            deleted_at=row["deleted_at"],
+        )
+
+    def _operation_result(
+        self,
+        tx: ydb.QueryTxContext,
+        installation_id: str,
+        operation_id: str,
+        expected_type: str,
+    ) -> dict[str, Any] | None:
+        rows = self._tx_rows(
+            tx,
+            """
+            DECLARE $installation_id AS Utf8;
+            DECLARE $operation_id AS Utf8;
+            SELECT operation_type, result_json
+            FROM operations
+            WHERE installation_id = $installation_id AND operation_id = $operation_id;
+            """,
+            {
+                "$installation_id": _utf8(installation_id),
+                "$operation_id": _utf8(operation_id),
+            },
+        )[0]
+        if not rows:
+            return None
+        if str(rows[0]["operation_type"]) != expected_type:
+            raise StorageConflict("operation identifier already used")
+        return _json_value(rows[0]["result_json"])
+
+    def _execute(self, query: str, parameters: dict[str, Any]) -> list[list[Any]]:
+        result_sets = self._pool.execute_with_retries(
+            query,
+            parameters,
+            retry_settings=ydb.RetrySettings(idempotent=True),
+        )
+        return [list(result_set.rows) for result_set in result_sets]
+
+    def _transaction(self, callee: Callable[[ydb.QueryTxContext], Any]) -> Any:
+        return self._pool.retry_tx_sync(
+            callee,
+            tx_mode=ydb.QuerySerializableReadWrite(),
+            retry_settings=ydb.RetrySettings(idempotent=True),
+        )
+
+    @staticmethod
+    def _tx_rows(
+        tx: ydb.QueryTxContext,
+        query: str,
+        parameters: dict[str, Any],
+    ) -> list[list[Any]]:
+        with tx.execute(query, parameters=parameters) as result_sets:
+            return [list(result_set.rows) for result_set in result_sets]
+
+
+def _digest(value: str) -> bytes:
+    return sha256(value.encode("utf-8")).digest()
+
+
+def _json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _json_value(value: Any) -> dict[str, Any]:
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    parsed = json.loads(str(value))
+    if not isinstance(parsed, dict):
+        raise StorageConflict("invalid operation result")
+    return parsed
+
+
+def _card(value: Any) -> PersonCard:
+    return PersonCard.model_validate(_json_value(value))
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _utf8(value: str) -> tuple[str, ydb.PrimitiveType]:
+    return value, ydb.PrimitiveType.Utf8
+
+
+def _optional_utf8(value: str | None) -> tuple[str | None, ydb.OptionalType]:
+    return value, ydb.OptionalType(ydb.PrimitiveType.Utf8)
+
+
+def _string(value: bytes) -> tuple[bytes, ydb.PrimitiveType]:
+    return value, ydb.PrimitiveType.String
+
+
+def _uint64(value: int) -> tuple[int, ydb.PrimitiveType]:
+    return value, ydb.PrimitiveType.Uint64
+
+
+def _timestamp(value: datetime) -> tuple[datetime, ydb.PrimitiveType]:
+    return value, ydb.PrimitiveType.Timestamp
+
+
+def _json_document(value: str) -> tuple[str, ydb.PrimitiveType]:
+    return value, ydb.PrimitiveType.JsonDocument
