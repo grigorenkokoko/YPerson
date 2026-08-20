@@ -376,10 +376,11 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private func saveImportedCard(_ payload: ExchangePayload, allowsCloudClaim: Bool) {
         do {
             guard let snapshotStore else { throw ExchangeError.localStorageUnavailable }
-            var localCard = payload.card.exchangeCopy
-            localCard.sourceInstallationID = nil
-            localCard.syncState = allowsCloudClaim ? .pending : .localOnly
-            localCard.meetingPlace = pendingMeetingPlace
+            let localCard = ImportedCardPersistence.card(
+                from: payload,
+                allowsCloudClaim: allowsCloudClaim,
+                meetingPlace: pendingMeetingPlace
+            )
             try snapshotStore.upsertPerson(localCard)
             onPersonSaved(localCard)
             clearPendingMeetingPlace()

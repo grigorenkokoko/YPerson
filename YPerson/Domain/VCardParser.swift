@@ -1,6 +1,7 @@
 import Foundation
 
 /// Parses the small, local-only vCard subset that YPerson can import from QR and Photos.
+/// Property values must be direct UTF-8 text; transfer-encoded values are rejected.
 enum VCardParser {
     /// A scan candidate is capped at 64 KiB before any parsing work is performed.
     static let maximumInputBytes = 64 * 1024
@@ -18,7 +19,7 @@ enum VCardParser {
     static func parse(_ value: String) throws -> PersonCard {
         guard value.utf8.count <= maximumInputBytes else { throw ParseError.malformed }
 
-        let lines = unfold(value)
+        let lines = unfold(value.trimmingCharacters(in: .whitespacesAndNewlines))
         guard lines.count >= 2,
               lines.first?.caseInsensitiveCompare("BEGIN:VCARD") == .orderedSame,
               lines.last?.caseInsensitiveCompare("END:VCARD") == .orderedSame else {
@@ -28,9 +29,12 @@ enum VCardParser {
         var fields = Fields()
         for line in lines.dropFirst().dropLast() {
             guard let separator = line.firstIndex(of: ":") else { continue }
-            let name = line[..<separator]
-                .split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
-                .first?
+            let property = line[..<separator]
+                .split(separator: ";", omittingEmptySubsequences: false)
+            guard !property.dropFirst().contains(where: isTransferEncodingParameter) else {
+                throw ParseError.malformed
+            }
+            let name = property.first?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .uppercased()
             guard let name else { continue }
@@ -55,6 +59,14 @@ enum VCardParser {
             sourceInstallationID: nil,
             syncState: .localOnly
         )
+    }
+
+    private static func isTransferEncodingParameter(_ parameter: Substring) -> Bool {
+        parameter
+            .split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare("ENCODING") == .orderedSame
     }
 
     enum ParseError: LocalizedError {
@@ -175,5 +187,11 @@ enum VCardParser {
         }
         if escaping { result.append("\\") }
         return result
+    }
+}
+
+enum ScanCandidatePolicy {
+    static func isSupported(_ value: String) -> Bool {
+        value.hasPrefix("yperson:") || VCardParser.isCandidate(value)
     }
 }
