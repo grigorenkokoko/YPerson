@@ -6,7 +6,9 @@
 
 **Approved behavior:** `AppSpec.md` camera and photo-import sections; `AppPrivacy.yml` `permissions.camera` and `permissions.photo_library_read`.
 
-**Architecture:** Add a small Foundation-only vCard parser that returns a local-only `PersonCard`. Reuse the existing confirmation and local persistence path by wrapping the parsed card in an offline `ExchangePayload`; no vCard data is sent to the backend merely because it was scanned.
+**Architecture:** Add a small Foundation-only vCard parser that returns a local-only `PersonCard`. Reuse the existing confirmation and local persistence path by wrapping the parsed card in an offline `ExchangePayload`; no vCard data is sent to the backend merely because it was scanned. The save path must preserve this already-classified local card directly rather than applying `exchangeCopy` a second time, because that would discard the parsed phone. Genuine YPerson payload producers remain responsible for applying their public/private-field policy before encoding.
+
+**Contract ruling:** `AppSpec.md` and `AppPrivacy.yml` describe a confirmed scanned-card payload as eligible to synchronize, but the current backend has no operation or ownership model for a third-party vCard without a signed YPerson owner/exchange token. This wave keeps such vCards local-only, preserves cloud claim for genuine YPerson payloads, and records the unresolved conformance issue in the roadmap rather than inventing a server owner. A future backend-import contract requires separate approval for ownership, retention, deletion, and update semantics.
 
 ---
 
@@ -29,8 +31,8 @@
 
 1. In `handleScannedCode`, keep YPerson v2 decoding and add vCard parsing before unsupported-format failure.
 2. In photo results, accept the first valid YPerson payload or vCard candidate and show the same confirmation UI.
-3. Use offline confirmation text; do not attempt a cloud claim for vCard.
-4. Make failure messages distinguish malformed vCard from unsupported content.
+3. Use offline confirmation text and do not attempt a cloud claim for vCard. Preserve its parsed phone when saving; do not weaken the existing public-field filtering performed by YPerson payload producers.
+4. Make failure messages distinguish malformed vCard from unsupported content. Reject unsupported encoded-value parameters rather than importing their encoded bytes as visible text.
 
 ### Task 3: Verify
 
@@ -40,4 +42,4 @@
 4. Inspect the code path to prove raw images and raw vCard content are not uploaded.
 5. Leave camera and full Photo-library device checks pending unless directly exercised.
 
-**Out of scope:** vCard photos, custom labels, social profiles, arbitrary binary properties, automatic Contacts writes, and cloud synchronization of picker/scanner-imported local cards.
+**Out of scope:** vCard photos, custom labels, social profiles, arbitrary binary properties, automatic Contacts writes, and a new backend ownership/storage contract for third-party vCards.

@@ -12,7 +12,7 @@
 | --- | --- | --- | --- |
 | 1 — now | A card can be styled, imported, and safely written to Contacts | Finish card-template verification; fix Contacts matching/selection/update; support compatible vCard QR/photo import | Full backend suite, temporary Swift harnesses, Release simulator build, task review |
 | 2 | Exchange controls tell the truth | Wire private-field consent into the exported payload; replace the fake short-code example with a real server-issued code or relabel the long token honestly; persist audio state | Round-trip contract tests and relaunch checks |
-| 3 | Saved people remain useful | Show real field diffs, require confirmation before Contacts updates, implement local/server connection deletion, surface sync state and retry | Backend deletion/update tests plus end-to-end simulator inspection |
+| 3 | Saved people remain useful after an owner changes data | Propagate owner-originated field changes through a stable Contacts link, implement local/server connection deletion, and surface sync state and retry | Backend deletion/update tests plus end-to-end simulator inspection |
 | 4 | Notifications create an action, not a demo | Remove the fictional local notification; implement real APNs sending and deep-link review/block actions | Staging push evidence and notification-extension inspection |
 | 5 | Cards feel personal and release blockers are explicit | Real avatar selection/rendering, editable tagline, durable audio greeting, production configuration and device/release checklist | Clean-install and relaunch evidence, device checks, release manifest remains honest |
 
@@ -34,6 +34,10 @@ Integration happens only after each stream has its own evidence and review. The 
 - Keep iOS 15+, portrait-only iPhone support and all three existing extensions building.
 - Keep `meetingPlace` local-only and do not broaden backend payloads without updating `AppSpec.md` and `AppPrivacy.yml`.
 - Do not claim device, APNs, signing, production-backend, archive, or release readiness without direct evidence.
+
+## Recorded ruling
+
+`AppSpec.md` and `AppPrivacy.yml` allow a confirmed card payload found in Photos to synchronize, but the current backend can synchronize only a YPerson card tied to an authenticated owner/exchange token. A third-party vCard has neither. Wave 1 therefore keeps a parsed vCard local-only and preserves cloud claim for genuine YPerson payloads that carry a valid token. This is the privacy-minimizing behavior and avoids inventing ownership of third-party contact data. Cost if this ruling is wrong: vCards will not receive cloud backup/update semantics until a separately approved backend import contract and corresponding retention/deletion model exist; the AppSpec wording remains a conformance issue to resolve before release.
 
 ## Completion definition
 
