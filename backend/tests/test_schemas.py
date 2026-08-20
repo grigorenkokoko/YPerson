@@ -54,6 +54,7 @@ def test_all_existing_operations_remain_supported() -> None:
         "publishCard",
         "prepareExchange",
         "claimExchange",
+        "cancelExchange",
         "prepareAudioUpload",
         "updatePushToken",
         "removePushToken",
@@ -61,6 +62,39 @@ def test_all_existing_operations_remain_supported() -> None:
         "report",
         "block",
     }
+
+
+def test_cancel_exchange_requires_only_the_exchange_token() -> None:
+    request = SyncRequest.model_validate(
+        valid_request()
+        | {
+            "operation": "cancelExchange",
+            "exchangeToken": "prepared-token",
+        }
+    )
+
+    assert request.exchangeToken == "prepared-token"
+    with pytest.raises(ValidationError, match="cancelExchange requires exchangeToken"):
+        SyncRequest.model_validate(valid_request() | {"operation": "cancelExchange"})
+    with pytest.raises(ValidationError, match="cancelExchange does not accept card"):
+        SyncRequest.model_validate(
+            valid_request()
+            | {
+                "operation": "cancelExchange",
+                "exchangeToken": "prepared-token",
+                "card": {
+                    "id": "card-peer",
+                    "name": "Peer",
+                    "role": "Designer",
+                    "company": "Studio",
+                    "phone": "",
+                    "email": "",
+                    "tagline": "Hello",
+                    "hasAudioGreeting": False,
+                    "isBlocked": False,
+                },
+            }
+        )
 
 
 def test_sync_request_accepts_the_published_person_card_contract() -> None:
@@ -243,6 +277,7 @@ def test_sync_v2_models_preserve_v1_fields_and_add_people_audio() -> None:
             "nextCursor": "7",
             "people": [
                 {
+                    "installationID": "installation-peer-00002",
                     "card": {
                         "id": "card-peer",
                         "name": "Peer",

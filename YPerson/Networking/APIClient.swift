@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 final class APIClient {
@@ -80,14 +79,7 @@ final class APIClient {
     }
 
     func sync(_ payload: SyncRequest) async throws -> SyncResponse {
-        let pendingKey = try payload.isMutation ? operationStorageKey(for: payload) : nil
-        let operationID: String
-        if let pendingKey, let snapshotStore {
-            operationID = snapshotStore.pendingOperationID(for: pendingKey, proposed: payload.operationID)
-        } else {
-            operationID = payload.operationID
-        }
-        let wire = makeWireRequest(payload, operationID: operationID)
+        let wire = makeWireRequest(payload, operationID: payload.operationID)
         var request = URLRequest(url: baseURL.appendingPathComponent("sync"), timeoutInterval: 12)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -99,9 +91,7 @@ final class APIClient {
         guard (200..<300).contains(http.statusCode) else {
             throw ClientError.status(http.statusCode, String(data: data, encoding: .utf8) ?? "")
         }
-        let result = try decoder.decode(SyncResponse.self, from: data)
-        if let pendingKey { snapshotStore?.clearPendingOperationID(for: pendingKey) }
-        return result
+        return try decoder.decode(SyncResponse.self, from: data)
     }
 
     private func makeWireRequest(_ payload: SyncRequest, operationID: String) -> SyncWireRequest {
@@ -121,13 +111,6 @@ final class APIClient {
             moderationCategory: payload.moderationCategory,
             subjectInstallationID: payload.subjectInstallationID
         )
-    }
-
-    private func operationStorageKey(for payload: SyncRequest) throws -> String {
-        let fingerprint = makeWireRequest(payload, operationID: "stable-operation-fingerprint")
-        let digest = SHA256.hash(data: try encoder.encode(fingerprint))
-        let suffix = digest.map { String(format: "%02x", $0) }.joined()
-        return "\(payload.operation.rawValue):\(suffix)"
     }
 
     private func validateConfigurationShape(_ data: Data) throws {

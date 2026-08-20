@@ -32,6 +32,7 @@
 		A0FC157A713AA27C3B7E8D9D /* NearbyExchangeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D938FC5C6EE5391F7920B405 /* NearbyExchangeController.swift */; };
 		AA2209FE210BFDD77FF0A64D /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 750506F4EEAF3B8D1B12E774 /* WidgetSnapshot.swift */; };
 		AAE2FC5FCA7708321265DE54 /* InstallationCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E25CDD2FC15A3E7A1F9E6D9 /* InstallationCredentialStore.swift */; };
+		AF51485D3E619498E9AA5262 /* SyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF020DA50446199E2CCA120A /* SyncCoordinator.swift */; };
 		B20D697B2111A0880896340F /* CardEditorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CDBA4E3382BD6229B260BBB /* CardEditorViewController.swift */; };
 		B30EF3E75B860EFE6064BC68 /* AppearanceViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C86F699B3F01C82FEE91E99 /* AppearanceViewController.swift */; };
 		B54A900AEB613F80AE957785 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 8DBF242EE59E958AF301277F /* PrivacyInfo.xcprivacy */; };
@@ -140,6 +141,7 @@
 		D51EBF735785D82AF276EA87 /* PhotoCardScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCardScanner.swift; sourceTree = "<group>"; };
 		D8231A08DD9861DEC29505A7 /* YPersonIntegrationContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YPersonIntegrationContract.swift; sourceTree = "<group>"; };
 		D938FC5C6EE5391F7920B405 /* NearbyExchangeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearbyExchangeController.swift; sourceTree = "<group>"; };
+		DF020DA50446199E2CCA120A /* SyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
 		F3E533DAB9E006DADF68EA10 /* ExchangeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExchangeViewController.swift; sourceTree = "<group>"; };
 		F5EFCA26B0528FD85942ED0E /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -204,6 +206,7 @@
 			isa = PBXGroup;
 			children = (
 				6506B9BE77BAB21F35300A5A /* APIClient.swift */,
+				DF020DA50446199E2CCA120A /* SyncCoordinator.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -615,6 +618,7 @@
 				8DAEE38A487807265E664A0A /* PhotoCardScanner.swift in Sources */,
 				DCAB22468D62AE11C281CFE1 /* PrivacyViewController.swift in Sources */,
 				48B8935AECD4A25733526E34 /* QRCodeScannerViewController.swift in Sources */,
+				AF51485D3E619498E9AA5262 /* SyncCoordinator.swift in Sources */,
 				AA2209FE210BFDD77FF0A64D /* WidgetSnapshot.swift in Sources */,
 				D91A4ED9BE788718888C6405 /* YPStyle.swift in Sources */,
 				98290ADBE47289C2AB496557 /* YPersonIntegrationContract.swift in Sources */,

@@ -23,6 +23,12 @@ struct RemoteConfiguration: Codable, Equatable {
     let analyticsKillSwitch: Bool
 }
 
+enum PersonSyncState: String, Codable {
+    case localOnly
+    case pending
+    case synced
+}
+
 struct PersonCard: Codable, Equatable, Identifiable {
     let id: String
     var name: String
@@ -35,6 +41,8 @@ struct PersonCard: Codable, Equatable, Identifiable {
     var meetingPlace: String?
     var isBlocked: Bool
     var version: Int
+    var sourceInstallationID: String?
+    var syncState: PersonSyncState
 
     init(
         id: String,
@@ -47,7 +55,9 @@ struct PersonCard: Codable, Equatable, Identifiable {
         hasAudioGreeting: Bool,
         meetingPlace: String?,
         isBlocked: Bool,
-        version: Int = 1
+        version: Int = 1,
+        sourceInstallationID: String? = nil,
+        syncState: PersonSyncState = .localOnly
     ) {
         self.id = id
         self.name = name
@@ -60,11 +70,14 @@ struct PersonCard: Codable, Equatable, Identifiable {
         self.meetingPlace = meetingPlace
         self.isBlocked = isBlocked
         self.version = max(1, version)
+        self.sourceInstallationID = sourceInstallationID
+        self.syncState = syncState
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, role, company, phone, email, tagline
         case hasAudioGreeting, meetingPlace, isBlocked, version
+        case sourceInstallationID, syncState
     }
 
     init(from decoder: Decoder) throws {
@@ -80,6 +93,8 @@ struct PersonCard: Codable, Equatable, Identifiable {
         meetingPlace = try container.decodeIfPresent(String.self, forKey: .meetingPlace)
         isBlocked = try container.decode(Bool.self, forKey: .isBlocked)
         version = max(1, try container.decodeIfPresent(Int.self, forKey: .version) ?? 1)
+        sourceInstallationID = try container.decodeIfPresent(String.self, forKey: .sourceInstallationID)
+        syncState = try container.decodeIfPresent(PersonSyncState.self, forKey: .syncState) ?? .localOnly
     }
 
     var exchangeCopy: PersonCard {
@@ -136,6 +151,7 @@ enum SyncOperation: String, Codable {
     case publishCard
     case prepareExchange
     case claimExchange
+    case cancelExchange
     case prepareAudioUpload
     case updatePushToken
     case removePushToken
@@ -144,8 +160,8 @@ enum SyncOperation: String, Codable {
     case block
 }
 
-struct SyncRequest {
-    let contractVersion = 2
+struct SyncRequest: Codable, Equatable {
+    let contractVersion: Int
     let operationID: String
     let apnsToken: String?
     let operation: SyncOperation
@@ -173,6 +189,7 @@ struct SyncRequest {
         moderationCategory: String? = nil,
         subjectInstallationID: String? = nil
     ) {
+        self.contractVersion = 2
         self.apnsToken = apnsToken
         self.operation = operation
         self.operationID = operationID
@@ -188,6 +205,14 @@ struct SyncRequest {
     }
 
     var isMutation: Bool { operation != .refresh }
+}
+
+struct PendingSyncOperation: Codable, Equatable, Identifiable {
+    let request: SyncRequest
+    let expiresAt: Date?
+    let localCardID: String?
+
+    var id: String { request.operationID }
 }
 
 struct SyncResponse: Codable {
@@ -217,6 +242,7 @@ struct AudioUpload: Codable, Equatable {
 }
 
 struct SyncedPerson: Codable, Equatable {
+    let installationID: String
     let card: PersonCard
     let version: Int
     let audio: AudioAsset?
@@ -224,6 +250,8 @@ struct SyncedPerson: Codable, Equatable {
     var versionedCard: PersonCard {
         var result = card
         result.version = max(1, version)
+        result.sourceInstallationID = installationID
+        result.syncState = .synced
         return result
     }
 }
@@ -247,15 +275,54 @@ enum ExchangePayloadCodec {
     }
 
     static func decode(_ value: String) throws -> ExchangePayload {
-        guard value.hasPrefix(prefix),
-              let data = Base64URL.decode(String(value.dropFirst(prefix.count))) else {
+        guard value.hasPrefix(prefix), value.utf8.count <= 8_192 else {
             throw PayloadError.invalidFormat
         }
+        let encoded = String(value.dropFirst(prefix.count))
+        guard !encoded.isEmpty,
+              !encoded.contains("="),
+              let data = Base64URL.decode(encoded),
+              Base64URL.encode(data) == encoded else { throw PayloadError.invalidFormat }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let payload = try decoder.decode(ExchangePayload.self, from: data)
         guard payload.version == 2 else { throw PayloadError.unsupportedVersion }
-        return payload
+        guard UUID(uuidString: payload.issuerInstallationID)?.uuidString.lowercased()
+                == payload.issuerInstallationID,
+              !payload.card.id.isEmpty,
+              payload.card.id.utf8.count <= 128,
+              !payload.card.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              payload.card.name.utf8.count <= 256,
+              payload.card.role.utf8.count <= 256,
+              payload.card.company.utf8.count <= 256 else {
+            throw PayloadError.invalidFormat
+        }
+        switch (payload.exchangeToken, payload.expiresAt) {
+        case (nil, nil):
+            break
+        case let (token?, expiry?):
+            guard !token.isEmpty,
+                  !token.contains("="),
+                  token.utf8.count == 43,
+                  let tokenData = Base64URL.decode(token),
+                  tokenData.count == 32,
+                  Base64URL.encode(tokenData) == token,
+                  expiry.timeIntervalSince1970.isFinite else {
+                throw PayloadError.invalidFormat
+            }
+        default:
+            throw PayloadError.invalidFormat
+        }
+        var card = payload.card
+        card.sourceInstallationID = nil
+        card.syncState = .localOnly
+        return ExchangePayload(
+            version: payload.version,
+            issuerInstallationID: payload.issuerInstallationID,
+            card: card,
+            exchangeToken: payload.exchangeToken,
+            expiresAt: payload.expiresAt
+        )
     }
 
     enum PayloadError: LocalizedError {

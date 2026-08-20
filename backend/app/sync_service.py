@@ -69,6 +69,8 @@ class SyncService:
                 return self._prepare_exchange(request, bearer)
             case SyncOperation.claim_exchange:
                 return self._claim_exchange(request)
+            case SyncOperation.cancel_exchange:
+                return self._cancel_exchange(request)
             case SyncOperation.prepare_audio_upload:
                 raise SyncUnavailable
             case SyncOperation.update_push_token:
@@ -135,6 +137,16 @@ class SyncService:
             request.exchangeToken,
         )
         return _response("exchange claimed", update_count=1, people=[person])
+
+    def _cancel_exchange(self, request: SyncRequest) -> SyncResponse:
+        if request.exchangeToken is None:  # Pydantic enforces this before dispatch.
+            raise ValueError("missing exchange token")
+        self._store.cancel_exchange(
+            request.installationID,
+            request.operationID,
+            request.exchangeToken,
+        )
+        return _response("exchange cancelled")
 
     def _update_push(self, request: SyncRequest) -> SyncResponse:
         if request.apnsToken is None:  # Pydantic enforces this before dispatch.

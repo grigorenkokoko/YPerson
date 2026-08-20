@@ -77,7 +77,11 @@ class MemoryStore:
 
     def refresh(self, installation_id: str, cursor: str | None) -> SyncSnapshot:
         people = tuple(
-            SyncedPerson(card=self.cards[peer][1], version=self.cards[peer][0])
+            SyncedPerson(
+                installationID=peer,
+                card=self.cards[peer][1],
+                version=self.cards[peer][0],
+            )
             for owner, peer in sorted(self.connections)
             if owner == installation_id and peer in self.cards
         )
@@ -117,7 +121,21 @@ class MemoryStore:
         self.claims[raw_token] = (issuer, claim[1], installation_id)
         self.connections.update({(issuer, installation_id), (installation_id, issuer)})
         version, issuer_card = self.cards[issuer]
-        return SyncedPerson(card=issuer_card, version=version)
+        return SyncedPerson(installationID=issuer, card=issuer_card, version=version)
+
+    def cancel_exchange(
+        self,
+        installation_id: str,
+        operation_id: str,
+        raw_token: str,
+    ) -> None:
+        del operation_id
+        claim = self.claims.get(raw_token)
+        if claim is None:
+            return
+        if claim[0] != installation_id or claim[2] is not None:
+            raise StorageConflict("exchange unavailable")
+        self.claims.pop(raw_token)
 
     def save_push_token(
         self,
@@ -240,6 +258,48 @@ def test_two_installations_claim_exchange_and_receive_peer_card() -> None:
     assert "=" not in prepared.json()["exchangeToken"]
     assert claimed.status_code == 200
     assert claimed.json()["people"][0]["card"]["id"] == "card-owner"
+    assert claimed.json()["people"][0]["installationID"] == OWNER[0]
+
+
+def test_owner_can_cancel_prepared_exchange_idempotently_before_peer_claim() -> None:
+    store = MemoryStore()
+    with make_client(store) as client:
+        post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-cancel")
+        post_sync(client, PEER, "refresh", operation_id="peer-bootstrap-cancel")
+        prepared = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-op-cancel",
+            card=card("card-owner", "Owner").model_dump(mode="json"),
+        )
+        token = prepared.json()["exchangeToken"]
+        first = post_sync(
+            client,
+            OWNER,
+            "cancelExchange",
+            operation_id="cancel-op-stable",
+            exchangeToken=token,
+        )
+        replay = post_sync(
+            client,
+            OWNER,
+            "cancelExchange",
+            operation_id="cancel-op-stable",
+            exchangeToken=token,
+        )
+        claim = post_sync(
+            client,
+            PEER,
+            "claimExchange",
+            operation_id="claim-after-cancel",
+            exchangeToken=token,
+        )
+
+    assert first.status_code == replay.status_code == 200
+    assert first.json()["message"] == replay.json()["message"] == "exchange cancelled"
+    assert claim.status_code == 409
+    assert store.connections == set()
 
 
 def test_exchange_token_derivation_length_prefixes_ambiguous_components() -> None:
@@ -424,6 +484,7 @@ def test_unavailable_exchange_returns_sanitized_conflict() -> None:
     [
         "prepareExchange",
         "claimExchange",
+        "cancelExchange",
         "prepareAudioUpload",
         "updatePushToken",
         "removePushToken",
@@ -437,7 +498,7 @@ def test_unknown_non_bootstrap_operation_never_creates_installation(operation: s
     payload: dict[str, object] = {}
     if operation == "prepareExchange":
         payload["card"] = card("card-owner", "Owner").model_dump(mode="json")
-    elif operation == "claimExchange":
+    elif operation in {"claimExchange", "cancelExchange"}:
         payload["exchangeToken"] = "unknown-exchange-token"
     elif operation == "prepareAudioUpload":
         payload.update(audioSizeBytes=1024, audioDurationMS=1000)

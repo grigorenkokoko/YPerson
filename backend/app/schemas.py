@@ -29,6 +29,7 @@ class SyncOperation(str, Enum):
     publish_card = "publishCard"
     prepare_exchange = "prepareExchange"
     claim_exchange = "claimExchange"
+    cancel_exchange = "cancelExchange"
     prepare_audio_upload = "prepareAudioUpload"
     update_push_token = "updatePushToken"
     remove_push_token = "removePushToken"
@@ -87,6 +88,7 @@ class SyncRequest(BaseModel):
             SyncOperation.publish_card: ("card",),
             SyncOperation.prepare_exchange: ("card",),
             SyncOperation.claim_exchange: ("exchangeToken",),
+            SyncOperation.cancel_exchange: ("exchangeToken",),
             SyncOperation.prepare_audio_upload: ("audioSizeBytes", "audioDurationMS"),
             SyncOperation.update_push_token: ("apnsToken",),
             SyncOperation.remove_push_token: (),
@@ -99,6 +101,7 @@ class SyncRequest(BaseModel):
             SyncOperation.publish_card: frozenset({"card", "audioAssetID"}),
             SyncOperation.prepare_exchange: frozenset({"card", "exchangeMethod"}),
             SyncOperation.claim_exchange: frozenset({"exchangeToken"}),
+            SyncOperation.cancel_exchange: frozenset({"exchangeToken"}),
             SyncOperation.prepare_audio_upload: frozenset({"audioSizeBytes", "audioDurationMS"}),
             SyncOperation.update_push_token: frozenset({"apnsToken"}),
             SyncOperation.remove_push_token: frozenset(),
@@ -174,6 +177,7 @@ class SyncedPerson(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    installationID: str = Field(min_length=16, max_length=128)
     card: PersonCard
     version: int = Field(ge=1)
     audio: AudioAsset | None = None

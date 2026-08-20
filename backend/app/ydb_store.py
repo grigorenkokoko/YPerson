@@ -168,7 +168,8 @@ class YDBSyncStore:
         FROM cards
         WHERE installation_id = $installation_id;
 
-        SELECT peer.version AS version, peer.card_json AS card_json
+        SELECT connection.peer_installation_id AS installation_id,
+               peer.version AS version, peer.card_json AS card_json
         FROM connections AS connection
         INNER JOIN connections AS reverse
             ON reverse.owner_installation_id = connection.peer_installation_id
@@ -200,6 +201,7 @@ class YDBSyncStore:
         own_version = _stored_version(own_rows[0]) if own_rows else None
         people = tuple(
             SyncedPerson(
+                installationID=_stored_text(row, "installation_id"),
                 card=_stored_card(row),
                 version=_stored_version(row),
             )
@@ -339,6 +341,7 @@ class YDBSyncStore:
             ):
                 raise StorageConflict("exchange unavailable")
             person = SyncedPerson(
+                installationID=issuer_id,
                 card=_stored_card(row),
                 version=_stored_version(row),
             )
@@ -385,6 +388,78 @@ class YDBSyncStore:
             return person
 
         return self._transaction(claim)
+
+    def cancel_exchange(
+        self,
+        installation_id: str,
+        operation_id: str,
+        raw_token: str,
+    ) -> None:
+        token_hash = _digest(raw_token)
+        now = self._clock()
+
+        def cancel(tx: ydb.QueryTxContext) -> None:
+            self._ensure_active(tx, installation_id)
+            previous = self._operation_result(
+                tx,
+                installation_id,
+                operation_id,
+                "cancelExchange",
+            )
+            if previous is not None:
+                previous_hash = _stored_digest(previous, "tokenHash")
+                if not compare_digest(previous_hash, token_hash):
+                    raise StorageConflict("operation identifier already used")
+                return
+            claim_rows = self._tx_rows(
+                tx,
+                """
+                DECLARE $token_hash AS String;
+                SELECT claim.issuer_installation_id AS issuer_installation_id,
+                       claim.expires_at AS expires_at,
+                       claim.claimed_by_installation_id AS claimed_by_installation_id
+                FROM exchange_claims AS claim
+                WHERE claim.token_hash = $token_hash;
+                """,
+                {"$token_hash": _string(token_hash)},
+            )[0]
+            if len(claim_rows) != 1:
+                if claim_rows:
+                    raise StorageIntegrityError
+                raise StorageConflict("exchange unavailable")
+            row = claim_rows[0]
+            if (
+                _stored_text(row, "issuer_installation_id") != installation_id
+                or _stored_datetime(row, "expires_at") <= _as_utc(now)
+                or _stored_optional_text(row, "claimed_by_installation_id") is not None
+            ):
+                raise StorageConflict("exchange unavailable")
+            self._tx_rows(
+                tx,
+                """
+                DECLARE $token_hash AS String;
+                DECLARE $installation_id AS Utf8;
+                DECLARE $operation_id AS Utf8;
+                DECLARE $result_json AS JsonDocument;
+                DECLARE $now AS Timestamp;
+
+                DELETE FROM exchange_claims WHERE token_hash = $token_hash;
+                UPSERT INTO operations (
+                    installation_id, operation_id, operation_type, result_json, completed_at
+                ) VALUES (
+                    $installation_id, $operation_id, "cancelExchange"u, $result_json, $now
+                );
+                """,
+                {
+                    "$token_hash": _string(token_hash),
+                    "$installation_id": _utf8(installation_id),
+                    "$operation_id": _utf8(operation_id),
+                    "$result_json": _json_document(_json({"tokenHash": token_hash.hex()})),
+                    "$now": _timestamp(now),
+                },
+            )
+
+        self._transaction(cancel)
 
     def save_push_token(
         self,

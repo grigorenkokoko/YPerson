@@ -470,6 +470,104 @@ def test_exchange_token_rejects_second_operation_even_for_same_recipient(
     assert not any("UPDATE exchange_claims" in query for query, _ in pool.transaction_calls)
 
 
+def test_owner_cancel_deletes_unclaimed_exchange_and_persists_only_token_hash() -> None:
+    raw_token = "prepared-token-never-persist-me"
+    token_hash = sha256(raw_token.encode()).digest()
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "FROM exchange_claims AS claim" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "issuer_installation_id": "installation-owner",
+                            "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+                            "claimed_by_installation_id": None,
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+    store.cancel_exchange("installation-owner", "cancel-operation-1", raw_token)
+
+    all_queries = "\n".join(query for query, _ in pool.transaction_calls)
+    assert "DELETE FROM exchange_claims" in all_queries
+    assert raw_token not in repr(pool.transaction_calls)
+    assert any(
+        _parameter(parameters, "$token_hash") == token_hash
+        for _, parameters in pool.transaction_calls
+        if "$token_hash" in parameters
+    )
+
+
+def test_cancel_replay_is_bound_to_original_token_and_never_reopens_exchange() -> None:
+    raw_token = "original-token"
+    persisted = json.dumps({"tokenHash": sha256(raw_token.encode()).hexdigest()})
+
+    def replay_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [
+                ResultSet(
+                    [{"operation_type": "cancelExchange", "result_json": persisted}]
+                )
+            ]
+        return []
+
+    replay_pool = ScriptedPool(transaction_handler=replay_handler)
+    store = YDBSyncStore(replay_pool)  # type: ignore[arg-type]
+    store.cancel_exchange("installation-owner", "cancel-operation-1", raw_token)
+    assert not any("FROM exchange_claims AS claim" in query for query, _ in replay_pool.transaction_calls)
+
+    conflict_pool = ScriptedPool(transaction_handler=replay_handler)
+    conflict_store = YDBSyncStore(conflict_pool)  # type: ignore[arg-type]
+    with pytest.raises(StorageConflict):
+        conflict_store.cancel_exchange(
+            "installation-owner", "cancel-operation-1", "different-token"
+        )
+
+
+@pytest.mark.parametrize(
+    ("issuer", "claimed_by", "expires_at"),
+    [
+        ("installation-other", None, datetime.now(UTC) + timedelta(minutes=5)),
+        ("installation-owner", "installation-peer", datetime.now(UTC) + timedelta(minutes=5)),
+        ("installation-owner", None, datetime.now(UTC) - timedelta(seconds=1)),
+    ],
+)
+def test_cancel_rejects_non_owner_or_already_claimed_exchange(
+    issuer: str,
+    claimed_by: str | None,
+    expires_at: datetime,
+) -> None:
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "FROM exchange_claims AS claim" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "issuer_installation_id": issuer,
+                            "expires_at": expires_at,
+                            "claimed_by_installation_id": claimed_by,
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+    with pytest.raises(StorageConflict):
+        store.cancel_exchange("installation-owner", "cancel-operation-1", "raw-token")
+    assert not any("DELETE FROM exchange_claims" in query for query, _ in pool.transaction_calls)
+
+
 def test_claim_replay_is_bound_to_the_original_exchange_token(card: PersonCard) -> None:
     previous_result = {
         "person": {"card": card.model_dump(mode="json"), "version": 1},
@@ -804,6 +902,11 @@ def test_every_other_mutation_uses_the_same_active_installation_guard() -> None:
             "qr",
             "raw-token",
             datetime.now(UTC) + timedelta(minutes=5),
+        ),
+        lambda store: store.cancel_exchange(
+            "installation-deleted",
+            "op-cancel-delayed",
+            "raw-token",
         ),
         lambda store: store.save_push_token(
             "installation-deleted",

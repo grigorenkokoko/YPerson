@@ -6,7 +6,7 @@ final class CardViewController: YPBaseViewController {
     private let persistsChanges: Bool
     private let audio: AudioGreetingController
     private let imageSaver: CardImageSaver
-    private let apiClient: APIClient
+    private let syncCoordinator: SyncCoordinator
     private let analytics: AppMetricaAnalyticsClient
     private let snapshotStore: AppGroupSnapshotStore?
     private let makeEditor: (PersonCard?, @escaping (PersonCard) -> Void) -> UIViewController
@@ -14,16 +14,22 @@ final class CardViewController: YPBaseViewController {
     private var card: PersonCard?
     private var cardView: CardSummaryView?
     private var showsPrivateFields = false
+    private var preparedQRToken: String?
 
     var currentCard: PersonCard? { card }
 
-    init(card: PersonCard?, persistsChanges: Bool, permissions: PermissionCenter, audio: AudioGreetingController, imageSaver: CardImageSaver, apiClient: APIClient, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, makeEditor: @escaping (PersonCard?, @escaping (PersonCard) -> Void) -> UIViewController) {
+    func applyPublishedCard(_ published: PersonCard) {
+        card = published
+        render()
+    }
+
+    init(card: PersonCard?, persistsChanges: Bool, permissions: PermissionCenter, audio: AudioGreetingController, imageSaver: CardImageSaver, syncCoordinator: SyncCoordinator, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, makeEditor: @escaping (PersonCard?, @escaping (PersonCard) -> Void) -> UIViewController) {
         self.card = card
         self.persistsChanges = persistsChanges
         self.permissions = permissions
         self.audio = audio
         self.imageSaver = imageSaver
-        self.apiClient = apiClient
+        self.syncCoordinator = syncCoordinator
         self.analytics = analytics
         self.snapshotStore = snapshotStore
         self.makeEditor = makeEditor
@@ -38,7 +44,7 @@ final class CardViewController: YPBaseViewController {
         render()
         Task { [weak self] in
             do {
-                let config = try await self?.apiClient.fetchConfiguration()
+                let config = try await self?.syncCoordinator.fetchConfiguration()
                 if let config { self?.analytics.setRemoteKillSwitch(config.analyticsKillSwitch) }
             } catch {
                 // The card remains available from local storage when configuration is offline.
@@ -101,9 +107,13 @@ final class CardViewController: YPBaseViewController {
         guard let card else { return }
         let showOffline: () -> Void = { [weak self] in
             guard let self else { return }
+            guard let installationID = syncCoordinator.installationID else {
+                showMessage("Сначала сохраните визитку", "После сохранения YPerson создаст защищённый идентификатор для QR-кода.")
+                return
+            }
             let payload = ExchangePayload(
                 version: 2,
-                issuerInstallationID: apiClient.installationID,
+                issuerInstallationID: installationID,
                 card: card.exchangeCopy,
                 exchangeToken: nil,
                 expiresAt: nil
@@ -119,18 +129,12 @@ final class CardViewController: YPBaseViewController {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let response = try await apiClient.sync(SyncRequest(
-                    operation: .prepareExchange,
-                    card: card.exchangeCopy,
-                    exchangeMethod: "qr"
-                ))
-                guard let token = response.exchangeToken, !token.isEmpty else {
-                    showOffline()
-                    return
-                }
+                let token = try await syncCoordinator.prepareExchange(card: card, method: "qr")
+                guard let installationID = syncCoordinator.installationID else { throw SyncCoordinator.CoordinatorError.noProfile }
+                preparedQRToken = token
                 showQRCode(ExchangePayload(
                     version: 2,
-                    issuerInstallationID: apiClient.installationID,
+                    issuerInstallationID: installationID,
                     card: card.exchangeCopy,
                     exchangeToken: token,
                     expiresAt: Date().addingTimeInterval(10 * 60)
@@ -151,7 +155,14 @@ final class CardViewController: YPBaseViewController {
         filter.correctionLevel = "M"
         guard let output = filter.outputImage else { return }
         let image = UIImage(ciImage: output.transformed(by: CGAffineTransform(scaleX: 9, y: 9)))
-        let controller = UIViewController()
+        let controller = QRExchangeViewController()
+        if !isOffline, let token = exchangePayload.exchangeToken {
+            controller.onClose = { [weak self] in
+                guard let self, preparedQRToken == token else { return }
+                preparedQRToken = nil
+                Task { await syncCoordinator.cancelExchange(token: token) }
+            }
+        }
         controller.title = "Мой QR"
         controller.view.backgroundColor = YPStyle.canvas
         let imageView = UIImageView(image: image)
@@ -193,7 +204,7 @@ final class CardViewController: YPBaseViewController {
             guard self.persistsChanges else { return }
             Task { [weak self] in
                 guard let self else { return }
-                guard let response = try? await apiClient.sync(SyncRequest(operation: .publishCard, card: updatedCard.exchangeCopy)),
+                guard let response = await syncCoordinator.publish(updatedCard),
                       let version = response.ownCardVersion else { return }
                 var published = updatedCard
                 published.version = version
@@ -235,4 +246,13 @@ final class CardViewController: YPBaseViewController {
 #if DEBUG
     func showVerificationQR() { showQR() }
 #endif
+}
+
+private final class QRExchangeViewController: UIViewController {
+    var onClose: (() -> Void)?
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isMovingFromParent || navigationController?.isBeingDismissed == true { onClose?() }
+    }
 }

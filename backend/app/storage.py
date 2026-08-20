@@ -83,6 +83,14 @@ class SyncStore(Protocol):
     ) -> SyncedPerson:
         """Claim an exchange and create reciprocal confirmed connections."""
 
+    def cancel_exchange(
+        self,
+        installation_id: str,
+        operation_id: str,
+        raw_token: str,
+    ) -> None:
+        """Durably invalidate an owned, unclaimed exchange."""
+
     def save_push_token(
         self,
         installation_id: str,

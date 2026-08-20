@@ -4,17 +4,17 @@ import UIKit
 final class PersonViewController: YPBaseViewController {
     private let permissions: PermissionCenter
     private let imageSaver: CardImageSaver
-    private let apiClient: APIClient
+    private let syncCoordinator: SyncCoordinator
     private let analytics: AppMetricaAnalyticsClient
     private let snapshotStore: AppGroupSnapshotStore?
     private var card: PersonCard
     private var summary: CardSummaryView
     private let placeLabel = YPStyle.label("Место знакомства не добавлено", style: .footnote)
 
-    init(card: PersonCard, permissions: PermissionCenter, imageSaver: CardImageSaver, apiClient: APIClient, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?) {
+    init(card: PersonCard, permissions: PermissionCenter, imageSaver: CardImageSaver, syncCoordinator: SyncCoordinator, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?) {
         self.card = card
         self.summary = CardSummaryView(card: card, showPrivate: true)
-        self.permissions = permissions; self.imageSaver = imageSaver; self.apiClient = apiClient; self.analytics = analytics; self.snapshotStore = snapshotStore
+        self.permissions = permissions; self.imageSaver = imageSaver; self.syncCoordinator = syncCoordinator; self.analytics = analytics; self.snapshotStore = snapshotStore
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -121,14 +121,13 @@ final class PersonViewController: YPBaseViewController {
     }
 
     private func submitSafety(_ operation: SyncOperation, category: String?) {
+        guard let peerInstallationID = card.sourceInstallationID else {
+            showMessage("Сохранено только локально", "Удалённое действие недоступно, пока обмен не подтверждён сервером.")
+            return
+        }
         Task { [weak self] in
             guard let self else { return }
-            let request = SyncRequest(
-                operation: operation,
-                moderationCategory: category,
-                subjectInstallationID: card.id
-            )
-            do { _ = try await self.apiClient.sync(request); self.showMessage("Отправлено", operation == .report ? "Жалоба принята. Карточку можно сразу заблокировать." : "Человек заблокирован.") }
+            do { try await self.syncCoordinator.submitModeration(operation: operation, peerInstallationID: peerInstallationID, category: category); self.showMessage("Отправлено", operation == .report ? "Жалоба принята. Карточку можно сразу заблокировать." : "Человек заблокирован.") }
             catch { self.showMessage("Сохранено локально", "Действие будет отправлено после восстановления сети.") }
         }
     }

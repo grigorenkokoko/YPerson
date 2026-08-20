@@ -7,12 +7,12 @@ final class PrivacyViewController: YPBaseViewController {
     private let audio: AudioGreetingController
     private let analytics: AppMetricaAnalyticsClient
     private let snapshotStore: AppGroupSnapshotStore?
-    private let apiClient: APIClient
+    private let syncCoordinator: SyncCoordinator
     private let configuration: AppConfiguration
     private let analyticsSwitch = UISwitch()
 
-    init(permissions: PermissionCenter, audio: AudioGreetingController, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, apiClient: APIClient, configuration: AppConfiguration) {
-        self.permissions = permissions; self.audio = audio; self.analytics = analytics; self.snapshotStore = snapshotStore; self.apiClient = apiClient; self.configuration = configuration
+    init(permissions: PermissionCenter, audio: AudioGreetingController, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, syncCoordinator: SyncCoordinator, configuration: AppConfiguration) {
+        self.permissions = permissions; self.audio = audio; self.analytics = analytics; self.snapshotStore = snapshotStore; self.syncCoordinator = syncCoordinator; self.configuration = configuration
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -69,18 +69,13 @@ final class PrivacyViewController: YPBaseViewController {
 #endif
 
     private func performDeletion() {
-        snapshotStore?.profileDeletionPending = true
-        snapshotStore?.clearUserData()
         audio.delete()
         analytics.setConsent(false)
         Task { [weak self] in
             guard let self else { return }
-            let payload = SyncRequest(operation: .deleteProfile)
-            do {
-                _ = try await apiClient.sync(payload)
-                snapshotStore?.profileDeletionPending = false
+            if await syncCoordinator.deleteProfile() {
                 showMessage("Профиль удалён", "Локальные данные очищены, облачная карточка отозвана. Резервные копии удаляются в течение 30 дней.")
-            } catch {
+            } else {
                 showMessage("Локальные данные удалены", "Запрос на удаление облачной карточки сохранён и будет повторён при следующем запуске с сетью.")
             }
         }

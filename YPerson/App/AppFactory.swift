@@ -7,7 +7,7 @@ final class YPersonExperienceBuilder {
     private let configuration: AppConfiguration
     private let session: URLSession
     private let snapshotStore: AppGroupSnapshotStore?
-    private let apiClient: APIClient
+    private let syncCoordinator: SyncCoordinator
     private let analytics: AppMetricaAnalyticsClient
     private let permissions: PermissionCenter
     private let credentialStore: InstallationCredentialStore
@@ -29,11 +29,11 @@ final class YPersonExperienceBuilder {
         self.snapshotStore = store
         let credentialStore = InstallationCredentialStore(service: "\(configuration.appGroupIdentifier).installation")
         self.credentialStore = credentialStore
-        self.apiClient = APIClient(
+        self.syncCoordinator = try SyncCoordinator(
             baseURL: configuration.apiBaseURL,
             session: session,
             snapshotStore: store,
-            credential: try credentialStore.credential()
+            credentialStore: credentialStore
         )
         self.analytics = AppMetricaAnalyticsClient(apiKey: configuration.appMetricaAPIKey, initialConsent: store?.analyticsConsent ?? false)
         self.permissions = PermissionCenter(notificationCenter: UNUserNotificationCenter.current())
@@ -60,16 +60,16 @@ final class YPersonExperienceBuilder {
         let makeEditor: (PersonCard?, @escaping (PersonCard) -> Void) -> UIViewController = { [permissions, audio] card, onSave in
             CardEditorViewController(card: card, permissions: permissions, audio: audio, makeAppearance: makeAppearance, onSave: onSave)
         }
-        let card = CardViewController(card: ownCard, persistsChanges: !usesReviewFixtures, permissions: permissions, audio: audio, imageSaver: imageSaver, apiClient: apiClient, analytics: analytics, snapshotStore: snapshotStore, makeEditor: makeEditor)
-        let person = { [permissions, imageSaver, apiClient, analytics, snapshotStore] card in
-            PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, apiClient: apiClient, analytics: analytics, snapshotStore: snapshotStore)
+        let card = CardViewController(card: ownCard, persistsChanges: !usesReviewFixtures, permissions: permissions, audio: audio, imageSaver: imageSaver, syncCoordinator: syncCoordinator, analytics: analytics, snapshotStore: snapshotStore, makeEditor: makeEditor)
+        let person = { [permissions, imageSaver, syncCoordinator, analytics, snapshotStore] card in
+            PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, syncCoordinator: syncCoordinator, analytics: analytics, snapshotStore: snapshotStore)
         }
         let people = PeopleViewController(people: savedPeople, permissions: permissions, analytics: analytics, makePerson: person)
         let exchange = ExchangeViewController(
             nearby: nearby,
             photoScanner: photoScanner,
             permissions: permissions,
-            apiClient: apiClient,
+            syncCoordinator: syncCoordinator,
             analytics: analytics,
             snapshotStore: snapshotStore,
             ownCard: { [weak card] in card?.currentCard },
@@ -77,23 +77,21 @@ final class YPersonExperienceBuilder {
                 people?.reload(people: snapshotStore?.readPeople() ?? [])
             }
         )
-        let privacy = PrivacyViewController(permissions: permissions, audio: audio, analytics: analytics, snapshotStore: snapshotStore, apiClient: apiClient, configuration: configuration)
+        let privacy = PrivacyViewController(permissions: permissions, audio: audio, analytics: analytics, snapshotStore: snapshotStore, syncCoordinator: syncCoordinator, configuration: configuration)
         let root = MainTabBarController(card: card, exchange: exchange, people: people, privacy: privacy)
         self.rootViewController = root
         root.route(to: context.entryPoint)
-        if !usesReviewFixtures { refreshPeople() }
+        if !usesReviewFixtures {
+            syncCoordinator.onPeopleChanged = { [weak people, snapshotStore] in
+                people?.reload(people: snapshotStore?.readPeople() ?? [])
+            }
+            syncCoordinator.onOwnCardChanged = { [weak card] published in card?.applyPublishedCard(published) }
+            refreshPeople()
+        }
 #if DEBUG
         applyVerificationState(to: root, card: card, exchange: exchange, privacy: privacy, makePerson: person, makeEditor: makeEditor, makeAppearance: makeAppearance)
 #endif
         return root
-    }
-
-    private func retryPendingProfileDeletion() {
-        guard snapshotStore?.profileDeletionPending == true else { return }
-        let payload = SyncRequest(operation: .deleteProfile)
-        Task { [apiClient, snapshotStore] in
-            if (try? await apiClient.sync(payload)) != nil { snapshotStore?.profileDeletionPending = false }
-        }
     }
 
     func route(to entryPoint: YPersonEntryPoint) {
@@ -103,8 +101,7 @@ final class YPersonExperienceBuilder {
     func handle(_ event: YPersonLifecycleEvent) {
         switch event {
         case .didEnterForeground:
-            retryPendingProfileDeletion()
-            if snapshotStore?.profileDeletionPending != true { refreshPeople() }
+            refreshPeople()
         case .pushTokenChanged(let token):
             updatePushToken(token)
         }
@@ -152,33 +149,11 @@ final class YPersonExperienceBuilder {
 #endif
 
     private func updatePushToken(_ token: String?) {
-        Task { [apiClient] in
-            let payload = SyncRequest(
-                apnsToken: token,
-                operation: token == nil ? .removePushToken : .updatePushToken
-            )
-            _ = try? await apiClient.sync(payload)
-        }
+        Task { [syncCoordinator] in await syncCoordinator.updatePushToken(token) }
     }
 
     private func refreshPeople() {
-        let cursor = snapshotStore?.syncCursor
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let response = try await apiClient.sync(SyncRequest(operation: .refresh, cursor: cursor))
-                let incoming = response.people.map(\.versionedCard)
-                try snapshotStore?.replacePeople(incoming)
-                for id in response.revokedCardIDs { try snapshotStore?.removePerson(id: id) }
-                snapshotStore?.syncCursor = response.nextCursor ?? snapshotStore?.syncCursor
-                guard let rootViewController,
-                      let navigation = rootViewController.viewControllers?[safe: 2] as? UINavigationController,
-                      let people = navigation.viewControllers.first as? PeopleViewController else { return }
-                people.reload(people: snapshotStore?.readPeople() ?? [])
-            } catch {
-                // Previously saved people stay available while the service is offline.
-            }
-        }
+        Task { [syncCoordinator] in await syncCoordinator.bootstrap() }
     }
 }
 

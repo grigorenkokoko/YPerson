@@ -33,7 +33,7 @@ final class InstallationCredentialStore {
         self.service = service
     }
 
-    func credential() throws -> InstallationCredential {
+    func existingCredential() throws -> InstallationCredential? {
         var result: CFTypeRef?
         let status = SecItemCopyMatching(readQuery as CFDictionary, &result)
         switch status {
@@ -49,10 +49,15 @@ final class InstallationCredentialStore {
             }
             return stored
         case errSecItemNotFound:
-            return try createCredential()
+            return nil
         default:
             throw CredentialError.keychain(status)
         }
+    }
+
+    func createCredential() throws -> InstallationCredential {
+        if let existing = try existingCredential() { return existing }
+        return try createNewCredential()
     }
 
     func deleteCredential() throws {
@@ -62,7 +67,7 @@ final class InstallationCredentialStore {
         }
     }
 
-    private func createCredential() throws -> InstallationCredential {
+    private func createNewCredential() throws -> InstallationCredential {
         var bytes = [UInt8](repeating: 0, count: 32)
         let randomStatus = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         guard randomStatus == errSecSuccess else {
@@ -77,7 +82,10 @@ final class InstallationCredentialStore {
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let status = SecItemAdd(query as CFDictionary, nil)
         if status == errSecDuplicateItem {
-            return try credential()
+            guard let existing = try existingCredential() else {
+                throw CredentialError.corruptedCredential
+            }
+            return existing
         }
         guard status == errSecSuccess else { throw CredentialError.keychain(status) }
         return created

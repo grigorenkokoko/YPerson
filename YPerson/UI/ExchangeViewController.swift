@@ -6,19 +6,21 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private let nearby: NearbyExchangeController
     private let photoScanner: PhotoCardScanner
     private let permissions: PermissionCenter
-    private let apiClient: APIClient
+    private let syncCoordinator: SyncCoordinator
     private let analytics: AppMetricaAnalyticsClient
     private let snapshotStore: AppGroupSnapshotStore?
     private let ownCard: () -> PersonCard?
     private let onPersonSaved: (PersonCard) -> Void
     private var includePrivate = false
     private var nearbySearchAlert: UIAlertController?
+    private var prepareTask: Task<Void, Never>?
+    private var preparedToken: String?
 
-    init(nearby: NearbyExchangeController, photoScanner: PhotoCardScanner, permissions: PermissionCenter, apiClient: APIClient, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, ownCard: @escaping () -> PersonCard?, onPersonSaved: @escaping (PersonCard) -> Void) {
+    init(nearby: NearbyExchangeController, photoScanner: PhotoCardScanner, permissions: PermissionCenter, syncCoordinator: SyncCoordinator, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, ownCard: @escaping () -> PersonCard?, onPersonSaved: @escaping (PersonCard) -> Void) {
         self.nearby = nearby
         self.photoScanner = photoScanner
         self.permissions = permissions
-        self.apiClient = apiClient
+        self.syncCoordinator = syncCoordinator
         self.analytics = analytics
         self.snapshotStore = snapshotStore
         self.ownCard = ownCard
@@ -43,6 +45,9 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        prepareTask?.cancel()
+        prepareTask = nil
+        cancelPreparedExchange()
         nearby.stop()
         nearbySearchAlert = nil
     }
@@ -82,21 +87,19 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                 return
             }
             analytics.report(.exchangeStarted("bluetooth"))
-            Task { [weak self] in
+            prepareTask?.cancel()
+            prepareTask = Task { [weak self] in
                 guard let self else { return }
                 do {
-                    let response = try await apiClient.sync(SyncRequest(
-                        operation: .prepareExchange,
-                        card: card.exchangeCopy,
-                        exchangeMethod: "bluetooth"
-                    ))
-                    guard let token = response.exchangeToken, !token.isEmpty else {
-                        throw ExchangeError.missingExchangeToken
-                    }
+                    let token = try await syncCoordinator.prepareExchange(card: card, method: "bluetooth")
+                    try Task.checkCancellation()
+                    guard viewIfLoaded?.window != nil else { throw CancellationError() }
+                    preparedToken = token
                     nearby.start(exchangeToken: token, onState: { [weak self] state in
                         self?.handleNearbyState(state)
                     }, onToken: { [weak self] token in self?.finishNearbySearch(token: token) })
                 } catch {
+                    if error is CancellationError { return }
                     nearby.stop()
                     showMessage("Не удалось начать поиск", "Для Bluetooth-обмена сейчас нужен интернет, чтобы получить короткоживущий защищённый токен. Используйте офлайн QR.")
                 }
@@ -127,6 +130,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(title: "Отменить поиск", style: .cancel) { [weak self] _ in
+            self?.cancelPreparedExchange()
             self?.nearby.stop()
             self?.nearbySearchAlert = nil
         })
@@ -136,6 +140,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     }
 
     private func finishNearbySearch(token: String) {
+        nearby.stop()
         let alert = nearbySearchAlert
         nearbySearchAlert = nil
         guard let alert else { confirmNearby(token: token); return }
@@ -169,7 +174,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private func confirmNearby(token: String) {
         let alert = UIAlertController(title: "Человек найден", message: "Подтвердите обмен на обоих iPhone. До подтверждения карточка и токен не отправляются на сервер.", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Подтвердить обмен", style: .default) { [weak self] _ in self?.claimNearby(token: token) })
-        alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Отмена", style: .cancel) { [weak self] _ in self?.cancelPreparedExchange() })
         present(alert, animated: true)
     }
 
@@ -177,15 +182,14 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         Task { [weak self] in
             guard let self else { return }
             do {
-                let response = try await apiClient.sync(SyncRequest(
-                    operation: .claimExchange,
-                    exchangeToken: token
-                ))
+                let response = try await syncCoordinator.claimExchange(token: token, expiresAt: nil, localCardID: nil)
                 let saved = try persist(response: response)
                 guard !saved.isEmpty else { throw ExchangeError.missingPeerCard }
+                preparedToken = nil
                 analytics.report(.cardReceived("bluetooth"))
                 showMessage("Человек добавлен", "Карточка сохранена в YPerson и связана с подтверждённым Bluetooth-обменом.")
             } catch {
+                cancelPreparedExchange()
                 showMessage("Обмен не подтверждён", "Не удалось связаться с сервером. Токен не сохранён; повторите обмен после восстановления сети.")
             }
         }
@@ -227,7 +231,9 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private func saveImportedCard(_ payload: ExchangePayload, allowsCloudClaim: Bool) {
         do {
             guard let snapshotStore else { throw ExchangeError.localStorageUnavailable }
-            let localCard = payload.card.exchangeCopy
+            var localCard = payload.card.exchangeCopy
+            localCard.sourceInstallationID = nil
+            localCard.syncState = allowsCloudClaim ? .pending : .localOnly
             try snapshotStore.upsertPerson(localCard)
             onPersonSaved(localCard)
         } catch {
@@ -244,10 +250,11 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         Task { [weak self] in
             guard let self else { return }
             do {
-                let response = try await apiClient.sync(SyncRequest(
-                    operation: .claimExchange,
-                    exchangeToken: token
-                ))
+                let response = try await syncCoordinator.claimExchange(
+                    token: token,
+                    expiresAt: payload.expiresAt,
+                    localCardID: payload.card.id
+                )
                 _ = try persist(response: response)
             } catch {
                 // The confirmed local card stays visible. A new short-lived code can reconnect updates.
@@ -323,7 +330,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         Task { [weak self] in
             guard let self else { return }
             do {
-                let response = try await apiClient.sync(SyncRequest(operation: .claimExchange, exchangeToken: code))
+                let response = try await syncCoordinator.claimExchange(token: code, expiresAt: nil, localCardID: nil)
                 let saved = try persist(response: response)
                 guard !saved.isEmpty else { throw ExchangeError.missingPeerCard }
                 analytics.report(.cardReceived("manual"))
@@ -344,7 +351,13 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         }
     }
 
-    deinit { nearby.stop(); photoScanner.cancel() }
+    private func cancelPreparedExchange() {
+        guard let token = preparedToken else { return }
+        preparedToken = nil
+        Task { await syncCoordinator.cancelExchange(token: token) }
+    }
+
+    deinit { prepareTask?.cancel(); nearby.stop(); photoScanner.cancel() }
 
     private enum ExchangeError: Error {
         case localStorageUnavailable

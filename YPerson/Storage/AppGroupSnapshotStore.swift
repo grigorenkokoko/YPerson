@@ -11,6 +11,10 @@ final class AppGroupSnapshotStore {
         static let people = "yperson.v2.people"
         static let syncCursor = "yperson.v2.sync_cursor"
         static let pendingOperationIDs = "yperson.v2.pending_operation_ids"
+        static let pendingOperations = "yperson.v2.pending_operations"
+        static let pendingAPNSToken = "yperson.v2.pending_apns_token"
+        static let pendingAPNSRemoval = "yperson.v2.pending_apns_removal"
+        static let profileTerminallyDeleted = "yperson.v2.profile_terminally_deleted"
 
         enum Legacy {
             static let ownCard = "own_card"
@@ -62,7 +66,7 @@ final class AppGroupSnapshotStore {
                 mergedByID[card.id] = card
                 continue
             }
-            guard card.version >= local.version else { continue }
+            guard card.syncState == .synced || card.version >= local.version else { continue }
             var merged = card
             merged.meetingPlace = local.meetingPlace ?? card.meetingPlace
             mergedByID[card.id] = merged
@@ -72,6 +76,47 @@ final class AppGroupSnapshotStore {
 
     func removePerson(id: String) throws {
         try storePeople(readPeople().filter { $0.id != id })
+    }
+
+    func markPersonLocalOnly(id: String) throws {
+        guard var card = readPeople().first(where: { $0.id == id }) else { return }
+        card.syncState = .localOnly
+        try upsertPerson(card)
+    }
+
+    var pendingOperations: [PendingSyncOperation] {
+        get {
+            guard let data = defaults.data(forKey: Key.pendingOperations) else { return [] }
+            return (try? decoder.decode([PendingSyncOperation].self, from: data)) ?? []
+        }
+        set { defaults.set(try? encoder.encode(newValue), forKey: Key.pendingOperations) }
+    }
+
+    func enqueue(_ operation: PendingSyncOperation) {
+        var operations = pendingOperations
+        if let index = operations.firstIndex(where: { $0.id == operation.id }) {
+            operations[index] = operation
+        } else {
+            operations.append(operation)
+        }
+        pendingOperations = operations
+    }
+
+    func removePendingOperation(id: String) {
+        pendingOperations = pendingOperations.filter { $0.id != id }
+    }
+
+    var pendingAPNSToken: String? {
+        get { defaults.string(forKey: Key.pendingAPNSToken) }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Key.pendingAPNSToken) }
+            else { defaults.removeObject(forKey: Key.pendingAPNSToken) }
+        }
+    }
+
+    var pendingAPNSRemoval: Bool {
+        get { defaults.bool(forKey: Key.pendingAPNSRemoval) }
+        set { defaults.set(newValue, forKey: Key.pendingAPNSRemoval) }
     }
 
     var syncCursor: String? {
@@ -142,6 +187,11 @@ final class AppGroupSnapshotStore {
         set { defaults.set(newValue, forKey: Key.profileDeletionPending) }
     }
 
+    var profileTerminallyDeleted: Bool {
+        get { defaults.bool(forKey: Key.profileTerminallyDeleted) }
+        set { defaults.set(newValue, forKey: Key.profileTerminallyDeleted) }
+    }
+
     func clearUserData() {
         let removableKeys = [
             Key.ownCard,
@@ -152,6 +202,9 @@ final class AppGroupSnapshotStore {
             Key.people,
             Key.syncCursor,
             Key.pendingOperationIDs,
+            Key.pendingOperations,
+            Key.pendingAPNSToken,
+            Key.pendingAPNSRemoval,
             Key.Legacy.ownCard,
             WidgetSnapshotStorage.legacyKey,
             Key.Legacy.remoteConfiguration,
