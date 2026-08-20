@@ -53,6 +53,12 @@ class PersonCard(BaseModel):
     hasAudioGreeting: bool
     meetingPlace: str | None = None
     isBlocked: bool
+    templateID: str = Field(
+        default="standard-clean",
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    )
 
 
 class SyncRequest(BaseModel):

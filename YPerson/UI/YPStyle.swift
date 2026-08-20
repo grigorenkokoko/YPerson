@@ -42,6 +42,27 @@ enum YPStyle {
     }
 }
 
+struct CardTemplatePalette {
+    let surface: UIColor
+    let accent: UIColor
+    let text: UIColor
+}
+
+extension CardTemplateDefinition {
+    var palette: CardTemplatePalette {
+        switch id {
+        case CardTemplateCatalog.standardContrast.id:
+            return .init(surface: UIColor(hex: 0x142033), accent: UIColor(hex: 0xAEEBD3), text: .white)
+        case CardTemplateCatalog.mintConference.id:
+            return .init(surface: UIColor(hex: 0xE6F8F0), accent: UIColor(hex: 0x146B4A), text: UIColor(hex: 0x142033))
+        case CardTemplateCatalog.indigoStudio.id:
+            return .init(surface: UIColor(hex: 0x4F5FE7), accent: UIColor(hex: 0xAEEBD3), text: .white)
+        default:
+            return .init(surface: YPStyle.surface, accent: YPStyle.indigo, text: YPStyle.ink)
+        }
+    }
+}
+
 extension UIColor {
     convenience init(hex: Int) {
         self.init(red: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
@@ -97,7 +118,8 @@ final class CardSummaryView: UIView {
     init(card: PersonCard, showPrivate: Bool = false) {
         self.card = card
         super.init(frame: .zero)
-        backgroundColor = YPStyle.surface
+        let palette = CardTemplateCatalog.resolve(card.templateID).palette
+        backgroundColor = palette.surface
         layer.cornerRadius = 24
         directionalLayoutMargins = NSDirectionalEdgeInsets(top: 24, leading: 20, bottom: 24, trailing: 20)
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -109,15 +131,19 @@ final class CardSummaryView: UIView {
             stack.bottomAnchor.constraint(equalTo: layoutMarginsGuide.bottomAnchor)
         ])
         let avatar = UIImageView(image: UIImage(systemName: "person.crop.circle.fill"))
-        avatar.tintColor = YPStyle.indigo
+        avatar.tintColor = palette.accent
         avatar.contentMode = .scaleAspectFit
         avatar.heightAnchor.constraint(equalToConstant: 72).isActive = true
         avatar.accessibilityLabel = "Фото \(card.name)"
         stack.addArrangedSubview(avatar)
-        stack.addArrangedSubview(YPStyle.label(card.name, style: .title2, weight: .bold))
-        stack.addArrangedSubview(YPStyle.label("\(card.role) · \(card.company)", style: .headline))
-        stack.addArrangedSubview(YPStyle.label(card.email))
-        stack.addArrangedSubview(YPStyle.label(showPrivate ? card.phone : "Закрытые поля · Face ID", style: .footnote, weight: .semibold))
+        let name = YPStyle.label(card.name, style: .title2, weight: .bold)
+        let role = YPStyle.label("\(card.role) · \(card.company)", style: .headline)
+        let email = YPStyle.label(card.email)
+        let phone = YPStyle.label(showPrivate ? card.phone : "Закрытые поля · Face ID", style: .footnote, weight: .semibold)
+        [name, role, email, phone].forEach { label in
+            label.textColor = palette.text
+            stack.addArrangedSubview(label)
+        }
         isAccessibilityElement = true
         accessibilityLabel = "Визитка. \(card.name), \(card.role), \(card.company). \(showPrivate ? card.phone : "Закрытые поля заблокированы")"
         accessibilityTraits = .summaryElement
