@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import Lifespan
 
 from app.observability import RequestObservabilityMiddleware
 from app.public_pages import PRIVACY_HTML, SUPPORT_HTML
@@ -34,11 +35,12 @@ def create_app(
     settings: Settings | None = None,
     *,
     sync_service: SyncService | None = None,
+    lifespan: Lifespan[FastAPI] | None = None,
 ) -> FastAPI:
     """Create an isolated app serving the public API contract."""
 
     app_settings = settings or Settings()
-    application = FastAPI()
+    application = FastAPI(lifespan=lifespan)
     application.state.settings = app_settings
     application.state.sync_service = sync_service
     application.add_middleware(RequestObservabilityMiddleware)
