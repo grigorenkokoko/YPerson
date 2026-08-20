@@ -78,15 +78,29 @@ jobs:
           echo "${RUNNER_TEMP}/yandex-cloud/bin" >> "${GITHUB_PATH}"
           "${RUNNER_TEMP}/yandex-cloud/bin/yc" version
 
+      - name: Apply YDB schema
+        env:
+          YDB_ENDPOINT: ${{ vars.YDB_ENDPOINT }}
+          YDB_DATABASE: ${{ vars.YDB_DATABASE }}
+          YDB_ACCESS_TOKEN_CREDENTIALS: ${{ steps.iam-token.outputs.token }}
+        run: python backend/scripts/apply_ydb_schema.py
+
       - name: Deploy HTTP revision
         env:
           YC_FOLDER_ID: ${{ vars.YC_FOLDER_ID }}
+          YC_API_GATEWAY_ID: ${{ vars.YC_API_GATEWAY_ID }}
           YC_HTTP_CONTAINER_ID: ${{ vars.YC_HTTP_CONTAINER_ID }}
           YC_RUNTIME_SA_ID: ${{ vars.YC_RUNTIME_SA_ID }}
+          YC_GATEWAY_SA_ID: ${{ vars.YC_GATEWAY_SA_ID }}
           YC_HEALTH_URL: ${{ vars.YC_HEALTH_URL }}
           YPERSON_CONFIG_VERSION: ${{ vars.YPERSON_CONFIG_VERSION }}
           YPERSON_PRIVACY_URL: ${{ vars.YPERSON_PRIVACY_URL }}
           YPERSON_SUPPORT_URL: ${{ vars.YPERSON_SUPPORT_URL }}
+          YDB_ENDPOINT: ${{ vars.YDB_ENDPOINT }}
+          YDB_DATABASE: ${{ vars.YDB_DATABASE }}
+          YPERSON_OBJECT_BUCKET: ${{ vars.YPERSON_OBJECT_BUCKET }}
+          YPERSON_S3_LOCKBOX_SECRET_ID: ${{ vars.YPERSON_S3_LOCKBOX_SECRET_ID }}
+          YPERSON_S3_LOCKBOX_VERSION_ID: ${{ vars.YPERSON_S3_LOCKBOX_VERSION_ID }}
           YC_IAM_TOKEN: ${{ steps.iam-token.outputs.token }}
           IMAGE_URL: cr.yandex/${{ vars.YC_REGISTRY_ID }}/backend:${{ github.sha }}
           GITHUB_SHA: ${{ github.sha }}

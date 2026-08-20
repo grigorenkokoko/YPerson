@@ -7,9 +7,11 @@ final class YPersonExperienceBuilder {
     private let configuration: AppConfiguration
     private let session: URLSession
     private let snapshotStore: AppGroupSnapshotStore?
-    private let apiClient: APIClient
+    private let syncCoordinator: SyncCoordinator
     private let analytics: AppMetricaAnalyticsClient
     private let permissions: PermissionCenter
+    private let credentialStore: InstallationCredentialStore
+    private let mediaTransfer: MediaTransferClient
     private let nearby = NearbyExchangeController()
     private let photoScanner = PhotoCardScanner()
     private let audio = AudioGreetingController()
@@ -17,7 +19,7 @@ final class YPersonExperienceBuilder {
     private weak var output: (any YPersonExperienceOutput)?
     private weak var rootViewController: MainTabBarController?
 
-    init(configuration: AppConfiguration) {
+    init(configuration: AppConfiguration) throws {
         self.configuration = configuration
         let sessionConfiguration = URLSessionConfiguration.ephemeral
         sessionConfiguration.timeoutIntervalForRequest = 12
@@ -26,7 +28,17 @@ final class YPersonExperienceBuilder {
         self.session = URLSession(configuration: sessionConfiguration)
         let store = AppGroupSnapshotStore(appGroupIdentifier: configuration.appGroupIdentifier)
         self.snapshotStore = store
-        self.apiClient = APIClient(baseURL: configuration.apiBaseURL, session: session, snapshotStore: store)
+        let credentialStore = InstallationCredentialStore(service: "\(configuration.appGroupIdentifier).installation")
+        self.credentialStore = credentialStore
+        let mediaTransfer = MediaTransferClient(session: session)
+        self.mediaTransfer = mediaTransfer
+        self.syncCoordinator = try SyncCoordinator(
+            baseURL: configuration.apiBaseURL,
+            session: session,
+            snapshotStore: store,
+            credentialStore: credentialStore,
+            mediaTransfer: mediaTransfer
+        )
         self.analytics = AppMetricaAnalyticsClient(apiKey: configuration.appMetricaAPIKey, initialConsent: store?.analyticsConsent ?? false)
         self.permissions = PermissionCenter(notificationCenter: UNUserNotificationCenter.current())
         self.analytics.setRemoteKillSwitch(store?.cachedConfiguration()?.0.analyticsKillSwitch ?? false)
@@ -39,7 +51,7 @@ final class YPersonExperienceBuilder {
         self.output = output
         _ = analytics.activateIfConsented()
         var ownCard = snapshotStore?.readOwnCard()
-        var savedPeople: [PersonCard] = []
+        var savedPeople = snapshotStore?.readPeople() ?? []
         var usesReviewFixtures = false
 #if DEBUG
         if ProcessInfo.processInfo.environment["YP_SCREENSHOT_STATE"] != nil {
@@ -52,36 +64,46 @@ final class YPersonExperienceBuilder {
         let makeEditor: (PersonCard?, @escaping (PersonCard) -> Void) -> UIViewController = { [permissions, audio] card, onSave in
             CardEditorViewController(card: card, permissions: permissions, audio: audio, makeAppearance: makeAppearance, onSave: onSave)
         }
-        let card = CardViewController(card: ownCard, persistsChanges: !usesReviewFixtures, permissions: permissions, audio: audio, imageSaver: imageSaver, apiClient: apiClient, analytics: analytics, snapshotStore: snapshotStore, makeEditor: makeEditor)
-        let exchange = ExchangeViewController(nearby: nearby, photoScanner: photoScanner, permissions: permissions, apiClient: apiClient, analytics: analytics)
-        let person = { [permissions, imageSaver, apiClient, analytics] card in
-            PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, apiClient: apiClient, analytics: analytics)
+        let card = CardViewController(card: ownCard, persistsChanges: !usesReviewFixtures, permissions: permissions, audio: audio, imageSaver: imageSaver, syncCoordinator: syncCoordinator, analytics: analytics, snapshotStore: snapshotStore, makeEditor: makeEditor)
+        let person = { [permissions, imageSaver, syncCoordinator, analytics, snapshotStore, mediaTransfer, audio] card in
+            PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, syncCoordinator: syncCoordinator, mediaTransfer: mediaTransfer, audio: audio, analytics: analytics, snapshotStore: snapshotStore)
         }
         let people = PeopleViewController(people: savedPeople, permissions: permissions, analytics: analytics, makePerson: person)
-        let privacy = PrivacyViewController(permissions: permissions, audio: audio, analytics: analytics, snapshotStore: snapshotStore, apiClient: apiClient, configuration: configuration)
+        let exchange = ExchangeViewController(
+            nearby: nearby,
+            photoScanner: photoScanner,
+            permissions: permissions,
+            syncCoordinator: syncCoordinator,
+            analytics: analytics,
+            snapshotStore: snapshotStore,
+            ownCard: { [weak card] in card?.currentCard },
+            onPersonSaved: { [weak people, snapshotStore] _ in
+                people?.reload(people: snapshotStore?.readPeople() ?? [])
+            }
+        )
+        let privacy = PrivacyViewController(permissions: permissions, audio: audio, analytics: analytics, snapshotStore: snapshotStore, syncCoordinator: syncCoordinator, configuration: configuration)
         let root = MainTabBarController(card: card, exchange: exchange, people: people, privacy: privacy)
         self.rootViewController = root
         root.route(to: context.entryPoint)
+        if !usesReviewFixtures {
+            syncCoordinator.onPeopleChanged = { [weak people, snapshotStore] in
+                people?.reload(people: snapshotStore?.readPeople() ?? [])
+            }
+            syncCoordinator.onOwnCardChanged = { [weak card] published in card?.applyPublishedCard(published) }
+            syncCoordinator.onProfileDeleted = { [weak card, weak people, mediaTransfer] in
+                mediaTransfer.removeAllCachedAudio()
+                card?.applyProfileDeletion()
+                people?.reload(people: [])
+            }
+            syncCoordinator.onAudioInvalidated = { [mediaTransfer] in
+                mediaTransfer.removeAllCachedAudio()
+            }
+            refreshPeople()
+        }
 #if DEBUG
         applyVerificationState(to: root, card: card, exchange: exchange, privacy: privacy, makePerson: person, makeEditor: makeEditor, makeAppearance: makeAppearance)
 #endif
         return root
-    }
-
-    private func retryPendingProfileDeletion() {
-        guard snapshotStore?.profileDeletionPending == true else { return }
-        let payload = SyncRequest(
-            installationID: UIDevice.current.identifierForVendor?.uuidString ?? "pending-installation",
-            bearer: nil,
-            apnsToken: nil,
-            operation: .deleteProfile,
-            card: nil,
-            exchangeToken: nil,
-            moderationCategory: nil
-        )
-        Task { [apiClient, snapshotStore] in
-            if (try? await apiClient.sync(payload)) != nil { snapshotStore?.profileDeletionPending = false }
-        }
     }
 
     func route(to entryPoint: YPersonEntryPoint) {
@@ -91,7 +113,7 @@ final class YPersonExperienceBuilder {
     func handle(_ event: YPersonLifecycleEvent) {
         switch event {
         case .didEnterForeground:
-            retryPendingProfileDeletion()
+            refreshPeople()
         case .pushTokenChanged(let token):
             updatePushToken(token)
         }
@@ -132,24 +154,23 @@ final class YPersonExperienceBuilder {
             DispatchQueue.main.async { [weak card] in card?.showVerificationQR() }
         case "S8":
             root.selectedIndex = 1
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak exchange] in exchange?.scanQR() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak exchange] in exchange?.showVerificationImport() }
         default: break
         }
     }
 #endif
 
     private func updatePushToken(_ token: String?) {
-        Task { [apiClient] in
-            let payload = SyncRequest(
-                installationID: UIDevice.current.identifierForVendor?.uuidString ?? "simulator-installation",
-                bearer: nil,
-                apnsToken: token,
-                operation: token == nil ? .removePushToken : .updatePushToken,
-                card: nil,
-                exchangeToken: nil,
-                moderationCategory: nil
-            )
-            _ = try? await apiClient.sync(payload)
-        }
+        Task { [syncCoordinator] in await syncCoordinator.updatePushToken(token) }
+    }
+
+    private func refreshPeople() {
+        Task { [syncCoordinator] in await syncCoordinator.bootstrap() }
+    }
+}
+
+private extension Collection {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

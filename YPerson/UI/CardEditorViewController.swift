@@ -10,6 +10,10 @@ final class CardEditorViewController: YPBaseViewController {
     private let roleField = CardEditorViewController.makeField(placeholder: "Роль")
     private let companyField = CardEditorViewController.makeField(placeholder: "Компания")
     private let emailField = CardEditorViewController.makeField(placeholder: "Email", keyboardType: .emailAddress)
+    private let phoneField = CardEditorViewController.makeField(placeholder: "Телефон", keyboardType: .phonePad)
+    private let privateFieldsStack = YPStyle.stack(spacing: 8)
+    private let privateAccessStatus = YPStyle.label("Доступ открыт до закрытия этого экрана", style: .footnote, weight: .semibold)
+    private let unlockButton = YPStyle.button("Открыть с Face ID", symbol: "faceid")
     private let audioStatus = YPStyle.label("Не записано", style: .footnote)
     private let audioAction = YPStyle.button("Записать до 10 секунд", symbol: "mic.fill", primary: true)
     private let audioSecondary = YPStyle.button("Воспроизвести / остановить", symbol: "play.fill")
@@ -38,7 +42,14 @@ final class CardEditorViewController: YPBaseViewController {
         emailField.text = existingCard?.email
         [nameField, roleField, companyField, emailField].forEach(contentStack.addArrangedSubview)
         sectionTitle("Закрытые поля")
-        let unlockButton = YPStyle.button("Открыть с Face ID", symbol: "faceid"); unlockButton.addTarget(self, action: #selector(unlock), for: .touchUpInside); contentStack.addArrangedSubview(unlockButton)
+        unlockButton.addTarget(self, action: #selector(unlock), for: .touchUpInside)
+        contentStack.addArrangedSubview(unlockButton)
+        phoneField.textContentType = .telephoneNumber
+        phoneField.accessibilityLabel = "Закрытый телефон"
+        privateFieldsStack.addArrangedSubview(privateAccessStatus)
+        privateFieldsStack.addArrangedSubview(phoneField)
+        privateFieldsStack.isHidden = true
+        contentStack.addArrangedSubview(privateFieldsStack)
         sectionTitle("Аудиоприветствие")
         contentStack.addArrangedSubview(audioStatus)
         audioAction.addTarget(self, action: #selector(recordOrStop), for: .touchUpInside); contentStack.addArrangedSubview(audioAction)
@@ -60,7 +71,7 @@ final class CardEditorViewController: YPBaseViewController {
             name: name,
             role: trimmed(roleField),
             company: trimmed(companyField),
-            phone: existingCard?.phone ?? "",
+            phone: privateFieldsStack.isHidden ? (existingCard?.phone ?? "") : trimmed(phoneField),
             email: trimmed(emailField),
             tagline: existingCard?.tagline ?? "",
             hasAudioGreeting: audio.state != .empty,
@@ -71,7 +82,21 @@ final class CardEditorViewController: YPBaseViewController {
         navigationController?.popViewController(animated: true)
     }
     @objc private func openAppearance() { navigationController?.pushViewController(makeAppearance(), animated: true) }
-    @objc private func unlock() { explainPermission(title: "Закрытые поля", message: "Face ID защищает закрытые поля вашей визитки и подтверждает их передачу выбранному человеку.") { [weak self] in self?.permissions.authenticatePrivateFields { result in self?.showMessage((try? result.get()) == nil ? "Остались закрыты" : "Поля открыты", (try? result.get()) == nil ? "Используйте публичные поля или повторите позже." : "Телефон доступен до закрытия этого экрана.") } } }
+    @objc private func unlock() {
+        explainPermission(title: "Закрытые поля", message: "Face ID защищает закрытые поля вашей визитки и подтверждает их передачу выбранному человеку.") { [weak self] in
+            self?.permissions.authenticatePrivateFields { result in
+                guard let self else { return }
+                if case .success = result {
+                    self.phoneField.text = self.existingCard?.phone
+                    self.unlockButton.isHidden = true
+                    self.privateFieldsStack.isHidden = false
+                    UIAccessibility.post(notification: .screenChanged, argument: self.phoneField)
+                } else {
+                    self.showMessage("Поля остались закрыты", "Используйте публичные поля или повторите позже.")
+                }
+            }
+        }
+    }
 
     @objc private func recordOrStop() {
         if audio.state == .recording { audio.stopRecording() }
