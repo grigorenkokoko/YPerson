@@ -4,6 +4,7 @@ import Foundation
 final class SyncCoordinator {
     enum CoordinatorError: LocalizedError {
         case noProfile
+        case ownCardNotPublished
         case deletionInProgress
         case expiredExchange
         case noAudio
@@ -11,6 +12,7 @@ final class SyncCoordinator {
         var errorDescription: String? {
             switch self {
             case .noProfile: return "Сначала сохраните свою визитку."
+            case .ownCardNotPublished: return "Не удалось опубликовать вашу визитку для взаимного обмена."
             case .deletionInProgress: return "Дождитесь завершения удаления профиля."
             case .expiredExchange: return "Код обмена уже истёк. Карточка сохранена только на iPhone."
             case .noAudio: return "У этой визитки нет доступного аудиоприветствия."
@@ -112,8 +114,6 @@ final class SyncCoordinator {
                 try await mediaTransfer.upload(greeting, to: upload.uploadURL)
                 audioAssetID = upload.assetID
                 cloudCard.hasAudioGreeting = true
-            } else {
-                cloudCard.hasAudioGreeting = false
             }
             let request = SyncRequest(
                 operation: .publishCard,
@@ -169,9 +169,14 @@ final class SyncCoordinator {
     func claimExchange(
         token: String,
         expiresAt: Date?,
-        localCardID: String?
+        localCardID: String?,
+        ownCard: PersonCard,
+        greeting: RecordedGreeting?
     ) async throws -> SyncResponse {
         guard !syncSuppressed else { throw CoordinatorError.deletionInProgress }
+        guard await publish(ownCard, greeting: greeting) != nil else {
+            throw CoordinatorError.ownCardNotPublished
+        }
         guard let apiClient else { throw CoordinatorError.noProfile }
         let request = SyncRequest(operation: .claimExchange, exchangeToken: token)
         let pending = PendingSyncOperation(
