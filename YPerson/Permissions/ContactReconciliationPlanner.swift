@@ -230,8 +230,8 @@ enum ContactReconciliationPlanner {
             identifier: contact.identifier,
             name: name.isEmpty ? (trimmed(contact.company).isEmpty ? "Без имени" : trimmed(contact.company)) : name,
             company: trimmed(contact.company),
-            maskedPhone: contact.phones.first.flatMap(maskedPhone),
-            maskedEmail: contact.emails.first.flatMap(maskedEmail),
+            maskedPhone: contact.phones.first.flatMap(ContactIdentityFormatter.maskedPhone),
+            maskedEmail: contact.emails.first.flatMap(ContactIdentityFormatter.maskedEmail),
             matchEvidence: evidence
         )
     }
@@ -242,19 +242,6 @@ enum ContactReconciliationPlanner {
             names.first.map(trimmed) ?? "",
             names.count > 1 ? trimmed(names[1]) : ""
         )
-    }
-
-    private static func maskedPhone(_ value: String) -> String? {
-        guard let digits = ContactMatchPolicy.normalizedPhone(value) else { return nil }
-        let suffix = digits.count >= 4 ? String(digits.suffix(4)) : ""
-        return suffix.isEmpty ? "Телефон ••••" : "Телефон •••• \(suffix)"
-    }
-
-    private static func maskedEmail(_ value: String) -> String? {
-        guard let email = ContactMatchPolicy.normalizedEmail(value) else { return nil }
-        let components = email.split(separator: "@", maxSplits: 1).map(String.init)
-        guard components.count == 2, let first = components[0].first else { return "Email ••••" }
-        return "Email \(first)•••@\(components[1])"
     }
 
     private static func trimmed(_ value: String) -> String {

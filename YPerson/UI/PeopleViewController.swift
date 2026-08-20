@@ -116,7 +116,13 @@ final class PeopleViewController: YPBaseViewController, CNContactPickerDelegate 
         }
         let alert = UIAlertController(title: "Выберите карточку YPerson", message: "Выберите человека, которого нужно сверить с Контактами. До подтверждения ничего не изменится.", preferredStyle: .actionSheet)
         for person in people {
-            let title = person.role.isEmpty ? person.name : "\(person.name) · \(person.role)"
+            let title = ContactIdentityFormatter.savedCardChoiceLabel(
+                name: person.name,
+                role: person.role,
+                company: person.company,
+                phone: person.phone,
+                email: person.email
+            )
             alert.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
                 self?.contactReconciliation.start(for: person)
             })
