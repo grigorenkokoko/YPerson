@@ -21,6 +21,9 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private var nearbySearchAlert: UIAlertController?
     private var prepareTask: Task<Void, Never>?
     private var preparedToken: String?
+    private var publicCardTask: Task<Void, Never>?
+    private var publicCardGeneration: UUID?
+    private weak var publicCardLoadingAlert: UIAlertController?
 
     init(nearby: NearbyExchangeController, photoScanner: PhotoCardScanner, permissions: PermissionCenter, audio: AudioGreetingController, syncCoordinator: SyncCoordinator, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, ownCard: @escaping () -> PersonCard?, onPersonSaved: @escaping (PersonCard) -> Void) {
         self.nearby = nearby
@@ -153,6 +156,71 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             guard let self else { return }
             self.scannerLaunchGate.complete()
             self.scanQR()
+        }
+    }
+
+    func openPublicCard(token: String) {
+        publicCardTask?.cancel()
+        publicCardLoadingAlert?.dismiss(animated: false)
+        navigationController?.popToRootViewController(animated: false)
+
+        let generation = UUID()
+        publicCardGeneration = generation
+        let loading = UIAlertController(
+            title: "Загружаем визитку…",
+            message: "Проверяем публичную ссылку.",
+            preferredStyle: .alert
+        )
+        publicCardLoadingAlert = loading
+        if presentedViewController == nil {
+            present(loading, animated: true)
+        }
+
+        publicCardTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let card = try await syncCoordinator.fetchPublicCard(token: token)
+                try Task.checkCancellation()
+                let payload = ExchangePayload(
+                    version: 2,
+                    issuerInstallationID: card.sourceInstallationID
+                        ?? "00000000-0000-4000-8000-000000000000",
+                    card: card,
+                    exchangeToken: nil,
+                    expiresAt: nil
+                )
+                finishPublicCardLoad(generation: generation) { [weak self] in
+                    self?.confirmImportedCard(
+                        payload,
+                        localOnlyNote: "Публичная карточка сохранится только на этом iPhone после вашего подтверждения."
+                    )
+                }
+            } catch is CancellationError {
+                finishPublicCardLoad(generation: generation) {}
+            } catch {
+                finishPublicCardLoad(generation: generation) { [weak self] in
+                    self?.showMessage(
+                        "Ссылка недоступна",
+                        "Эта публичная ссылка недоступна или больше не действует."
+                    )
+                }
+            }
+        }
+    }
+
+    private func finishPublicCardLoad(
+        generation: UUID,
+        completion: @escaping () -> Void
+    ) {
+        guard publicCardGeneration == generation else { return }
+        publicCardGeneration = nil
+        publicCardTask = nil
+        let loading = publicCardLoadingAlert
+        publicCardLoadingAlert = nil
+        if loading?.presentingViewController != nil {
+            loading?.dismiss(animated: true, completion: completion)
+        } else {
+            completion()
         }
     }
 
@@ -340,12 +408,16 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         }
     }
 
-    private func confirmImportedCard(_ payload: ExchangePayload) {
+    private func confirmImportedCard(
+        _ payload: ExchangePayload,
+        localOnlyNote: String? = nil
+    ) {
         let expired = payload.expiresAt.map { $0 <= Date() } ?? false
         let hasCloudClaim = payload.exchangeToken != nil && !expired
         let cloudNote = hasCloudClaim
             ? "После сохранения YPerson попробует подключить облачные обновления."
-            : "Офлайн-код: карточка сохранится только на этом iPhone без подтверждения облачной связи."
+            : localOnlyNote
+                ?? "Офлайн-код: карточка сохранится только на этом iPhone без подтверждения облачной связи."
         let companyLine = payload.card.company.isEmpty ? "" : " · \(payload.card.company)"
         let alert = UIAlertController(
             title: payload.card.name,
@@ -517,7 +589,12 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         Task { await syncCoordinator.cancelExchange(token: token) }
     }
 
-    deinit { prepareTask?.cancel(); nearby.stop(); photoScanner.cancel() }
+    deinit {
+        prepareTask?.cancel()
+        publicCardTask?.cancel()
+        nearby.stop()
+        photoScanner.cancel()
+    }
 
     private enum ExchangeError: Error {
         case localStorageUnavailable

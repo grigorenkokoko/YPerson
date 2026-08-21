@@ -18,6 +18,10 @@ final class YPersonExperienceBuilder {
     private let imageSaver = CardImageSaver()
     private weak var output: (any YPersonExperienceOutput)?
     private weak var rootViewController: MainTabBarController?
+    private weak var peopleViewController: PeopleViewController?
+    private var pendingPublicReplies: [PublicContactReply] = []
+    private var suppressedPublicReplyIDs: Set<String> = []
+    private var defersPublicReplyReviewUntilForeground = false
 
     init(configuration: AppConfiguration) throws {
         self.configuration = configuration
@@ -110,6 +114,7 @@ final class YPersonExperienceBuilder {
         let privacy = PrivacyViewController(permissions: permissions, audio: audio, analytics: analytics, snapshotStore: snapshotStore, syncCoordinator: syncCoordinator, configuration: configuration)
         let root = MainTabBarController(card: card, exchange: exchange, people: people, privacy: privacy)
         self.rootViewController = root
+        self.peopleViewController = people
         root.route(to: context.entryPoint)
         if !usesReviewFixtures {
             syncCoordinator.onPeopleChanged = { [weak people, snapshotStore] in
@@ -123,6 +128,9 @@ final class YPersonExperienceBuilder {
             }
             syncCoordinator.onAudioInvalidated = { [mediaTransfer] in
                 mediaTransfer.removeAllCachedAudio()
+            }
+            syncCoordinator.onPublicRepliesChanged = { [weak self] replies in
+                self?.receivePublicReplies(replies)
             }
             refreshPeople()
         }
@@ -139,6 +147,7 @@ final class YPersonExperienceBuilder {
     func handle(_ event: YPersonLifecycleEvent) {
         switch event {
         case .didEnterForeground:
+            defersPublicReplyReviewUntilForeground = false
             refreshPeople()
         case .pushTokenChanged(let token):
             updatePushToken(token)
@@ -193,6 +202,79 @@ final class YPersonExperienceBuilder {
     private func refreshPeople() {
         Task { [syncCoordinator] in await syncCoordinator.bootstrap() }
     }
+
+    private func receivePublicReplies(_ replies: [PublicContactReply]) {
+        pendingPublicReplies = replies.filter { !suppressedPublicReplyIDs.contains($0.id) }
+        guard !defersPublicReplyReviewUntilForeground else { return }
+        presentNextPublicReplyIfPossible()
+    }
+
+    private func presentNextPublicReplyIfPossible() {
+        guard let rootViewController,
+              rootViewController.viewIfLoaded?.window != nil,
+              !hasPresentedController(in: rootViewController),
+              let reply = pendingPublicReplies.first else {
+            return
+        }
+        let review = PublicReplyReviewViewController(
+            reply: reply,
+            onAccept: { [weak self] card in
+                self?.acceptPublicReply(card, replyID: reply.id)
+            },
+            onLater: { [weak self] in
+                self?.deferCurrentPublicReply()
+            }
+        )
+        rootViewController.present(review, animated: true)
+    }
+
+    private func acceptPublicReply(_ card: PersonCard, replyID: String) {
+        guard !suppressedPublicReplyIDs.contains(replyID) else { return }
+        do {
+            guard let snapshotStore else {
+                throw PublicReplySaveError.localStorageUnavailable
+            }
+            try snapshotStore.upsertPerson(card)
+        } catch {
+            currentPublicReplyReview?.showSaveFailure()
+            return
+        }
+
+        peopleViewController?.reload(people: snapshotStore?.readPeople() ?? [])
+        suppressedPublicReplyIDs.insert(replyID)
+        pendingPublicReplies.removeAll { $0.id == replyID }
+        defersPublicReplyReviewUntilForeground = true
+        Task { [syncCoordinator] in
+            try? await syncCoordinator.dismissPublicReply(id: replyID)
+        }
+        currentPublicReplyReview?.dismiss(animated: true)
+    }
+
+    private func deferCurrentPublicReply() {
+        defersPublicReplyReviewUntilForeground = true
+        currentPublicReplyReview?.dismiss(animated: true)
+    }
+
+    private var currentPublicReplyReview: PublicReplyReviewViewController? {
+        rootViewController?.presentedViewController as? PublicReplyReviewViewController
+    }
+
+    private func hasPresentedController(in controller: UIViewController) -> Bool {
+        if controller.presentedViewController != nil { return true }
+        if let tab = controller as? UITabBarController,
+           let selected = tab.selectedViewController {
+            return hasPresentedController(in: selected)
+        }
+        if let navigation = controller as? UINavigationController,
+           let visible = navigation.visibleViewController {
+            return hasPresentedController(in: visible)
+        }
+        return false
+    }
+}
+
+private enum PublicReplySaveError: Error {
+    case localStorageUnavailable
 }
 
 private extension Collection {

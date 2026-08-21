@@ -5,6 +5,7 @@ enum YPersonEntryPoint: Sendable {
     case card
     case scanQR
     case privacy
+    case publicCard(token: String)
 }
 
 struct YPersonExperienceContext: Sendable {
