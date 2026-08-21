@@ -6,17 +6,19 @@ Review prerequisites before submission: the production backend and public Privac
 
 First launch intentionally contains no prefilled profile or people. Core path: open Card → Create Card, enter reviewer-owned values, and tap Done → Show QR. On another iPhone open Exchange → Scan QR, or scan the supplied `reviewer-assets/test-qr.png`. Confirm the fictional Alexey Morozov card before saving. Manual fallback: Exchange → Enter short code → `YP-1234`.
 
+Appearance reviewer path: Card → Edit → Appearance. The screen presents a live preview and four templates: `standard-clean`, `standard-contrast`, `mint-conference`, and `indigo-studio`; the selected row has a checkmark and `Выбрано` subtitle. Choose a template, return to the editor, and tap Done to save it with the card. Leaving the editor without Done discards the draft selection. To verify that same selected template on a received card, show the updated QR on the first iPhone, then on a second iPhone open Exchange → Scan QR, scan it, confirm adding the card, and open the received card. The supplied QR fixture and manual code remain separate exchange fallbacks for their own fictional card and do not demonstrate the current card's selected template. Card menu → Save to Photos exports the selected appearance. Card payloads carry only the public `templateID`, not palette values or ATT state.
+
 Permission paths and fallbacks:
 
 1. Camera: Exchange → Scan QR. Fallback: supplied image/manual code.
 2. Bluetooth: Exchange → Nearby; open this on two iPhones and confirm on both. Fallback: QR/manual code.
-3. Contacts: first import the supplied reviewer card, then People → Contacts Sync; inspect the proposed changes before confirming. Fallback: cards remain in YPerson/system single-contact form.
+3. Contacts: with an empty People list, tap Add from Contacts and select one or more entries in the system picker; this does not request full address-book access and keeps imported cards on device. For full reconciliation, import the supplied reviewer card, then People → Contacts Sync; inspect the proposed changes before confirming. Fallback: cards remain in YPerson/system single-contact form.
 4. Face ID: Card → Open private fields, or enable private fields in Exchange. Device passcode/public card remain available.
-5. Location While Using: after importing the reviewer card, People → Alexey → Add current place. The label remains only on device; manual place/skip is available.
+5. Location While Using: before exchange, enable Save meeting place, then complete the reviewer exchange and inspect the local label on the received person. Cancel a second exchange and verify that its pending label is not persisted. People → Alexey → Add current place remains available afterward; manual place/skip is available and nothing is transmitted.
 6. Microphone: Card → Edit → Record up to 10 seconds. Preview/delete is available; text remains the fallback.
 7. Photos read: Exchange → Find cards in Photos. Limited/single-image alternatives are available; raw images stay on device.
 8. Photos add: Card menu or received card → Save to Photos. Share Sheet remains available.
-9. Tracking: Card → Edit → Appearance and templates → Help measure ads. ATT is only for AppMetrica attribution; denial keeps every free template and core feature.
+9. Tracking: Card → Edit → Appearance and templates → Help measure ads. ATT is only for AppMetrica attribution; denial does not change or restrict templates and keeps every free template and core feature.
 10. Notifications: Settings → Enable card updates. Denial keeps updates on the People screen.
 
 Widget: add YPerson `systemSmall` on the Home Screen on iOS 15. On iOS 16+, also add the `accessoryCircular` and `accessoryRectangular` shortcuts on the Lock Screen. Every family opens `yperson://scan`, selects Exchange, and starts the existing Scan QR permission/recovery flow. The extension is a stateless launcher: it has no card data, QR payload, update count, cached snapshot, App Group entitlement, camera purpose string or access, analytics, or network client.

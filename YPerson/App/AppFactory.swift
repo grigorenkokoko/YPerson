@@ -60,7 +60,16 @@ final class YPersonExperienceBuilder {
             usesReviewFixtures = true
         }
 #endif
-        let makeAppearance = { [permissions, analytics] in AppearanceViewController(permissions: permissions, analytics: analytics) }
+        let makeAppearance = { [permissions, analytics]
+            (card: PersonCard, selectedTemplateID: String, onSelect: @escaping (String) -> Void) in
+            AppearanceViewController(
+                card: card,
+                selectedTemplateID: selectedTemplateID,
+                permissions: permissions,
+                analytics: analytics,
+                onSelect: onSelect
+            )
+        }
         let makeEditor: (PersonCard?, @escaping (PersonCard) throws -> Void) -> UIViewController = { [permissions, audio] card, onSave in
             CardEditorViewController(card: card, permissions: permissions, audio: audio, makeAppearance: makeAppearance, onSave: onSave)
         }
@@ -68,7 +77,23 @@ final class YPersonExperienceBuilder {
         let person = { [permissions, imageSaver, syncCoordinator, analytics, snapshotStore, mediaTransfer, audio] card in
             PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, syncCoordinator: syncCoordinator, mediaTransfer: mediaTransfer, audio: audio, analytics: analytics, snapshotStore: snapshotStore)
         }
-        let people = PeopleViewController(people: savedPeople, permissions: permissions, analytics: analytics, makePerson: person)
+        let people = PeopleViewController(
+            people: savedPeople,
+            permissions: permissions,
+            analytics: analytics,
+            makePerson: person,
+            onContactsImported: { [snapshotStore] cards in
+                guard let snapshotStore else {
+                    throw NSError(
+                        domain: "YPerson.ContactsImport",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Локальное хранилище недоступно"]
+                    )
+                }
+                try snapshotStore.replacePeople(cards)
+                return snapshotStore.readPeople()
+            }
+        )
         let exchange = ExchangeViewController(
             nearby: nearby,
             photoScanner: photoScanner,
@@ -121,7 +146,7 @@ final class YPersonExperienceBuilder {
     }
 
 #if DEBUG
-    private func applyVerificationState(to root: MainTabBarController, card: CardViewController, exchange: ExchangeViewController, privacy: PrivacyViewController, makePerson: @escaping (PersonCard) -> UIViewController, makeEditor: @escaping (PersonCard?, @escaping (PersonCard) throws -> Void) -> UIViewController, makeAppearance: @escaping () -> UIViewController) {
+    private func applyVerificationState(to root: MainTabBarController, card: CardViewController, exchange: ExchangeViewController, privacy: PrivacyViewController, makePerson: @escaping (PersonCard) -> UIViewController, makeEditor: @escaping (PersonCard?, @escaping (PersonCard) throws -> Void) -> UIViewController, makeAppearance: @escaping (PersonCard, String, @escaping (String) -> Void) -> UIViewController) {
         switch ProcessInfo.processInfo.environment["YP_SCREENSHOT_STATE"] {
         case "S2": root.selectedIndex = 1
         case "S3": root.selectedIndex = 2
@@ -143,7 +168,7 @@ final class YPersonExperienceBuilder {
                 editor.loadViewIfNeeded()
                 navigation?.pushViewController(editor, animated: false)
                 DispatchQueue.main.async {
-                    navigation?.pushViewController(makeAppearance(), animated: false)
+                    navigation?.pushViewController(makeAppearance(.reviewOwn, PersonCard.reviewOwn.templateID, { _ in }), animated: false)
                 }
             }
         case "S7": root.selectedIndex = 3

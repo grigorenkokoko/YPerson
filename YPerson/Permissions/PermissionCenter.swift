@@ -81,6 +81,28 @@ final class PermissionCenter: NSObject, CLLocationManagerDelegate {
         return contact
     }
 
+    func makePersonCard(from contact: CNContact) -> PersonCard {
+        let formattedName = CNContactFormatter.string(from: contact, style: .fullName)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let organizationName = contact.organizationName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = formattedName.flatMap { $0.isEmpty ? nil : $0 }
+            ?? (organizationName.isEmpty ? "Без имени" : organizationName)
+        return PersonCard(
+            id: "system-contact-\(contact.identifier)",
+            name: name,
+            role: contact.jobTitle,
+            company: organizationName,
+            phone: contact.phoneNumbers.first?.value.stringValue ?? "",
+            email: contact.emailAddresses.first.map { $0.value as String } ?? "",
+            tagline: "",
+            hasAudioGreeting: false,
+            meetingPlace: nil,
+            isBlocked: false,
+            sourceInstallationID: nil,
+            syncState: .localOnly
+        )
+    }
+
     func authenticatePrivateFields(completion: @escaping (Result<Void, Error>) -> Void) {
         let context = LAContext()
         context.localizedCancelTitle = "Оставить закрытым"

@@ -1,16 +1,20 @@
+import Contacts
+import ContactsUI
 import UIKit
 
-final class PeopleViewController: YPBaseViewController {
+final class PeopleViewController: YPBaseViewController, CNContactPickerDelegate {
     private var people: [PersonCard]
     private let permissions: PermissionCenter
     private let analytics: AppMetricaAnalyticsClient
     private let makePerson: (PersonCard) -> UIViewController
+    private let onContactsImported: ([PersonCard]) throws -> [PersonCard]
 
-    init(people: [PersonCard], permissions: PermissionCenter, analytics: AppMetricaAnalyticsClient, makePerson: @escaping (PersonCard) -> UIViewController) {
+    init(people: [PersonCard], permissions: PermissionCenter, analytics: AppMetricaAnalyticsClient, makePerson: @escaping (PersonCard) -> UIViewController, onContactsImported: @escaping ([PersonCard]) throws -> [PersonCard]) {
         self.people = people
         self.permissions = permissions
         self.analytics = analytics
         self.makePerson = makePerson
+        self.onContactsImported = onContactsImported
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -34,8 +38,12 @@ final class PeopleViewController: YPBaseViewController {
         }
         guard !people.isEmpty else {
             contentStack.addArrangedSubview(YPStyle.label("Пока никого нет", style: .title2, weight: .bold))
-            contentStack.addArrangedSubview(YPStyle.label("После подтверждённого обмена человек появится здесь. YPerson не добавляет примеры и не читает Контакты без вашей команды."))
-            let exchange = YPStyle.button("Познакомиться и обменяться", symbol: "arrow.left.arrow.right", primary: true)
+            contentStack.addArrangedSubview(YPStyle.label("Добавьте выбранных людей из Контактов или познакомьтесь через обмен. YPerson не читает адресную книгу без вашей команды."))
+            let importContacts = YPStyle.button("Добавить из Контактов", symbol: "person.crop.circle.badge.plus", primary: true)
+            importContacts.addTarget(self, action: #selector(openContactPicker), for: .touchUpInside)
+            importContacts.accessibilityHint = "Открывает системный выбор нескольких контактов"
+            contentStack.addArrangedSubview(importContacts)
+            let exchange = YPStyle.button("Познакомиться и обменяться", symbol: "arrow.left.arrow.right")
             exchange.addTarget(self, action: #selector(openExchange), for: .touchUpInside)
             contentStack.addArrangedSubview(exchange)
             return
@@ -58,6 +66,37 @@ final class PeopleViewController: YPBaseViewController {
     }
 
     @objc private func openExchange() { tabBarController?.selectedIndex = 1 }
+
+    @objc private func openContactPicker() {
+        let picker = CNContactPickerViewController()
+        picker.delegate = self
+        picker.displayedPropertyKeys = [
+            CNContactGivenNameKey,
+            CNContactMiddleNameKey,
+            CNContactFamilyNameKey,
+            CNContactOrganizationNameKey,
+            CNContactJobTitleKey,
+            CNContactPhoneNumbersKey,
+            CNContactEmailAddressesKey
+        ]
+        present(picker, animated: true)
+    }
+
+    func contactPicker(_ picker: CNContactPickerViewController, didSelect contacts: [CNContact]) {
+        guard !contacts.isEmpty else { return }
+        let cards = contacts.map(permissions.makePersonCard(from:))
+        do {
+            let savedPeople = try onContactsImported(cards)
+            analytics.report(.cardReceived("contacts_picker"))
+            reload(people: savedPeople)
+            let message = cards.count == 1
+                ? "Выбранный человек сохранён только в YPerson на этом iPhone."
+                : "Выбранные люди сохранены только в YPerson на этом iPhone."
+            showMessage("Добавлено: \(cards.count)", message)
+        } catch {
+            showMessage("Не удалось добавить", "Выбранные контакты не были сохранены. Попробуйте ещё раз.")
+        }
+    }
 
     @objc private func openPerson(_ sender: UIButton) {
         guard people.indices.contains(sender.tag) else { return }

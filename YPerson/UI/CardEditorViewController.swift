@@ -4,8 +4,13 @@ final class CardEditorViewController: YPBaseViewController {
     private let existingCard: PersonCard?
     private let permissions: PermissionCenter
     private let audio: AudioGreetingController
-    private let makeAppearance: () -> UIViewController
+    private let makeAppearance: (
+        PersonCard,
+        String,
+        @escaping (String) -> Void
+    ) -> UIViewController
     private let onSave: (PersonCard) throws -> Void
+    private var selectedTemplateID: String
     private let nameField = CardEditorViewController.makeField(placeholder: "Имя и фамилия")
     private let roleField = CardEditorViewController.makeField(placeholder: "Роль")
     private let companyField = CardEditorViewController.makeField(placeholder: "Компания")
@@ -21,12 +26,13 @@ final class CardEditorViewController: YPBaseViewController {
     private let audioDelete = YPStyle.button("Удалить запись", symbol: "trash")
     private var audioWasEdited = false
 
-    init(card: PersonCard?, permissions: PermissionCenter, audio: AudioGreetingController, makeAppearance: @escaping () -> UIViewController, onSave: @escaping (PersonCard) throws -> Void) {
+    init(card: PersonCard?, permissions: PermissionCenter, audio: AudioGreetingController, makeAppearance: @escaping (PersonCard, String, @escaping (String) -> Void) -> UIViewController, onSave: @escaping (PersonCard) throws -> Void) {
         self.existingCard = card
         self.permissions = permissions
         self.audio = audio
         self.makeAppearance = makeAppearance
         self.onSave = onSave
+        self.selectedTemplateID = CardTemplateCatalog.resolve(card?.templateID).id
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -85,7 +91,21 @@ final class CardEditorViewController: YPBaseViewController {
             )
             return
         }
-        let card = PersonCard(
+        let card = makeCard(name: name, audioStatus: audioStatus)
+        do {
+            try onSave(card)
+            navigationController?.popViewController(animated: true)
+        } catch {
+            showMessage(
+                "Не удалось сохранить карточку",
+                "Карточка не записана на iPhone. Освободите место и попробуйте ещё раз."
+            )
+        }
+    }
+
+    private func makeCard(name: String, audioStatus: CardAudioDraftStatus? = nil) -> PersonCard {
+        let audioStatus = audioStatus ?? audio.cardAudioDraftStatus
+        return PersonCard(
             id: existingCard?.id ?? UUID().uuidString.lowercased(),
             name: name,
             role: trimmed(roleField),
@@ -99,19 +119,20 @@ final class CardEditorViewController: YPBaseViewController {
                 audioWasEdited: audioWasEdited
             ),
             meetingPlace: existingCard?.meetingPlace,
-            isBlocked: existingCard?.isBlocked ?? false
+            isBlocked: existingCard?.isBlocked ?? false,
+            templateID: selectedTemplateID
         )
-        do {
-            try onSave(card)
-            navigationController?.popViewController(animated: true)
-        } catch {
-            showMessage(
-                "Не удалось сохранить карточку",
-                "Карточка не записана на iPhone. Освободите место и попробуйте ещё раз."
-            )
-        }
     }
-    @objc private func openAppearance() { navigationController?.pushViewController(makeAppearance(), animated: true) }
+    @objc private func openAppearance() {
+        let name = trimmed(nameField)
+        let previewCard = makeCard(name: name.isEmpty ? "Ваша визитка" : name)
+        navigationController?.pushViewController(
+            makeAppearance(previewCard, selectedTemplateID) { [weak self] templateID in
+                self?.selectedTemplateID = templateID
+            },
+            animated: true
+        )
+    }
     @objc private func unlock() {
         explainPermission(title: "Закрытые поля", message: "Face ID защищает закрытые поля вашей визитки и подтверждает их передачу выбранному человеку.") { [weak self] in
             self?.permissions.authenticatePrivateFields { result in
