@@ -20,7 +20,8 @@ final class YPersonExperienceBuilder {
     private weak var output: (any YPersonExperienceOutput)?
     private weak var rootViewController: MainTabBarController?
     private let personControllers = NSHashTable<PersonViewController>.weakObjects()
-    private var bootstrapTask: Task<Void, Never>?
+    private var bootstrapTaskOwnership = ProfileBootstrapTaskOwnership()
+    private var bootstrapTasks: [ProfileBootstrapTaskOwnership.Ticket: Task<Void, Never>] = [:]
     private var pushTokenTask: Task<Void, Never>?
 
     init(configuration: AppConfiguration) throws {
@@ -156,9 +157,16 @@ final class YPersonExperienceBuilder {
         let root = MainTabBarController(card: card, exchange: exchange, people: people, privacy: privacy)
         self.rootViewController = root
         root.route(to: context.entryPoint)
-        syncCoordinator.onProfileDeleted = { [weak self, weak card, weak exchange, weak people, weak privacy, audio, analytics] in
-            self?.bootstrapTask?.cancel()
-            self?.bootstrapTask = nil
+        syncCoordinator.onProfileDeletionPreparation = { [weak self, weak card, weak exchange, weak people, weak privacy, audio, analytics] in
+            let personControllers = self?.personControllers.allObjects ?? []
+            var contactInvalidations: [ContactReconciliationSessionFence.Invalidation] = []
+            if let invalidation = people?.beginProfileDeletion() {
+                contactInvalidations.append(invalidation)
+            }
+            contactInvalidations.append(contentsOf: personControllers.map {
+                $0.beginProfileDeletion()
+            })
+            self?.cancelActiveBootstrapTask()
             self?.pushTokenTask?.cancel()
             self?.pushTokenTask = nil
             audio.delete()
@@ -166,8 +174,13 @@ final class YPersonExperienceBuilder {
             card?.applyProfileDeletion()
             exchange?.applyProfileDeletion()
             privacy?.applyProfileDeletion()
-            self?.personControllers.allObjects.forEach { $0.applyProfileDeletion() }
-            people?.applyProfileDeletion()
+            for invalidation in contactInvalidations {
+                await invalidation.waitForInFlightCommits()
+            }
+        }
+        syncCoordinator.onProfileReactivated = { [weak people, weak privacy] in
+            people?.applyProfileReactivation()
+            privacy?.applyProfileReactivation()
         }
         syncCoordinator.onAudioInvalidated = { [mediaTransfer] in
             mediaTransfer.removeAllCachedAudio()
@@ -251,16 +264,48 @@ final class YPersonExperienceBuilder {
 
     private func refreshPeople() {
         let profileContext = syncCoordinator.captureProfileOperationContext()
-        bootstrapTask?.cancel()
-        bootstrapTask = Task { [syncCoordinator] in
-            guard !Task.isCancelled else { return }
-            if let profileContext {
-                guard syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
-            } else {
-                guard !syncCoordinator.isProfileActive else { return }
-            }
+        if let profileContext {
+            startActiveBootstrap(context: profileContext)
+            return
+        }
+        guard syncCoordinator.needsDeletionRecovery else { return }
+        startDeletionRecoveryBootstrap()
+    }
+
+    private func startActiveBootstrap(context profileContext: ProfileOperationContext) {
+        let start = bootstrapTaskOwnership.beginActive()
+        cancelBootstrapTask(start.replaced)
+        let ticket = start.ticket
+        bootstrapTasks[ticket] = Task { [weak self, syncCoordinator] in
+            defer { self?.finishBootstrapTask(ticket) }
+            guard !Task.isCancelled,
+                  syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
             await syncCoordinator.bootstrap(context: profileContext)
         }
+    }
+
+    private func startDeletionRecoveryBootstrap() {
+        guard let ticket = bootstrapTaskOwnership.beginDeletionRecovery() else { return }
+        bootstrapTasks[ticket] = Task { [weak self, syncCoordinator] in
+            defer { self?.finishBootstrapTask(ticket) }
+            guard !Task.isCancelled else { return }
+            guard syncCoordinator.needsDeletionRecovery else { return }
+            await syncCoordinator.bootstrap(context: nil)
+        }
+    }
+
+    private func cancelActiveBootstrapTask() {
+        cancelBootstrapTask(bootstrapTaskOwnership.invalidateActive())
+    }
+
+    private func cancelBootstrapTask(_ ticket: ProfileBootstrapTaskOwnership.Ticket?) {
+        guard let ticket else { return }
+        bootstrapTasks.removeValue(forKey: ticket)?.cancel()
+    }
+
+    private func finishBootstrapTask(_ ticket: ProfileBootstrapTaskOwnership.Ticket) {
+        bootstrapTaskOwnership.finish(ticket)
+        bootstrapTasks.removeValue(forKey: ticket)
     }
 }
 

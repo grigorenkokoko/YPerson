@@ -70,16 +70,250 @@ struct ProfileOperationEpoch {
 
 typealias ProfileOperationContext = ProfileOperationEpoch.Snapshot
 
-final class ContactReconciliationSessionFence: @unchecked Sendable {
-    struct Session: Equatable, Sendable {
+struct ProfileBootstrapTaskOwnership {
+    enum Kind: Sendable {
+        case active
+        case deletionRecovery
+    }
+
+    struct Ticket: Equatable, Hashable, Sendable {
+        fileprivate let id: UUID
+        fileprivate let kind: Kind
+    }
+
+    struct ActiveStart: Equatable, Sendable {
+        let ticket: Ticket
+        let replaced: Ticket?
+    }
+
+    private var active: Ticket?
+    private var deletionRecovery: Ticket?
+
+    mutating func beginActive() -> ActiveStart {
+        let replaced = active
+        let ticket = Ticket(id: UUID(), kind: .active)
+        active = ticket
+        return ActiveStart(ticket: ticket, replaced: replaced)
+    }
+
+    mutating func beginDeletionRecovery() -> Ticket? {
+        guard deletionRecovery == nil else { return nil }
+        let ticket = Ticket(id: UUID(), kind: .deletionRecovery)
+        deletionRecovery = ticket
+        return ticket
+    }
+
+    mutating func invalidateActive() -> Ticket? {
+        defer { active = nil }
+        return active
+    }
+
+    mutating func finish(_ ticket: Ticket) {
+        switch ticket.kind {
+        case .active:
+            if active == ticket { active = nil }
+        case .deletionRecovery:
+            if deletionRecovery == ticket { deletionRecovery = nil }
+        }
+    }
+
+    func isCurrent(_ ticket: Ticket) -> Bool {
+        switch ticket.kind {
+        case .active: return active == ticket
+        case .deletionRecovery: return deletionRecovery == ticket
+        }
+    }
+}
+
+final class AsyncFIFOOperationGate: @unchecked Sendable {
+    struct Lease: Equatable, Sendable {
         fileprivate let id: UUID
     }
 
-    struct Invalidation: Sendable {
-        fileprivate let fence: ContactReconciliationSessionFence
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Lease?, Never>
+    }
 
-        func waitForInFlightCommits() {
-            fence.waitForInFlightCommits()
+    private let lock = NSLock()
+    private var holderID: UUID?
+    private var waiters: [Waiter] = []
+
+    func acquire() async throws -> Lease {
+        let id = UUID()
+        let lease: Lease? = await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Lease?, Never>) in
+                lock.lock()
+                if Task.isCancelled {
+                    lock.unlock()
+                    continuation.resume(returning: nil)
+                } else if holderID == nil {
+                    holderID = id
+                    lock.unlock()
+                    continuation.resume(returning: Lease(id: id))
+                } else {
+                    waiters.append(Waiter(id: id, continuation: continuation))
+                    lock.unlock()
+                }
+            }
+        } onCancel: {
+            cancelWaiter(id: id)
+        }
+        guard let lease else { throw CancellationError() }
+        guard !Task.isCancelled else {
+            release(lease)
+            throw CancellationError()
+        }
+        return lease
+    }
+
+    func release(_ lease: Lease) {
+        var next: Waiter?
+        lock.lock()
+        guard holderID == lease.id else {
+            lock.unlock()
+            return
+        }
+        if waiters.isEmpty {
+            holderID = nil
+        } else {
+            next = waiters.removeFirst()
+            holderID = next?.id
+        }
+        lock.unlock()
+        if let next {
+            next.continuation.resume(returning: Lease(id: next.id))
+        }
+    }
+
+    private func cancelWaiter(id: UUID) {
+        var cancelled: Waiter?
+        lock.lock()
+        if holderID != id,
+           let index = waiters.firstIndex(where: { $0.id == id }) {
+            cancelled = waiters.remove(at: index)
+        }
+        lock.unlock()
+        cancelled?.continuation.resume(returning: nil)
+    }
+}
+
+struct PushTokenSyncOwnership: Equatable, Sendable {
+    let token: String?
+    let isRemoval: Bool
+    let operationID: String
+
+    func matches(token: String?, isRemoval: Bool, operationID: String?) -> Bool {
+        self.token == token
+            && self.isRemoval == isRemoval
+            && self.operationID == operationID
+    }
+}
+
+struct PublicationCardOwnership: Equatable {
+    private let id: String
+    private let name: String
+    private let role: String
+    private let company: String
+    private let phone: String
+    private let email: String
+    private let tagline: String
+    private let hasAudioGreeting: Bool
+    private let meetingPlace: String?
+    private let isBlocked: Bool
+    private let templateID: String
+    private let sourceInstallationID: String?
+
+    init(card: PersonCard) {
+        id = card.id
+        name = card.name
+        role = card.role
+        company = card.company
+        phone = card.phone
+        email = card.email
+        tagline = card.tagline
+        hasAudioGreeting = card.hasAudioGreeting
+        meetingPlace = card.meetingPlace
+        isBlocked = card.isBlocked
+        templateID = card.templateID
+        sourceInstallationID = card.sourceInstallationID
+    }
+
+    func matches(_ card: PersonCard?) -> Bool {
+        guard let card else { return false }
+        return id == card.id
+            && name == card.name
+            && role == card.role
+            && company == card.company
+            && phone == card.phone
+            && email == card.email
+            && tagline == card.tagline
+            && hasAudioGreeting == card.hasAudioGreeting
+            && meetingPlace == card.meetingPlace
+            && isBlocked == card.isBlocked
+            && templateID == card.templateID
+            && sourceInstallationID == card.sourceInstallationID
+    }
+}
+
+struct ProfileDeletionAttemptOwnership {
+    struct Attempt: Equatable, Sendable {
+        fileprivate let id: UUID
+    }
+
+    private var current: Attempt?
+
+    mutating func begin() -> Attempt {
+        let attempt = Attempt(id: UUID())
+        current = attempt
+        return attempt
+    }
+
+    func acceptsOutcome(for attempt: Attempt, profileIsActive: Bool) -> Bool {
+        !profileIsActive && current == attempt
+    }
+
+    @discardableResult
+    mutating func finish(_ attempt: Attempt) -> Bool {
+        guard current == attempt else { return false }
+        current = nil
+        return true
+    }
+
+    mutating func invalidateForProfileRecreation() {
+        current = nil
+    }
+}
+
+struct ContactReconciliationProfileLifecycle: Equatable {
+    private(set) var isActive = true
+
+    mutating func beginDeletion() {
+        isActive = false
+    }
+
+    mutating func reactivateForUserCreation() {
+        isActive = true
+    }
+}
+
+final class ContactReconciliationSessionFence: @unchecked Sendable {
+    struct Session: Equatable, Sendable {
+        fileprivate let id: UUID
+        fileprivate let completion: CommitCompletion
+
+        static func == (lhs: Session, rhs: Session) -> Bool {
+            lhs.id == rhs.id
+        }
+    }
+
+    struct Invalidation: Sendable {
+        fileprivate let completions: [CommitCompletion]
+
+        func waitForInFlightCommits() async {
+            for completion in completions {
+                await completion.wait()
+            }
         }
     }
 
@@ -87,57 +321,67 @@ final class ContactReconciliationSessionFence: @unchecked Sendable {
         case invalidated
     }
 
-    private let condition = NSCondition()
-    private var currentSessionID: UUID?
-    private var inFlightCommits = 0
+    fileprivate final class CommitCompletion: @unchecked Sendable {
+        private let group = DispatchGroup()
+
+        func enter() {
+            group.enter()
+        }
+
+        func leave() {
+            group.leave()
+        }
+
+        func wait() async {
+            await withCheckedContinuation { continuation in
+                group.notify(queue: .global(qos: .userInitiated)) {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
+    private let lock = NSLock()
+    private var currentSession: Session?
+    private var sessionCompletions: [UUID: CommitCompletion] = [:]
 
     func begin() -> Session {
-        condition.lock()
-        defer { condition.unlock() }
-        let session = Session(id: UUID())
-        currentSessionID = session.id
+        lock.lock()
+        defer { lock.unlock() }
+        let session = Session(id: UUID(), completion: CommitCompletion())
+        currentSession = session
+        sessionCompletions[session.id] = session.completion
         return session
     }
 
     func isCurrent(_ session: Session) -> Bool {
-        condition.lock()
-        defer { condition.unlock() }
-        return currentSessionID == session.id
+        lock.lock()
+        defer { lock.unlock() }
+        return currentSession?.id == session.id
     }
 
-    func invalidate() -> Invalidation {
-        condition.lock()
-        currentSessionID = nil
-        condition.unlock()
-        return Invalidation(fence: self)
+    func beginInvalidation() -> Invalidation {
+        lock.lock()
+        let completions = Array(sessionCompletions.values)
+        currentSession = nil
+        sessionCompletions.removeAll()
+        lock.unlock()
+        return Invalidation(completions: completions)
     }
 
     func performCommit<T>(
         for session: Session,
         _ operation: () throws -> T
     ) throws -> T {
-        condition.lock()
-        guard currentSessionID == session.id else {
-            condition.unlock()
+        lock.lock()
+        guard currentSession?.id == session.id else {
+            lock.unlock()
             throw FenceError.invalidated
         }
-        inFlightCommits += 1
-        condition.unlock()
-        defer { finishCommit() }
+        session.completion.enter()
+        lock.unlock()
+        defer { session.completion.leave() }
         return try operation()
-    }
-
-    private func finishCommit() {
-        condition.lock()
-        inFlightCommits -= 1
-        if inFlightCommits == 0 { condition.broadcast() }
-        condition.unlock()
-    }
-
-    private func waitForInFlightCommits() {
-        condition.lock()
-        while inFlightCommits > 0 { condition.wait() }
-        condition.unlock()
     }
 }
 

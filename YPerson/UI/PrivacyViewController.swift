@@ -12,6 +12,7 @@ final class PrivacyViewController: YPBaseViewController {
     private let analyticsSwitch = UISwitch()
     private var lifecycleGeneration = UUID()
     private var deletionTask: Task<Void, Never>?
+    private var deletionAttemptOwnership = ProfileDeletionAttemptOwnership()
 
     init(permissions: PermissionCenter, audio: AudioGreetingController, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, syncCoordinator: SyncCoordinator, configuration: AppConfiguration) {
         self.permissions = permissions; self.audio = audio; self.analytics = analytics; self.snapshotStore = snapshotStore; self.syncCoordinator = syncCoordinator; self.configuration = configuration
@@ -80,16 +81,23 @@ final class PrivacyViewController: YPBaseViewController {
         guard lifecycleGeneration == generation,
               let profileContext = syncCoordinator.captureProfileOperationContext() else { return }
         deletionTask?.cancel()
+        let deletionAttempt = deletionAttemptOwnership.begin()
         deletionTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.deletionAttemptOwnership.finish(deletionAttempt) {
+                    self.deletionTask = nil
+                }
+            }
             guard !Task.isCancelled,
-                  let self,
                   self.lifecycleGeneration == generation,
                   self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
-            defer {
-                if self.lifecycleGeneration == generation { self.deletionTask = nil }
-            }
             let deleted = await syncCoordinator.deleteProfile(context: profileContext)
-            guard self.lifecycleGeneration == generation, !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                  self.deletionAttemptOwnership.acceptsOutcome(
+                    for: deletionAttempt,
+                    profileIsActive: self.syncCoordinator.isProfileActive
+                  ) else { return }
             if deleted {
                 showMessage("Профиль удалён", "Локальные данные очищены, облачная карточка и аудиофайлы отозваны. Настроенные резервные копии удаляются в течение 30 дней.")
             } else {
@@ -101,6 +109,13 @@ final class PrivacyViewController: YPBaseViewController {
     func applyProfileDeletion() {
         lifecycleGeneration = UUID()
         analyticsSwitch.setOn(false, animated: false)
+    }
+
+    func applyProfileReactivation() {
+        lifecycleGeneration = UUID()
+        deletionAttemptOwnership.invalidateForProfileRecreation()
+        deletionTask?.cancel()
+        deletionTask = nil
     }
 
     deinit {

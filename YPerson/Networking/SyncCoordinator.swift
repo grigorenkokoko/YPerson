@@ -33,12 +33,16 @@ final class SyncCoordinator {
     private var profileLifecycle: ProfileLifecycle
     private var deletionRecord: ProfileDeletionRecord?
     private var deletionRequestInFlight = false
+    private let publicationGate = AsyncFIFOOperationGate()
+    private let pushTokenGate = AsyncFIFOOperationGate()
 
     var installationID: String? { apiClient?.installationID }
     var isProfileActive: Bool { profileLifecycle.state == .active }
+    var needsDeletionRecovery: Bool { profileLifecycle.state == .deleting }
     var onPeopleChanged: (() -> Void)?
     var onOwnCardChanged: ((PersonCard) -> Void)?
-    var onProfileDeleted: (() -> Void)?
+    var onProfileDeletionPreparation: (() async -> Void)?
+    var onProfileReactivated: (() -> Void)?
     var onAudioInvalidated: (() -> Void)?
 
     init(
@@ -132,9 +136,32 @@ final class SyncCoordinator {
         context: ProfileOperationContext
     ) async -> SyncResponse? {
         guard isCurrentProfileOperationContext(context) else { return nil }
+        let publicationCard = snapshotStore?.readOwnCard() ?? card
+        let publicationOwnership = PublicationCardOwnership(card: publicationCard)
+        var cloudCard = publicationCard.exchangeCopy
+        let operationID = UUID().uuidString.lowercased()
+        var request = SyncRequest(
+            operation: .publishCard,
+            operationID: operationID,
+            card: cloudCard
+        )
+        snapshotStore?.enqueue(PendingSyncOperation(
+            request: request,
+            expiresAt: nil,
+            localCardID: nil
+        ))
         do {
+            let lease = try await publicationGate.acquire()
+            defer { publicationGate.release(lease) }
+            try requireCurrentProfileOperation(context)
+            guard isCurrentPublicationIntent(
+                operationID: operationID,
+                ownership: publicationOwnership
+            ) else {
+                preserveLatestPublicationIntent(replacing: operationID)
+                return nil
+            }
             let client = try explicitProfileClient()
-            var cloudCard = card.exchangeCopy
             var audioAssetID: String?
             if let greeting {
                 if !bootstrapped {
@@ -157,21 +184,46 @@ final class SyncCoordinator {
                 audioAssetID = upload.assetID
                 cloudCard.hasAudioGreeting = true
             }
-            let request = SyncRequest(
+            request = SyncRequest(
                 operation: .publishCard,
+                operationID: operationID,
                 card: cloudCard,
                 audioAssetID: audioAssetID
             )
-            snapshotStore?.enqueue(PendingSyncOperation(request: request, expiresAt: nil, localCardID: nil))
+            guard isCurrentPublicationIntent(
+                operationID: operationID,
+                ownership: publicationOwnership
+            ) else {
+                preserveLatestPublicationIntent(replacing: operationID)
+                return nil
+            }
+            snapshotStore?.enqueue(PendingSyncOperation(
+                request: request,
+                expiresAt: nil,
+                localCardID: nil
+            ))
             let response = try await client.sync(request)
             try requireCurrentProfileOperation(context)
-            snapshotStore?.removePendingOperation(id: request.operationID)
+            guard isCurrentPublicationIntent(
+                operationID: request.operationID,
+                ownership: publicationOwnership
+            ) else {
+                preserveLatestPublicationIntent(replacing: request.operationID)
+                return nil
+            }
             bootstrapped = true
             if let version = response.ownCardVersion {
-                var published = card
+                var published = publicationCard
                 published.version = version
-                try snapshotStore?.writeOwnCard(published)
+                let applied = try snapshotStore?.writePublishedOwnCard(
+                    published,
+                    ifCurrent: publicationOwnership
+                ) ?? true
+                guard applied else { return nil }
+                snapshotStore?.removePendingOperation(id: request.operationID)
                 onOwnCardChanged?(published)
+            } else {
+                snapshotStore?.removePendingOperation(id: request.operationID)
             }
             await retryPushToken(context: context)
             try requireCurrentProfileOperation(context)
@@ -395,10 +447,11 @@ final class SyncCoordinator {
         deletionRequestInFlight = true
         defer { deletionRequestInFlight = false }
         profileOperationEpoch.invalidate()
+        let deletionEpoch = profileOperationEpoch.capture()
         snapshotStore?.clearUserData()
         snapshotStore?.profileDeletionPending = true
-        onProfileDeleted?()
-        let deletionEpoch = profileOperationEpoch.capture()
+        await prepareForProfileDeletion()
+        guard isCurrentDeletion(record, epoch: deletionEpoch) else { return false }
         await mediaTransfer.cancelAllProfileTransfersAndWait()
         guard isCurrentDeletion(record, epoch: deletionEpoch) else { return false }
         guard let apiClient else { return finishLocalOnlyDeletion(record) }
@@ -440,6 +493,7 @@ final class SyncCoordinator {
             snapshotStore.profileTerminallyDeleted = true
             throw error
         }
+        onProfileReactivated?()
     }
 
     private func explicitProfileClient() throws -> APIClient {
@@ -489,12 +543,16 @@ final class SyncCoordinator {
                 try? markExpired(operation)
                 continue
             }
+            if operation.request.operation == .publishCard {
+                await retryPendingPublish(operation, context: context, apiClient: apiClient)
+                guard isCurrentProfileOperationContext(context) else { return }
+                continue
+            }
             do {
                 let request = retrySafeRequest(operation.request)
                 let response = try await apiClient.sync(request)
                 guard isCurrentProfileOperationContext(context) else { return }
                 try apply(response)
-                if operation.request.operation == .publishCard { bootstrapped = true }
                 snapshotStore?.removePendingOperation(id: operation.id)
             } catch {
                 continue
@@ -502,30 +560,99 @@ final class SyncCoordinator {
         }
     }
 
+    private func retryPendingPublish(
+        _ operation: PendingSyncOperation,
+        context: ProfileOperationContext,
+        apiClient: APIClient
+    ) async {
+        guard let lease = try? await publicationGate.acquire() else { return }
+        defer { publicationGate.release(lease) }
+        guard isCurrentProfileOperationContext(context),
+              snapshotStore?.revalidatePendingPublication(operation) == true else { return }
+        do {
+            let request = retrySafeRequest(operation.request)
+            let response = try await apiClient.sync(request)
+            guard isCurrentProfileOperationContext(context),
+                  snapshotStore?.revalidatePendingPublication(operation) == true else { return }
+            try apply(response)
+            bootstrapped = true
+            snapshotStore?.removePendingOperation(id: operation.id)
+        } catch {
+            // The latest compacted publication remains durable for a later retry.
+        }
+    }
+
+    private func isCurrentPublicationIntent(
+        operationID: String,
+        ownership: PublicationCardOwnership
+    ) -> Bool {
+        guard let snapshotStore else { return true }
+        return snapshotStore.containsPendingOperation(id: operationID)
+            && ownership.matches(snapshotStore.readOwnCard())
+    }
+
+    private func preserveLatestPublicationIntent(replacing operationID: String) {
+        guard let snapshotStore,
+              snapshotStore.containsPendingOperation(id: operationID),
+              let latestCard = snapshotStore.readOwnCard() else { return }
+        let request = SyncRequest(
+            operation: .publishCard,
+            card: latestCard.exchangeCopy
+        )
+        snapshotStore.enqueue(PendingSyncOperation(
+            request: request,
+            expiresAt: nil,
+            localCardID: nil
+        ))
+    }
+
     private func retryPushToken(context: ProfileOperationContext) async {
         guard bootstrapped,
               isCurrentProfileOperationContext(context),
-              let apiClient else { return }
-        let removal = snapshotStore?.pendingAPNSRemoval == true
-        guard removal || snapshotStore?.pendingAPNSToken != nil else { return }
-        let operationID = snapshotStore?.pendingOperationID(
-            for: "apns-token",
-            proposed: UUID().uuidString.lowercased()
-        ) ?? UUID().uuidString.lowercased()
+              let apiClient,
+              let ownership = capturePushTokenOwnership() else { return }
+        guard let lease = try? await pushTokenGate.acquire() else { return }
+        defer { pushTokenGate.release(lease) }
+        guard isCurrentProfileOperationContext(context),
+              isCurrentPushTokenOwnership(ownership) else { return }
         let request = SyncRequest(
-            apnsToken: removal ? nil : snapshotStore?.pendingAPNSToken,
-            operation: removal ? .removePushToken : .updatePushToken,
-            operationID: operationID
+            apnsToken: ownership.isRemoval ? nil : ownership.token,
+            operation: ownership.isRemoval ? .removePushToken : .updatePushToken,
+            operationID: ownership.operationID
         )
         do {
             _ = try await apiClient.sync(request)
-            guard isCurrentProfileOperationContext(context) else { return }
+            guard isCurrentProfileOperationContext(context),
+                  isCurrentPushTokenOwnership(ownership) else { return }
             snapshotStore?.pendingAPNSToken = nil
             snapshotStore?.pendingAPNSRemoval = false
             snapshotStore?.clearPendingOperationID(for: "apns-token")
         } catch {
             // The latest token remains persisted for the next foreground retry.
         }
+    }
+
+    private func capturePushTokenOwnership() -> PushTokenSyncOwnership? {
+        let isRemoval = snapshotStore?.pendingAPNSRemoval == true
+        let token = snapshotStore?.pendingAPNSToken
+        guard isRemoval || token != nil else { return nil }
+        let operationID = snapshotStore?.pendingOperationID(
+            for: "apns-token",
+            proposed: UUID().uuidString.lowercased()
+        ) ?? UUID().uuidString.lowercased()
+        return PushTokenSyncOwnership(
+            token: token,
+            isRemoval: isRemoval,
+            operationID: operationID
+        )
+    }
+
+    private func isCurrentPushTokenOwnership(_ ownership: PushTokenSyncOwnership) -> Bool {
+        ownership.matches(
+            token: snapshotStore?.pendingAPNSToken,
+            isRemoval: snapshotStore?.pendingAPNSRemoval == true,
+            operationID: snapshotStore?.existingPendingOperationID(for: "apns-token")
+        )
     }
 
     private func markExpired(_ operation: PendingSyncOperation) throws {
@@ -552,14 +679,15 @@ final class SyncCoordinator {
 
     private func retrySafeRequest(_ request: SyncRequest) -> SyncRequest {
         guard request.operation == .publishCard,
-              request.audioAssetID == nil,
-              var card = request.card,
-              card.hasAudioGreeting else { return request }
-        card.hasAudioGreeting = false
+              var card = request.card else { return request }
+        if request.audioAssetID == nil, card.hasAudioGreeting {
+            card.hasAudioGreeting = false
+        }
         return SyncRequest(
             operation: .publishCard,
             operationID: request.operationID,
-            card: card
+            card: card.exchangeCopy,
+            audioAssetID: request.audioAssetID
         )
     }
 
@@ -604,7 +732,8 @@ final class SyncCoordinator {
         let deletionEpoch = profileOperationEpoch.capture()
         snapshotStore?.clearUserData()
         snapshotStore?.profileDeletionPending = true
-        onProfileDeleted?()
+        await prepareForProfileDeletion()
+        guard isCurrentDeletion(record, epoch: deletionEpoch) else { return }
         await mediaTransfer.cancelAllProfileTransfersAndWait()
         guard isCurrentDeletion(record, epoch: deletionEpoch) else { return }
         if record.serverAcknowledged {
@@ -625,6 +754,10 @@ final class SyncCoordinator {
         } catch {
             // The dedicated record remains durable for the next foreground retry.
         }
+    }
+
+    private func prepareForProfileDeletion() async {
+        await onProfileDeletionPreparation?()
     }
 
     private func finishDeletion(

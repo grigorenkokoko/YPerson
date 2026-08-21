@@ -1,6 +1,6 @@
 import Foundation
 
-private let harnessVersion = 5
+private let harnessVersion = 6
 
 private func require(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() { fatalError(message) }
@@ -12,6 +12,51 @@ private func requireThrows(_ message: String, _ body: () throws -> Void) {
         fatalError(message)
     } catch {
         // Expected.
+    }
+}
+
+final class LockedStringEvents: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String] = []
+
+    func append(_ value: String) {
+        lock.lock()
+        storage.append(value)
+        lock.unlock()
+    }
+
+    func values() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+}
+
+final class AsyncTestLatch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isReleased = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if isReleased {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                waiters.append(continuation)
+                lock.unlock()
+            }
+        }
+    }
+
+    func release() {
+        lock.lock()
+        isReleased = true
+        let continuations = waiters
+        waiters.removeAll()
+        lock.unlock()
+        continuations.forEach { $0.resume() }
     }
 }
 
@@ -164,55 +209,185 @@ require(
     "a fresh post-recreation context was not usable"
 )
 
-let contactFence = ContactReconciliationSessionFence()
-let staleContactSession = contactFence.begin()
-require(contactFence.isCurrent(staleContactSession), "new contact session was not current")
-let firstInvalidation = contactFence.invalidate()
-var staleCommitRan = false
-requireThrows("an invalidated contact session began a Contacts write") {
-    try contactFence.performCommit(for: staleContactSession) {
-        staleCommitRan = true
-    }
-}
-require(!staleCommitRan, "an invalidated contact session executed its commit body")
-firstInvalidation.waitForInFlightCommits()
+var contactProfileLifecycle = ContactReconciliationProfileLifecycle()
+require(contactProfileLifecycle.isActive, "Contacts did not begin in the active profile lifecycle")
+contactProfileLifecycle.beginDeletion()
+require(!contactProfileLifecycle.isActive, "Contacts stayed active during profile deletion")
+contactProfileLifecycle.reactivateForUserCreation()
+require(contactProfileLifecycle.isActive, "Contacts did not reactivate after explicit card creation")
 
-let activeContactSession = contactFence.begin()
-let commitStarted = DispatchSemaphore(value: 0)
-let releaseCommit = DispatchSemaphore(value: 0)
-let commitStateLock = NSLock()
-var commitCompleted = false
-DispatchQueue.global(qos: .userInitiated).async {
-    try? contactFence.performCommit(for: activeContactSession) {
-        commitStarted.signal()
-        releaseCommit.wait()
-        commitStateLock.lock()
-        commitCompleted = true
-        commitStateLock.unlock()
+let firstContactFence = ContactReconciliationSessionFence()
+let secondContactFence = ContactReconciliationSessionFence()
+let firstContactSession = firstContactFence.begin()
+let secondContactSession = secondContactFence.begin()
+let firstCommitStarted = DispatchSemaphore(value: 0)
+let secondCommitStarted = DispatchSemaphore(value: 0)
+let releaseFirstCommit = DispatchSemaphore(value: 0)
+let releaseSecondCommit = DispatchSemaphore(value: 0)
+let commitsCompleted = DispatchSemaphore(value: 0)
+for (fence, session, started, release) in [
+    (firstContactFence, firstContactSession, firstCommitStarted, releaseFirstCommit),
+    (secondContactFence, secondContactSession, secondCommitStarted, releaseSecondCommit)
+] {
+    DispatchQueue.global(qos: .userInitiated).async {
+        try? fence.performCommit(for: session) {
+            started.signal()
+            release.wait()
+        }
+        commitsCompleted.signal()
     }
 }
+require(firstCommitStarted.wait(timeout: .now() + 1) == .success, "first contact commit did not start")
+require(secondCommitStarted.wait(timeout: .now() + 1) == .success, "second contact commit did not start")
+
+let replacementFirstContactSession = firstContactFence.begin()
 require(
-    commitStarted.wait(timeout: .now() + 1) == .success,
-    "contact commit did not start"
+    firstContactFence.isCurrent(replacementFirstContactSession),
+    "replacement session on the first presenter did not become current"
 )
-let inFlightInvalidation = contactFence.invalidate()
-let replacementContactSession = contactFence.begin()
-require(
-    !contactFence.isCurrent(activeContactSession),
-    "starting a new Contacts run made the old session current"
-)
-require(
-    contactFence.isCurrent(replacementContactSession),
-    "replacement Contacts session was not current"
-)
-DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
-    releaseCommit.signal()
+let firstInvalidation = firstContactFence.beginInvalidation()
+let secondInvalidation = secondContactFence.beginInvalidation()
+require(!firstContactFence.isCurrent(firstContactSession), "first contact session remained current")
+require(!secondContactFence.isCurrent(secondContactSession), "second contact session remained current")
+requireThrows("first invalidated session began another Contacts write") {
+    try firstContactFence.performCommit(for: firstContactSession) {}
 }
-inFlightInvalidation.waitForInFlightCommits()
-commitStateLock.lock()
-let waitedForCommit = commitCompleted
-commitStateLock.unlock()
-require(waitedForCommit, "contact invalidation returned before an in-flight write completed")
+requireThrows("second invalidated session began another Contacts write") {
+    try secondContactFence.performCommit(for: secondContactSession) {}
+}
+
+let firstInvalidationFinished = DispatchSemaphore(value: 0)
+let secondInvalidationFinished = DispatchSemaphore(value: 0)
+Task.detached {
+    await firstInvalidation.waitForInFlightCommits()
+    firstInvalidationFinished.signal()
+}
+Task.detached {
+    await secondInvalidation.waitForInFlightCommits()
+    secondInvalidationFinished.signal()
+}
+let independentProgress = DispatchSemaphore(value: 0)
+Task.detached { independentProgress.signal() }
+require(
+    independentProgress.wait(timeout: .now() + 1) == .success,
+    "async Contacts invalidation blocked unrelated progress"
+)
+require(
+    firstInvalidationFinished.wait(timeout: .now() + 0.05) == .timedOut,
+    "first invalidation completed before its crossed commit"
+)
+require(
+    secondInvalidationFinished.wait(timeout: .now() + 0.05) == .timedOut,
+    "second invalidation completed before its crossed commit"
+)
+releaseFirstCommit.signal()
+releaseSecondCommit.signal()
+require(commitsCompleted.wait(timeout: .now() + 1) == .success, "first contact commit did not complete")
+require(commitsCompleted.wait(timeout: .now() + 1) == .success, "second contact commit did not complete")
+require(firstInvalidationFinished.wait(timeout: .now() + 1) == .success, "first invalidation did not finish")
+require(secondInvalidationFinished.wait(timeout: .now() + 1) == .success, "second invalidation did not finish")
+
+var bootstrapOwnership = ProfileBootstrapTaskOwnership()
+let firstActiveBootstrap = bootstrapOwnership.beginActive().ticket
+let replacementActiveStart = bootstrapOwnership.beginActive()
+require(
+    replacementActiveStart.replaced == firstActiveBootstrap,
+    "a newer active bootstrap did not replace the previous active task"
+)
+bootstrapOwnership.finish(firstActiveBootstrap)
+require(
+    bootstrapOwnership.isCurrent(replacementActiveStart.ticket),
+    "late cleanup from an old active bootstrap cleared its replacement"
+)
+guard let deletionRecovery = bootstrapOwnership.beginDeletionRecovery() else {
+    fatalError("deletion recovery did not acquire ownership")
+}
+require(
+    bootstrapOwnership.beginDeletionRecovery() == nil,
+    "a foreground refresh duplicated deletion recovery"
+)
+require(
+    bootstrapOwnership.invalidateActive() == replacementActiveStart.ticket,
+    "profile deletion did not invalidate the active bootstrap"
+)
+require(
+    bootstrapOwnership.isCurrent(deletionRecovery),
+    "profile deletion callback invalidated its own recovery task"
+)
+bootstrapOwnership.finish(deletionRecovery)
+require(
+    bootstrapOwnership.beginDeletionRecovery() != nil,
+    "completed recovery ownership was never released"
+)
+
+let operationGate = AsyncFIFOOperationGate()
+let firstGateEntered = DispatchSemaphore(value: 0)
+let releaseFirstGate = AsyncTestLatch()
+let secondGateAttempted = DispatchSemaphore(value: 0)
+let secondGateEntered = DispatchSemaphore(value: 0)
+let gateOperationsFinished = DispatchSemaphore(value: 0)
+let gateEvents = LockedStringEvents()
+Task.detached {
+    guard let lease = try? await operationGate.acquire() else { return }
+    gateEvents.append("A")
+    firstGateEntered.signal()
+    await releaseFirstGate.wait()
+    operationGate.release(lease)
+    gateOperationsFinished.signal()
+}
+require(firstGateEntered.wait(timeout: .now() + 1) == .success, "first FIFO operation did not start")
+Task.detached {
+    secondGateAttempted.signal()
+    guard let lease = try? await operationGate.acquire() else { return }
+    gateEvents.append("B")
+    secondGateEntered.signal()
+    operationGate.release(lease)
+    gateOperationsFinished.signal()
+}
+require(secondGateAttempted.wait(timeout: .now() + 1) == .success, "second FIFO operation was not queued")
+require(
+    secondGateEntered.wait(timeout: .now() + 0.05) == .timedOut,
+    "newer FIFO operation overtook an in-flight older operation"
+)
+releaseFirstGate.release()
+require(secondGateEntered.wait(timeout: .now() + 1) == .success, "second FIFO operation never started")
+require(gateOperationsFinished.wait(timeout: .now() + 1) == .success, "first FIFO operation did not finish")
+require(gateOperationsFinished.wait(timeout: .now() + 1) == .success, "second FIFO operation did not finish")
+let orderedGateEvents = gateEvents.values()
+require(orderedGateEvents == ["A", "B"], "FIFO operation order was not stable")
+
+let pushA = PushTokenSyncOwnership(token: "token-a", isRemoval: false, operationID: "push-a")
+let pushB = PushTokenSyncOwnership(token: "token-b", isRemoval: false, operationID: "push-b")
+let pushRemoval = PushTokenSyncOwnership(token: nil, isRemoval: true, operationID: "push-remove")
+require(pushA.matches(token: "token-a", isRemoval: false, operationID: "push-a"), "push A lost ownership")
+require(!pushA.matches(token: "token-b", isRemoval: false, operationID: "push-b"), "late push A matched push B")
+require(pushB.matches(token: "token-b", isRemoval: false, operationID: "push-b"), "push B lost ownership")
+require(!pushB.matches(token: nil, isRemoval: true, operationID: "push-remove"), "push B matched removal")
+require(pushRemoval.matches(token: nil, isRemoval: true, operationID: "push-remove"), "removal lost ownership")
+
+var deletionAttempts = ProfileDeletionAttemptOwnership()
+let firstDeletionAttempt = deletionAttempts.begin()
+require(
+    deletionAttempts.acceptsOutcome(for: firstDeletionAttempt, profileIsActive: false),
+    "expected profile-deletion apply suppressed its own outcome"
+)
+let laterDeletionAttempt = deletionAttempts.begin()
+require(
+    !deletionAttempts.acceptsOutcome(for: firstDeletionAttempt, profileIsActive: false),
+    "a later deletion attempt kept an older outcome valid"
+)
+require(
+    deletionAttempts.acceptsOutcome(for: laterDeletionAttempt, profileIsActive: false),
+    "current deletion outcome was rejected"
+)
+require(deletionAttempts.finish(laterDeletionAttempt), "current deletion attempt did not clear")
+require(!deletionAttempts.finish(laterDeletionAttempt), "deletion outcome could be emitted twice")
+let recreationInvalidatedAttempt = deletionAttempts.begin()
+deletionAttempts.invalidateForProfileRecreation()
+require(
+    !deletionAttempts.acceptsOutcome(for: recreationInvalidatedAttempt, profileIsActive: true),
+    "profile recreation kept a stale deletion outcome valid"
+)
 
 var scannerGate = QRScannerLaunchGate()
 require(scannerGate.begin(alreadyPresenting: false), "widget scanner launch did not begin")
@@ -329,6 +504,37 @@ require(
     store.profileDeletionRecord?.serverAcknowledged == true,
     "server acknowledgement was not durably recorded"
 )
+try store.writeOwnCard(card)
+let crashWindowPublish = PendingSyncOperation(
+    request: SyncRequest(operation: .publishCard, card: card.exchangeCopy),
+    expiresAt: nil,
+    localCardID: nil
+)
+store.enqueue(crashWindowPublish)
+let crashRecoveredCard = PersonCard(
+    id: card.id,
+    name: "Crash-recovered owner",
+    role: card.role,
+    company: card.company,
+    phone: card.phone,
+    email: card.email,
+    tagline: card.tagline,
+    hasAudioGreeting: false,
+    meetingPlace: card.meetingPlace,
+    isBlocked: false
+)
+try store.writeOwnCard(crashRecoveredCard)
+require(
+    !store.revalidatePendingPublication(crashWindowPublish),
+    "bootstrap retry accepted a durable publication for stale local content"
+)
+require(
+    store.pendingOperations.count == 1
+        && store.pendingOperations[0].id != crashWindowPublish.id
+        && store.pendingOperations[0].request.card == crashRecoveredCard.exchangeCopy,
+    "bootstrap retry did not atomically replace stale A with current public B"
+)
+store.pendingOperations = []
 let claim = PendingSyncOperation(
     request: SyncRequest(operation: .claimExchange, exchangeToken: "raw-claim-token"),
     expiresAt: expiry,
@@ -345,16 +551,83 @@ let publish = PendingSyncOperation(
 store.enqueue(publish)
 require(store.pendingOperations == [publish], "durable publish retry was not persisted")
 
+let firstPublicationOwnership = PublicationCardOwnership(card: card)
+var publishedFirstCard = card
+publishedFirstCard.version = 2
+publishedFirstCard.syncState = .synced
+require(
+    firstPublicationOwnership.matches(publishedFirstCard),
+    "server-managed publication metadata changed local-card ownership"
+)
+let newerLocalCard = PersonCard(
+    id: card.id,
+    name: "Newer Owner",
+    role: card.role,
+    company: card.company,
+    phone: card.phone,
+    email: card.email,
+    tagline: card.tagline,
+    hasAudioGreeting: false,
+    meetingPlace: card.meetingPlace,
+    isBlocked: false
+)
+try store.writeOwnCard(newerLocalCard)
+let latePublicationApplied = try store.writePublishedOwnCard(
+    publishedFirstCard,
+    ifCurrent: firstPublicationOwnership
+)
+require(
+    !latePublicationApplied,
+    "a late older publication response overwrote a newer local card"
+)
+require(
+    store.readOwnCard() == newerLocalCard,
+    "a rejected older publication response changed newer local content"
+)
+
+let newerPublish = PendingSyncOperation(
+    request: SyncRequest(
+        operation: .publishCard,
+        card: newerLocalCard.exchangeCopy
+    ),
+    expiresAt: nil,
+    localCardID: nil
+)
+let moderation = PendingSyncOperation(
+    request: SyncRequest(operation: .report, moderationCategory: "spam"),
+    expiresAt: nil,
+    localCardID: nil
+)
+store.enqueue(moderation)
+store.enqueue(newerPublish)
+require(
+    store.pendingOperations.filter { $0.request.operation == .publishCard } == [newerPublish],
+    "newer durable publish did not compact its predecessor"
+)
+require(
+    store.containsPendingOperation(id: newerPublish.id),
+    "latest durable publish ownership was not queryable"
+)
+require(
+    !store.containsPendingOperation(id: publish.id),
+    "compacted publish retained pending ownership"
+)
+store.removePendingOperation(id: publish.id)
+require(
+    store.containsPendingOperation(id: newerPublish.id),
+    "late cleanup for an older publication removed the newer durable intent"
+)
+
 let cancel = PendingSyncOperation(
     request: SyncRequest(operation: .cancelExchange, exchangeCode: "YP-0123-4567-89AB"),
     expiresAt: nil,
     localCardID: nil
 )
 defaults.set(
-    try JSONEncoder().encode([publish, claim, cancel]),
+    try JSONEncoder().encode([newerPublish, claim, cancel]),
     forKey: "yperson.v2.pending_operations"
 )
 store.purgeNonDurablePendingOperations()
-require(store.pendingOperations == [publish], "legacy raw claim/cancel credentials were not purged")
+require(store.pendingOperations == [newerPublish], "legacy raw claim/cancel credentials were not purged")
 
 print("honest-exchange-contract-v\(harnessVersion)-pass")

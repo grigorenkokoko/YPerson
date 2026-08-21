@@ -13,6 +13,7 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
     private var accessManagerCompleted = false
     private weak var systemContactController: CNContactViewController?
     private var systemContactSession: ContactReconciliationSessionFence.Session?
+    private var profileLifecycle = ContactReconciliationProfileLifecycle()
 
     init(host: YPBaseViewController, permissions: PermissionCenter, analytics: AppMetricaAnalyticsClient) {
         self.host = host
@@ -22,9 +23,10 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
     }
 
     func start(for card: PersonCard) {
-        invalidate()
+        guard profileLifecycle.isActive else { return }
         let session = sessionFence.begin()
         activeSession = session
+        dismissOwnedUI()
         guard isCurrent(session), let host else { return }
         host.explainPermission(
             title: "Синхронизация с Контактами",
@@ -35,16 +37,25 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
         }
     }
 
-    func invalidate() {
-        let invalidation = sessionFence.invalidate()
+    func beginProfileDeletion() -> ContactReconciliationSessionFence.Invalidation {
+        let invalidation = sessionFence.beginInvalidation()
+        profileLifecycle.beginDeletion()
         activeSession = nil
+        dismissOwnedUI()
+        return invalidation
+    }
+
+    func applyProfileReactivation() {
+        profileLifecycle.reactivateForUserCreation()
+    }
+
+    private func dismissOwnedUI() {
         accessManagerCompleted = true
         ownedAlert?.dismiss(animated: false)
         ownedAlert = nil
         accessManagerController?.dismiss(animated: false)
         accessManagerController = nil
         dismissSystemContactController()
-        invalidation.waitForInFlightCommits()
     }
 
     private func continueAfterPermission(
@@ -347,7 +358,7 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
     }
 
     deinit {
-        sessionFence.invalidate().waitForInFlightCommits()
+        _ = sessionFence.beginInvalidation()
     }
 }
 

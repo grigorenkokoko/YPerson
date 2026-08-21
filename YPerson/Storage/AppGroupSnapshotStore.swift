@@ -36,6 +36,16 @@ final class AppGroupSnapshotStore {
         defaults.set(try encoder.encode(card), forKey: Key.ownCard)
     }
 
+    @discardableResult
+    func writePublishedOwnCard(
+        _ card: PersonCard,
+        ifCurrent ownership: PublicationCardOwnership
+    ) throws -> Bool {
+        guard ownership.matches(readOwnCard()) else { return false }
+        try writeOwnCard(card)
+        return true
+    }
+
     func readPeople() -> [PersonCard] {
         guard let data = defaults.data(forKey: Key.people),
               let people = try? decoder.decode([PersonCard].self, from: data) else {
@@ -102,6 +112,11 @@ final class AppGroupSnapshotStore {
             operation.request.operation
         ) else { return }
         var operations = pendingOperations
+        if operation.request.operation == .publishCard {
+            operations.removeAll {
+                $0.request.operation == .publishCard && $0.id != operation.id
+            }
+        }
         if let index = operations.firstIndex(where: { $0.id == operation.id }) {
             operations[index] = operation
         } else {
@@ -112,6 +127,31 @@ final class AppGroupSnapshotStore {
 
     func removePendingOperation(id: String) {
         pendingOperations = pendingOperations.filter { $0.id != id }
+    }
+
+    func containsPendingOperation(id: String) -> Bool {
+        pendingOperations.contains { $0.id == id }
+    }
+
+    @discardableResult
+    func revalidatePendingPublication(_ operation: PendingSyncOperation) -> Bool {
+        guard operation.request.operation == .publishCard,
+              containsPendingOperation(id: operation.id),
+              let queuedCard = operation.request.card,
+              let currentCard = readOwnCard() else { return false }
+        let ownership = PublicationCardOwnership(card: queuedCard.exchangeCopy)
+        guard ownership.matches(currentCard.exchangeCopy) else {
+            enqueue(PendingSyncOperation(
+                request: SyncRequest(
+                    operation: .publishCard,
+                    card: currentCard.exchangeCopy
+                ),
+                expiresAt: nil,
+                localCardID: nil
+            ))
+            return false
+        }
+        return true
     }
 
     func purgeNonDurablePendingOperations() {
@@ -157,6 +197,11 @@ final class AppGroupSnapshotStore {
         var operations = defaults.dictionary(forKey: Key.pendingOperationIDs) as? [String: String] ?? [:]
         operations.removeValue(forKey: key)
         defaults.set(operations, forKey: Key.pendingOperationIDs)
+    }
+
+    func existingPendingOperationID(for key: String) -> String? {
+        let operations = defaults.dictionary(forKey: Key.pendingOperationIDs) as? [String: String]
+        return operations?[key]
     }
 
     private let defaults: any SnapshotKeyValueStore

@@ -224,8 +224,8 @@ final class PersonViewController: YPBaseViewController {
         try? snapshotStore?.upsertPerson(card)
     }
 
-    func applyProfileDeletion() {
-        contactReconciliation.invalidate()
+    func beginProfileDeletion() -> ContactReconciliationSessionFence.Invalidation {
+        let invalidation = contactReconciliation.beginProfileDeletion()
         profileDeleted = true
         lifecycleGeneration = UUID()
         audioTask?.cancel()
@@ -235,6 +235,7 @@ final class PersonViewController: YPBaseViewController {
         audio.stopPlayback()
         audioButton?.isEnabled = false
         navigationController?.popToRootViewController(animated: false)
+        return invalidation
     }
 
     private func isCurrentProfileLifecycle(_ generation: UUID) -> Bool {

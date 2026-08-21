@@ -149,13 +149,19 @@ final class PeopleViewController: YPBaseViewController, CNContactPickerDelegate 
         present(alert, animated: true)
     }
 
-    func applyProfileDeletion() {
-        contactReconciliation.invalidate()
+    func beginProfileDeletion() -> ContactReconciliationSessionFence.Invalidation {
+        let invalidation = contactReconciliation.beginProfileDeletion()
         lifecycleGeneration = UUID()
         contactPickerGeneration = nil
         people = []
         dismiss(animated: false)
         navigationController?.popToRootViewController(animated: false)
         if isViewLoaded { render() }
+        return invalidation
+    }
+
+    func applyProfileReactivation() {
+        lifecycleGeneration = UUID()
+        contactReconciliation.applyProfileReactivation()
     }
 }

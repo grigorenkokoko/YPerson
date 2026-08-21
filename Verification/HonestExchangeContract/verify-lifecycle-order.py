@@ -131,7 +131,8 @@ ordered(
     "persistDeletionRecord(record)",
     "profileOperationEpoch.invalidate()",
     "clearUserData()",
-    "onProfileDeleted?()",
+    "await prepareForProfileDeletion(",
+    "isCurrentDeletion(record, epoch:",
     "await mediaTransfer.cancelAllProfileTransfersAndWait()",
     "await apiClient.sync(request)",
     "markDeletionServerAcknowledged",
@@ -157,7 +158,16 @@ require(
 
 resume = function_body(sync, "func resumeDeletionIfNeeded()")
 ordered(resume, "guard let record = deletionRecord", "record.serverAcknowledged", "finishDeletion")
-ordered(resume, "operationID: record.operationID", "await apiClient.sync(request)", "markDeletionServerAcknowledged", "finishDeletion")
+ordered(
+    resume,
+    "await prepareForProfileDeletion(",
+    "isCurrentDeletion(record, epoch:",
+    "await mediaTransfer.cancelAllProfileTransfersAndWait()",
+    "operationID: record.operationID",
+    "await apiClient.sync(request)",
+    "markDeletionServerAcknowledged",
+    "finishDeletion",
+)
 
 bootstrap_active = bootstrap[bootstrap.find("guard let context"):]
 require(bootstrap_active, "bootstrap active-profile branch is missing")
@@ -294,6 +304,62 @@ ordered(
     "isCurrentProfileOperationContext(context)",
     "await retryPushToken(context: context)",
 )
+
+publish = function_body(sync, "func publish(")
+ordered(
+    publish,
+    "PublicationCardOwnership(card: publicationCard)",
+    "snapshotStore?.enqueue",
+    "publicationGate.acquire()",
+    "publicationGate.release(",
+    "await client.sync(request)",
+    "isCurrentPublicationIntent(",
+    "writePublishedOwnCard",
+    "removePendingOperation(id: request.operationID)",
+    "onOwnCardChanged",
+)
+require(
+    publish.find("writePublishedOwnCard") > publish.find("await client.sync(request)"),
+    "publication ownership is checked before, rather than after, the server response",
+)
+ordered(
+    publish,
+    "try await mediaTransfer.upload",
+    "isCurrentPublicationIntent(",
+    "await client.sync(request)",
+)
+require(
+    publish.count("isCurrentPublicationIntent(") >= 3,
+    "publication ownership is not rechecked at gate entry, immediately before send, and after response",
+)
+publication_intent = function_body(sync, "private func isCurrentPublicationIntent(")
+ordered(
+    publication_intent,
+    "containsPendingOperation(id: operationID)",
+    "ownership.matches(snapshotStore.readOwnCard())",
+)
+retry_publish = function_body(sync, "func retryPendingPublish(")
+ordered(
+    retry_publish,
+    "publicationGate.acquire()",
+    "revalidatePendingPublication(operation)",
+    "await apiClient.sync(request)",
+    "revalidatePendingPublication(operation)",
+    "removePendingOperation(id: operation.id)",
+)
+retry_pending = function_body(sync, "func retryPendingOperations(context:")
+ordered(retry_pending, "operation.request.operation == .publishCard", "retryPendingPublish(")
+
+retry_push = function_body(sync, "func retryPushToken(context:")
+ordered(
+    retry_push,
+    "capturePushTokenOwnership()",
+    "pushTokenGate.acquire()",
+    "isCurrentPushTokenOwnership(ownership)",
+    "await apiClient.sync(request)",
+    "isCurrentPushTokenOwnership(ownership)",
+    "clearPendingOperationID",
+)
 ordered(
     function_body(sync, "func updatePushToken("),
     "await retryPushToken(context: context)",
@@ -359,8 +425,14 @@ require_originating_task_context(
     "submitModeration(",
     "Person moderation",
 )
-person_deletion = function_body(person_source, "func applyProfileDeletion()")
-ordered(person_deletion, "contactReconciliation.invalidate()", "audioTask?.cancel()", "moderationTasks.values.forEach")
+person_deletion = function_body(person_source, "func beginProfileDeletion()")
+ordered(
+    person_deletion,
+    "contactReconciliation.beginProfileDeletion()",
+    "audioTask?.cancel()",
+    "moderationTasks.values.forEach",
+    "return invalidation",
+)
 
 privacy_source = source("YPerson/UI/PrivacyViewController.swift")
 require_originating_task_context(
@@ -372,19 +444,52 @@ require_originating_task_context(
 )
 privacy_deletion = function_body(privacy_source, "func applyProfileDeletion()")
 require("lifecycleGeneration = UUID()" in privacy_deletion, "Profile deletion does not invalidate its originating UI generation")
+require(
+    "deletionAttemptOwnership" not in privacy_deletion,
+    "expected profile-deletion apply invalidates its own outcome ownership",
+)
+privacy_perform = function_body(privacy_source, "func performDeletion(")
+ordered(
+    privacy_perform,
+    "deletionAttemptOwnership.begin()",
+    "deletionTask = Task",
+    "guard let self",
+    "defer {",
+    "guard !Task.isCancelled",
+    "await syncCoordinator.deleteProfile",
+    "deletionAttemptOwnership.acceptsOutcome",
+    "showMessage",
+)
+require(
+    "lifecycleGeneration == generation" not in privacy_perform[privacy_perform.find("await syncCoordinator.deleteProfile"):],
+    "expected deletion apply still suppresses the deletion result",
+)
+privacy_reactivation = function_body(privacy_source, "func applyProfileReactivation()")
+ordered(
+    privacy_reactivation,
+    "deletionAttemptOwnership.invalidateForProfileRecreation()",
+    "deletionTask?.cancel()",
+    "deletionTask = nil",
+)
 
 contacts = source("YPerson/UI/ContactReconciliationPresenter.swift")
 contact_start = function_body(contacts, "func start(")
-ordered(contact_start, "invalidate()", "sessionFence.begin()", "isCurrent(session)", "explainPermission")
+ordered(contact_start, "guard profileLifecycle.isActive", "sessionFence.begin()", "dismissOwnedUI()", "isCurrent(session)", "explainPermission")
 contact_apply = function_body(contacts, "func apply(")
 ordered(contact_apply, "isCurrent(session)", "permissions.apply(", "session: session", "sessionFence: sessionFence")
-contact_invalidate = function_body(contacts, "func invalidate()")
+contact_invalidate = function_body(contacts, "func beginProfileDeletion()")
 ordered(
     contact_invalidate,
-    "sessionFence.invalidate()",
-    "dismiss",
-    "waitForInFlightCommits()",
+    "sessionFence.beginInvalidation()",
+    "profileLifecycle.beginDeletion()",
+    "dismissOwnedUI()",
+    "return invalidation",
 )
+contact_reactivation = function_body(contacts, "func applyProfileReactivation()")
+ordered(contact_reactivation, "profileLifecycle.reactivateForUserCreation()")
+require("waitForInFlightCommits" not in contact_invalidate, "Contacts presenter blocks while invalidating UI")
+contract = source("YPerson/Domain/ExchangeContract.swift")
+require("NSCondition" not in contract, "Contacts invalidation still uses a blocking condition wait")
 for signature, minimum_guards in (
     ("func start(", 2),
     ("func continueAfterPermission(", 2),
@@ -421,7 +526,44 @@ require(
 )
 
 people_source = source("YPerson/UI/PeopleViewController.swift")
-people_deletion = function_body(people_source, "func applyProfileDeletion()")
-ordered(people_deletion, "contactReconciliation.invalidate()", "lifecycleGeneration = UUID()")
+people_deletion = function_body(people_source, "func beginProfileDeletion()")
+ordered(people_deletion, "contactReconciliation.beginProfileDeletion()", "lifecycleGeneration = UUID()", "return invalidation")
+people_reactivation = function_body(people_source, "func applyProfileReactivation()")
+ordered(people_reactivation, "lifecycleGeneration = UUID()", "contactReconciliation.applyProfileReactivation()")
+
+app_factory = source("YPerson/App/AppFactory.swift")
+require("bootstrapTask?.cancel()" not in app_factory, "deletion recovery can still cancel itself")
+refresh_people = function_body(app_factory, "func refreshPeople()")
+ordered(
+    refresh_people,
+    "captureProfileOperationContext()",
+    "if let profileContext",
+    "startActiveBootstrap",
+    "needsDeletionRecovery",
+    "startDeletionRecoveryBootstrap",
+)
+active_bootstrap = function_body(app_factory, "func startActiveBootstrap(")
+ordered(active_bootstrap, "beginActive()", "cancelBootstrapTask", "Task", "bootstrap(context: profileContext)")
+recovery_bootstrap = function_body(app_factory, "func startDeletionRecoveryBootstrap()")
+ordered(recovery_bootstrap, "beginDeletionRecovery()", "Task", "bootstrap(context: nil)")
+require("cancelBootstrapTask" not in recovery_bootstrap, "foreground recovery replaces/cancels the recovery owner")
+deletion_preparation = function_body(app_factory, "syncCoordinator.onProfileDeletionPreparation =")
+ordered(
+    deletion_preparation,
+    "people?.beginProfileDeletion()",
+    "personControllers.map",
+    "cancelActiveBootstrapTask()",
+    "await invalidation.waitForInFlightCommits()",
+)
+require(
+    deletion_preparation.find("personControllers.map") < deletion_preparation.find("await "),
+    "AppFactory awaits before every Person Contacts session is invalidated",
+)
+reactivation = function_body(app_factory, "syncCoordinator.onProfileReactivated =")
+ordered(
+    reactivation,
+    "people?.applyProfileReactivation()",
+    "privacy?.applyProfileReactivation()",
+)
 
 print("honest-exchange-lifecycle-order-pass")
