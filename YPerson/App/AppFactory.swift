@@ -70,7 +70,7 @@ final class YPersonExperienceBuilder {
                 onSelect: onSelect
             )
         }
-        let makeEditor: (PersonCard?, @escaping (PersonCard) -> Void) -> UIViewController = { [permissions, audio] card, onSave in
+        let makeEditor: (PersonCard?, @escaping (PersonCard) throws -> Void) -> UIViewController = { [permissions, audio] card, onSave in
             CardEditorViewController(card: card, permissions: permissions, audio: audio, makeAppearance: makeAppearance, onSave: onSave)
         }
         let card = CardViewController(card: ownCard, persistsChanges: !usesReviewFixtures, permissions: permissions, audio: audio, imageSaver: imageSaver, syncCoordinator: syncCoordinator, analytics: analytics, snapshotStore: snapshotStore, makeEditor: makeEditor)
@@ -146,7 +146,7 @@ final class YPersonExperienceBuilder {
     }
 
 #if DEBUG
-    private func applyVerificationState(to root: MainTabBarController, card: CardViewController, exchange: ExchangeViewController, privacy: PrivacyViewController, makePerson: @escaping (PersonCard) -> UIViewController, makeEditor: @escaping (PersonCard?, @escaping (PersonCard) -> Void) -> UIViewController, makeAppearance: @escaping (PersonCard, String, @escaping (String) -> Void) -> UIViewController) {
+    private func applyVerificationState(to root: MainTabBarController, card: CardViewController, exchange: ExchangeViewController, privacy: PrivacyViewController, makePerson: @escaping (PersonCard) -> UIViewController, makeEditor: @escaping (PersonCard?, @escaping (PersonCard) throws -> Void) -> UIViewController, makeAppearance: @escaping (PersonCard, String, @escaping (String) -> Void) -> UIViewController) {
         switch ProcessInfo.processInfo.environment["YP_SCREENSHOT_STATE"] {
         case "S2": root.selectedIndex = 1
         case "S3": root.selectedIndex = 2

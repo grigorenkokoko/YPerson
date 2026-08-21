@@ -24,6 +24,19 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
     private(set) var state: State = .empty { didSet { onStateChange?(state) } }
     var onStateChange: ((State) -> Void)?
 
+    var cardAudioDraftStatus: CardAudioDraftStatus {
+        switch state {
+        case .empty:
+            return .empty
+        case .recording, .preview, .playing:
+            return .unfinished
+        case .saved(isPublic: true, _):
+            return .savedPublic
+        case .saved(isPublic: false, _):
+            return .savedPrivate
+        }
+    }
+
     private var recordingURL: URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("yperson-greeting.m4a")
     }
