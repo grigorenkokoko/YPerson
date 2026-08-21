@@ -65,7 +65,15 @@ Toolchain observed for this run: Apple Swift `6.3.2` (`swift-driver 1.148.6`).
 
 ### Fresh unsigned simulator builds
 
-Before final accepted builds, the exact derived-data directories were removed and their absence verified. `Config/PersonalDebug.xcconfig` was absent throughout; no placeholder was created and neither build required it.
+The terminal history immediately before the accepted Debug build contains this exact preparation command:
+
+```bash
+rm -rf /tmp/yperson-honest-exchange-final-debug && \
+  test ! -e /tmp/yperson-honest-exchange-final-debug && \
+  test ! -e Config/PersonalDebug.xcconfig
+```
+
+Result: combined exit `0`; the Debug derived-data path and PersonalDebug placeholder were absent before the accepted build.
 
 ```bash
 xcodebuild -quiet -project YPerson.xcodeproj -scheme YPerson -configuration Debug \
@@ -76,6 +84,16 @@ xcodebuild -quiet -project YPerson.xcodeproj -scheme YPerson -configuration Debu
 
 Result: exit `0`; configuration `Debug`; destination `generic/platform=iOS Simulator`; signing disabled; successful quiet invocation emitted no compiler warnings.
 
+The terminal history immediately before the Release build contains this exact precondition command:
+
+```bash
+test ! -e /tmp/yperson-honest-exchange-final-release && \
+  test ! -e Config/PersonalDebug.xcconfig && \
+  test -d /tmp/yperson-honest-exchange-final-debug/Build/Products/Debug-iphonesimulator/YPerson.app
+```
+
+Result: combined exit `0`; the Release derived-data path and PersonalDebug placeholder were absent, while the accepted Debug app existed.
+
 ```bash
 xcodebuild -quiet -project YPerson.xcodeproj -scheme YPerson -configuration Release \
   -destination 'generic/platform=iOS Simulator' \
@@ -85,33 +103,70 @@ xcodebuild -quiet -project YPerson.xcodeproj -scheme YPerson -configuration Rele
 
 Result: exit `0`; configuration `Release`; destination `generic/platform=iOS Simulator`; signing disabled; successful quiet invocation emitted no compiler warnings.
 
-The initial sandboxed Debug attempt stopped before compilation with exit `74` because CoreSimulator access and DNS/package resolution were unavailable. The partial directory was removed; the unchanged Debug command was then run from a fresh directory with required access and reached the final exit `0`. The Release build likewise used a fresh directory.
+The initial sandboxed Debug attempt stopped before compilation with exit `74` because CoreSimulator access and DNS/package resolution were unavailable. The partial directory was removed by the exact preparation command above; the unchanged Debug command was then run with required access and reached the final exit `0`. The Release command started after its exact non-existence precondition passed.
 
 Toolchain observed for both builds: Xcode `26.5` (`17F42`).
 
-The following exact Release paths were verified as directories:
+The artifact checks were rerun individually:
 
-- `/tmp/yperson-honest-exchange-final-release/Build/Products/Release-iphonesimulator/YPerson.app`
-- `/tmp/yperson-honest-exchange-final-release/Build/Products/Release-iphonesimulator/YPerson.app/PlugIns/YPersonWidget.appex`
-- `/tmp/yperson-honest-exchange-final-release/Build/Products/Release-iphonesimulator/YPerson.app/PlugIns/YPersonNotificationService.appex`
-- `/tmp/yperson-honest-exchange-final-release/Build/Products/Release-iphonesimulator/YPerson.app/PlugIns/YPersonNotificationContent.appex`
+```bash
+YP_RELEASE_APP=/tmp/yperson-honest-exchange-final-release/Build/Products/Release-iphonesimulator/YPerson.app
+YP_RELEASE_BINARY=/tmp/yperson-honest-exchange-final-release/Build/Products/Release-iphonesimulator/YPerson.app/YPerson
+test -d "$YP_RELEASE_APP"
+test -d "$YP_RELEASE_APP/PlugIns/YPersonWidget.appex"
+test -d "$YP_RELEASE_APP/PlugIns/YPersonNotificationService.appex"
+test -d "$YP_RELEASE_APP/PlugIns/YPersonNotificationContent.appex"
+test -f "$YP_RELEASE_BINARY"
+```
 
-The executable `/tmp/yperson-honest-exchange-final-release/Build/Products/Release-iphonesimulator/YPerson.app/YPerson` was also verified as a file.
+Individual results:
+
+- `YPerson.app` `test -d`: exit `0`.
+- `YPersonWidget.appex` `test -d`: exit `0`.
+- `YPersonNotificationService.appex` `test -d`: exit `0`.
+- `YPersonNotificationContent.appex` `test -d`: exit `0`.
+- `YPerson` executable `test -f`: exit `0`.
 
 ### Privacy, source, branch, and binary scans
 
-```bash
-rg -n 'exchangeCode|exchangeExpiresAt|privateFields|connection_private_fields|exchange_private_fields' \
-  backend YPerson AppSpec.md AppPrivacy.yml Release deploy
-```
+Review RED used only harmless markers and non-existent `/tmp` paths:
 
-Result: exit `0`. Expected contract references were present across backend schema/service/storage/tests, iOS models/coordinator/UI, deployment smoke code, and canonical product/privacy/release documentation.
+Review-fix baseline: `8f41f9e4e6441f7af588d48ac3fde8d513b8cde1`.
 
 ```bash
-! rg -n 'YP-1234|Date\(\)\.addingTimeInterval\(10 \* 60\)' YPerson
+! rg -n 'review-safe-marker' /tmp/yperson-review-nonexistent-source-dir
+! strings /tmp/yperson-review-nonexistent-binary | rg 'review-safe-marker'
 ```
 
-Result: exit `0`, no matches. The iOS source contains neither the banned static manual-code placeholder nor the banned device-clock ten-minute expiry expression.
+Both negated forms misleadingly returned status `0` even though `rg` and `strings` reported missing-path errors. The accepted scans below therefore do not use a negated command or negated pipeline.
+
+The positive privacy scan first verified that every expected scope path existed and was readable: `backend`, `YPerson`, `AppSpec.md`, `AppPrivacy.yml`, `Release`, and `deploy` each produced `test -e` status `0` and `test -r` status `0`. Each required term was then searched separately over that exact scope:
+
+```bash
+rg -n -F 'exchangeCode' backend YPerson AppSpec.md AppPrivacy.yml Release deploy
+rg -n -F 'exchangeExpiresAt' backend YPerson AppSpec.md AppPrivacy.yml Release deploy
+rg -n -F 'privateFields' backend YPerson AppSpec.md AppPrivacy.yml Release deploy
+rg -n -F 'connection_private_fields' backend YPerson AppSpec.md AppPrivacy.yml Release deploy
+rg -n -F 'exchange_private_fields' backend YPerson AppSpec.md AppPrivacy.yml Release deploy
+```
+
+Final per-term results are recorded independently: `exchangeCode` exit `0`, `72` matches; `exchangeExpiresAt` exit `0`, `35` matches; `privateFields` exit `0`, `52` matches; `connection_private_fields` exit `0`, `20` matches; `exchange_private_fields` exit `0`, `27` matches. A zero-match status for any term fails this gate.
+
+The banned source scan used a fail-closed status contract:
+
+```bash
+set -e
+test -d YPerson
+test -r YPerson
+rg --files YPerson >/tmp/yperson-honest-exchange-source-scope-files.txt
+set +e
+rg -n 'YP-1234|Date\(\)\.addingTimeInterval\(10 \* 60\)' YPerson
+BANNED_SOURCE_STATUS=$?
+set -e
+test "$BANNED_SOURCE_STATUS" -eq 1
+```
+
+Results: scope existence status `0`; scope readability status `0`; enumeration status `0` with `44` files; raw banned-pattern `rg` status exactly `1`; final gate exit `0`. Status `0` means a banned match and status greater than `1` means a scan error, so either fails the equality check.
 
 ```bash
 git diff --check origin/main...HEAD
@@ -119,12 +174,27 @@ git diff --check origin/main...HEAD
 
 Result: exit `0`, no output.
 
+The Release executable scan also used a fail-closed two-stage contract and an explicit safe `/tmp` output:
+
 ```bash
 YP_RELEASE_BINARY=/tmp/yperson-honest-exchange-final-release/Build/Products/Release-iphonesimulator/YPerson.app/YPerson
-! strings "$YP_RELEASE_BINARY" | rg 'person-alexey|\+7 900 555-10-20|bearer-sentinel|YP-0123-4567-89AB'
+YP_RELEASE_STRINGS=/tmp/yperson-honest-exchange-final-release-binary.strings
+set -e
+test -f "$YP_RELEASE_BINARY"
+set +e
+strings "$YP_RELEASE_BINARY" >"$YP_RELEASE_STRINGS"
+STRINGS_STATUS=$?
+set -e
+test "$STRINGS_STATUS" -eq 0
+test -f "$YP_RELEASE_STRINGS"
+set +e
+rg -n 'person-alexey|\+7 900 555-10-20|bearer-sentinel|YP-0123-4567-89AB' "$YP_RELEASE_STRINGS"
+SENTINEL_RG_STATUS=$?
+set -e
+test "$SENTINEL_RG_STATUS" -eq 1
 ```
 
-Result: exit `0`, no matches. None of the four exact sentinels was present in the Release executable.
+Results: Release executable `test -f` status `0`; `strings` status exactly `0`; safe strings-output `test -f` status `0`; raw sentinel `rg` status exactly `1`; final gate exit `0`. None of the four exact sentinels was present, while a missing/unreadable executable or failed `strings` extraction would fail before the no-match assertion.
 
 ## Device, live-service, and external PENDING
 
