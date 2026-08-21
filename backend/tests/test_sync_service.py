@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from hashlib import sha256
 from hmac import compare_digest
@@ -17,7 +18,12 @@ from app.observability import JsonRequestFormatter, request_logger
 from app.schemas import PersonCard, SyncedPerson
 from app.settings import Settings
 from app.storage import InvalidCredential, StorageConflict, StorageIntegrityError, SyncSnapshot
-from app.sync_service import SyncService, derive_exchange_token
+from app.sync_service import (
+    SyncService,
+    derive_exchange_code,
+    derive_exchange_token,
+    normalize_exchange_code,
+)
 
 NOW = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
 OWNER = ("installation-owner-0001", "owner-bearer-secret-000000000000000000000000")
@@ -324,6 +330,45 @@ def test_exchange_token_derivation_length_prefixes_ambiguous_components() -> Non
     )
 
     assert first != second
+
+
+def test_manual_code_is_deterministic_unambiguous_and_domain_separated() -> None:
+    first = derive_exchange_code(OWNER[1], OWNER[0], "prepare-manual-0001")
+    replay = derive_exchange_code(OWNER[1], OWNER[0], "prepare-manual-0001")
+    other = derive_exchange_code(OWNER[1], OWNER[0], "prepare-manual-0002")
+
+    assert first == replay
+    assert first != other
+    assert re.fullmatch(r"YP-[0-9A-HJKMNP-TV-Z]{4}(?:-[0-9A-HJKMNP-TV-Z]{4}){2}", first)
+
+
+@pytest.mark.parametrize(
+    ("value", "canonical"),
+    [
+        ("yp 0123 4567 89ab", "YP-0123-4567-89AB"),
+        ("0123-4567-89AB", "YP-0123-4567-89AB"),
+        ("YP-0123-4567-89AB", "YP-0123-4567-89AB"),
+    ],
+)
+def test_manual_code_normalization(value: str, canonical: str) -> None:
+    assert normalize_exchange_code(value) == canonical
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "YP-0123-4567-89A",
+        "YP-0123-4567-89AI",
+        "YP-0123-4567-89AL",
+        "YP-0123-4567-89AO",
+        "YP-0123-4567-89AU",
+        "YP-0123-4567-89A!",
+        "arbitrary-token-text",
+    ],
+)
+def test_manual_code_normalization_rejects_invalid_values(value: str) -> None:
+    with pytest.raises(ValueError):
+        normalize_exchange_code(value)
 
 
 def test_wrong_bearer_returns_generic_401_without_installation_enumeration() -> None:

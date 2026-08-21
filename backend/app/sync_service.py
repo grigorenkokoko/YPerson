@@ -13,6 +13,7 @@ from .schemas import SyncedPerson, SyncOperation, SyncRequest, SyncResponse
 from .storage import StorageConflict, SyncSnapshot, SyncStore
 
 EXCHANGE_TOKEN_LIFETIME = timedelta(minutes=10)
+EXCHANGE_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
 class SyncUnavailable(Exception):
@@ -258,17 +259,58 @@ def derive_exchange_token(bearer: str, installation_id: str, operation_id: str) 
     YDB adapter stores only SHA-256 of the returned base64url token.
     """
 
+    digest = _derive_exchange_digest(
+        b"yperson.exchange.v1",
+        bearer,
+        installation_id,
+        operation_id,
+    )
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def derive_exchange_code(bearer: str, installation_id: str, operation_id: str) -> str:
+    """Derive a stable, manually transcribable exchange code."""
+
+    digest = _derive_exchange_digest(
+        b"yperson.exchange.code.v1",
+        bearer,
+        installation_id,
+        operation_id,
+    )
+    value = int.from_bytes(digest[:8], "big") >> 4
+    payload = "".join(
+        EXCHANGE_CODE_ALPHABET[(value >> shift) & 31]
+        for shift in range(55, -1, -5)
+    )
+    return f"YP-{payload[:4]}-{payload[4:8]}-{payload[8:]}"
+
+
+def normalize_exchange_code(value: str) -> str:
+    """Return the grouped exchange code form or reject an invalid manual code."""
+
+    normalized = value.upper().replace(" ", "").replace("-", "")
+    normalized = normalized.removeprefix("YP")
+    if len(normalized) != 12 or any(character not in EXCHANGE_CODE_ALPHABET for character in normalized):
+        raise ValueError("invalid exchange code")
+    return f"YP-{normalized[:4]}-{normalized[4:8]}-{normalized[8:]}"
+
+
+def _derive_exchange_digest(
+    domain: bytes,
+    bearer: str,
+    installation_id: str,
+    operation_id: str,
+) -> bytes:
     message = b"".join(
         _length_prefixed(component)
         for component in (
-            b"yperson.exchange.v1",
+            domain,
             SyncOperation.prepare_exchange.value.encode("utf-8"),
             installation_id.encode("utf-8"),
             operation_id.encode("utf-8"),
         )
     )
-    digest = hmac.new(bearer.encode("utf-8"), message, sha256).digest()
-    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return hmac.new(bearer.encode("utf-8"), message, sha256).digest()
 
 
 def _length_prefixed(component: bytes) -> bytes:
