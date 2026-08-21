@@ -258,11 +258,11 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         publicCardLoadingAlert = loading
         present(loading, animated: true)
 
-        publicCardTask = Task { [weak self] in
-            guard let self else { return }
+        publicCardTask = Task { [weak self, syncCoordinator] in
             do {
                 let card = try await syncCoordinator.fetchPublicCard(token: token)
                 try Task.checkCancellation()
+                guard let self else { return }
                 let payload = ExchangePayload(
                     version: 2,
                     issuerInstallationID: card.sourceInstallationID
@@ -273,7 +273,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                 )
                 finishPublicCardLoad(token: token, payload: payload)
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, let self else { return }
                 finishPublicCardLoad(token: token, payload: nil)
             }
         }

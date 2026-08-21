@@ -218,6 +218,18 @@ def test_json_is_no_store_and_contains_only_approved_person_card_keys(
     }
 
 
+def test_guest_html_has_no_navigation_to_native_json_endpoint(
+    public_client: tuple[TestClient, FakePublicCardService],
+) -> None:
+    client, _ = public_client
+
+    response = client.get(VALID_PATH)
+
+    assert response.status_code == 200
+    assert "Открыть JSON" not in response.text
+    assert f"{VALID_PATH}/card.json" not in response.text
+
+
 def test_vcard_escapes_cr_lf_backslash_semicolon_and_comma() -> None:
     unsafe = "A\\B;\r\n,C"
     service = FakePublicCardService(

@@ -101,7 +101,6 @@ def render_public_card_html(
     card: PersonCard,
     *,
     replies_path: str,
-    json_path: str,
     vcard_path: str,
     app_store_id: str,
     current_https_url: str,
@@ -150,7 +149,6 @@ background: #173d33; color: white; text-decoration: none; margin-top: 1rem; }}
 <p>{escaped["tagline"]}</p>
 <p>{escaped["email"]}</p>
 <a class="download" href="{escape(vcard_path, quote=True)}" download>Сохранить vCard</a>
-<a class="download" href="{escape(json_path, quote=True)}">Открыть JSON</a>
 </article>
 <form method="post" action="{escape(replies_path, quote=True)}">
 <h2>Оставить свой контакт</h2>

@@ -735,7 +735,7 @@ class YDBSyncStore:
                 FROM public_replies
                 WHERE owner_installation_id = $installation_id
                   AND expires_at > $now;
-                SELECT public_token_hash, name, email, phone, expires_at
+                SELECT public_token_hash, name, email, phone
                 FROM public_replies
                 WHERE owner_installation_id = $installation_id
                   AND reply_id = $reply_id;
@@ -765,8 +765,10 @@ class YDBSyncStore:
                     and _stored_text(existing, "name") == name
                     and _stored_optional_text(existing, "email") == email
                     and _stored_optional_text(existing, "phone") == phone
-                    and _stored_datetime(existing, "expires_at") == _as_utc(expires_at)
                 ):
+                    # A retry receives a newly calculated retention deadline from
+                    # the HTTP layer. Returning here preserves the first insert's
+                    # expiry while keeping the immutable reply contents idempotent.
                     return
                 raise StorageConflict("reply identifier already used")
             if _stored_nonnegative_int(count_rows[0], "reply_count") >= MAX_PENDING_PUBLIC_REPLIES:

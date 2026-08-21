@@ -131,7 +131,6 @@ def create_app(
             content=render_public_card_html(
                 record.card,
                 replies_path=f"{path}/replies",
-                json_path=f"{path}/card.json",
                 vcard_path=f"{path}/contact.vcf",
                 app_store_id=app_settings.app_store_id,
                 current_https_url=current_https_url,

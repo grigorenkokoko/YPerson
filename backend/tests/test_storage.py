@@ -1532,6 +1532,63 @@ def test_public_reply_limit_is_enforced_in_insert_transaction(
     assert "public-token" not in repr(pool.transaction_calls)
 
 
+def test_public_reply_replay_ignores_recalculated_expiry_and_preserves_first_expiry() -> None:
+    token_hash = sha256(b"public-token").digest()
+    stored_reply: dict[str, object] | None = None
+
+    def transaction_handler(query: str, parameters: dict[str, Any]) -> list[ResultSet]:
+        nonlocal stored_reply
+        if "FROM public_links VIEW by_token" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "owner_installation_id": "installation-owner",
+                            "token_hash": token_hash,
+                        }
+                    ]
+                )
+            ]
+        if "SELECT COUNT(*) AS reply_count" in query:
+            return [
+                ResultSet([{"reply_count": 0}]),
+                ResultSet([stored_reply] if stored_reply is not None else []),
+            ]
+        if "UPSERT INTO public_replies" in query:
+            stored_reply = {
+                "public_token_hash": _parameter(parameters, "$token_hash"),
+                "name": _parameter(parameters, "$name"),
+                "email": _parameter(parameters, "$email"),
+                "phone": _parameter(parameters, "$phone"),
+                "expires_at": _parameter(parameters, "$expires_at"),
+            }
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    adapter = YDBSyncStore(pool)  # type: ignore[arg-type]
+    first_expiry = datetime.now(UTC) + timedelta(days=30)
+    replay_expiry = first_expiry + timedelta(seconds=10)
+
+    for expiry in (first_expiry, replay_expiry):
+        adapter.create_public_reply(
+            "public-token",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "Anna",
+            "anna@example.invalid",
+            None,
+            expiry,
+        )
+
+    insert_calls = [
+        (query, parameters)
+        for query, parameters in pool.transaction_calls
+        if "UPSERT INTO public_replies" in query
+    ]
+    assert len(insert_calls) == 1
+    assert stored_reply is not None
+    assert stored_reply["expires_at"] == first_expiry
+
+
 def test_dismiss_public_reply_is_owner_scoped_and_idempotent() -> None:
     operations: set[tuple[str, str]] = set()
 

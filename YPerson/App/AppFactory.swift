@@ -148,6 +148,7 @@ final class YPersonExperienceBuilder {
         switch event {
         case .didEnterForeground:
             defersPublicReplyReviewUntilForeground = false
+            presentNextPublicReplyIfPossible()
             refreshPeople()
         case .pushTokenChanged(let token):
             updatePushToken(token)
