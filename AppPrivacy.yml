@@ -70,6 +70,23 @@ product:
   audience: general-audience
   app_review_risk: high
 
+implemented_feature_contract:
+  public_sharing:
+    status: approved-for-implementation
+    public_fields: [name, role, company, email, tagline, template_id]
+    excluded_fields: [phone, meeting_place, notes, photos, audio]
+    token_storage:
+      device: raw_256_bit_token
+      backend: sha256_digest_only
+    contact_reply:
+      required: [name, consent]
+      exactly_one_of: [email, phone]
+      owner_confirmation_required: true
+      pending_retention_days: 30
+    web_tracking: none
+    search_indexing: prohibited
+    new_permissions: none
+
 permissions:
   bluetooth:
     required: true

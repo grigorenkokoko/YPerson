@@ -47,6 +47,22 @@ YPerson — портретное iPhone-приложение для создан
 
 В MVP нет публичной ленты, случайного поиска людей, чата, платежей, подписки, рейтингов, публикации постов или социального графа для просмотра другими пользователями.
 
+## Утверждённый контракт универсального обмена — пакет 1
+
+Следующие правила являются нормативным продуктовым поведением для первого пакета универсального обмена:
+
+- Public URL: GET /p/{public-token}; token is random, revocable, and never logged.
+- Published payload: name, role, company, email, tagline, templateID; phone and meetingPlace are excluded in package 1.
+- Guest actions: save vCard and optionally send name plus exactly one email or phone after explicit consent.
+- Pending replies are shown to the owner and are not saved as people before confirmation.
+- Revoke immediately blocks HTML, JSON, vCard, and new replies.
+- Pending replies are deleted after owner dismissal/import or 30 days.
+- The web page has no analytics SDK, advertising, cookies, account, indexing, or install wall.
+
+Существующий внутренний QR с payload `yperson:v2:` остаётся офлайн-fallback для обмена между двумя установленными приложениями YPerson. Доставка встречных контактов через APNs отложена до пакета 4; в пакете 1 получение выполняется через foreground /sync.
+
+Путь App Review: ревьюер открывает выданный тестовый `GET /p/{public-token}` обычной камерой или браузером, сохраняет vCard и по желанию отправляет имя с одним способом связи после явного согласия; владелец видит pending-ответ и отдельно подтверждает импорт. Отзыв тестовой ссылки должен немедленно закрыть HTML, JSON, vCard и новые ответы.
+
 ## Матрица разрешений и App Review
 
 ### 1. Bluetooth
