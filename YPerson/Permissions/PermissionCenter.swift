@@ -18,6 +18,7 @@ enum AuthorizationState: Equatable {
 
 final class PermissionCenter: NSObject, CLLocationManagerDelegate {
     private let contactStore = CNContactStore()
+    private let contactQueue = DispatchQueue(label: "app.yperson.contacts-reconciliation")
     private let locationManager = CLLocationManager()
     private let geocoder = CLGeocoder()
     private let notificationCenter: UNUserNotificationCenter
@@ -49,24 +50,134 @@ final class PermissionCenter: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    func duplicateContactCount(for card: PersonCard) throws -> Int {
-        let keys = [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactPhoneNumbersKey, CNContactEmailAddressesKey] as [CNKeyDescriptor]
-        let request = CNContactFetchRequest(keysToFetch: keys)
-        var count = 0
-        let normalizedPhone = card.phone.filter(\.isNumber)
-        try contactStore.enumerateContacts(with: request) { contact, _ in
-            let phoneMatch = contact.phoneNumbers.contains { $0.value.stringValue.filter(\.isNumber).hasSuffix(normalizedPhone.suffix(10)) }
-            let emailMatch = contact.emailAddresses.contains { ($0.value as String).caseInsensitiveCompare(card.email) == .orderedSame }
-            if phoneMatch || emailMatch { count += 1 }
+    func reconciliation(
+        for card: PersonCard,
+        scope: ContactReconciliationScope,
+        choosing candidateIdentifier: String? = nil,
+        completion: @escaping (Result<ContactReconciliationResult, Error>) -> Void
+    ) {
+        let cardProjection = projection(from: card)
+        contactQueue.async { [weak self] in
+            guard let self else { return }
+            let result = Result {
+                try ContactReconciliationPlanner.reconcile(
+                    card: cardProjection,
+                    contacts: try self.contactProjections(),
+                    scope: scope,
+                    choosing: candidateIdentifier
+                )
+            }
+            DispatchQueue.main.async { completion(result) }
         }
-        return count
     }
 
-    func saveContact(_ card: PersonCard) throws {
-        let contact = makeContact(card)
-        let request = CNSaveRequest()
-        request.add(contact, toContainerWithIdentifier: nil)
-        try contactStore.execute(request)
+    func apply(
+        _ plan: ContactReconciliationPlan,
+        for card: PersonCard,
+        completion: @escaping (Result<ContactReconciliationAction, Error>) -> Void
+    ) {
+        let cardProjection = projection(from: card)
+        contactQueue.async { [weak self] in
+            guard let self else { return }
+            let result = Result<ContactReconciliationAction, Error> {
+                let currentScope = try self.currentContactScope()
+                let contacts = try self.contactProjections()
+                try ContactReconciliationPlanner.validate(
+                    plan,
+                    card: cardProjection,
+                    contacts: contacts,
+                    currentScope: currentScope
+                )
+
+                let request = CNSaveRequest()
+                switch plan.action {
+                case .add:
+                    request.add(self.makeContact(card), toContainerWithIdentifier: nil)
+                case .update:
+                    guard let identifier = plan.candidate?.identifier else {
+                        throw ContactReconciliationPlannerError.invalidCandidate
+                    }
+                    let contact = try self.contactStore.unifiedContact(withIdentifier: identifier, keysToFetch: self.contactKeys)
+                    guard self.projection(from: contact) == plan.baseline else {
+                        throw ContactReconciliationPlannerError.stalePlan
+                    }
+                    guard let mutableContact = contact.mutableCopy() as? CNMutableContact else {
+                        throw NSError(domain: "YPerson.Contacts", code: 2, userInfo: [NSLocalizedDescriptionKey: "Не удалось подготовить контакт к обновлению."])
+                    }
+                    self.apply(card, to: mutableContact)
+                    request.update(mutableContact)
+                case .noChange:
+                    return .noChange
+                }
+                try self.contactStore.execute(request)
+                return plan.action
+            }
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    private var contactKeys: [CNKeyDescriptor] {
+        [
+            CNContactIdentifierKey,
+            CNContactGivenNameKey,
+            CNContactFamilyNameKey,
+            CNContactOrganizationNameKey,
+            CNContactJobTitleKey,
+            CNContactPhoneNumbersKey,
+            CNContactEmailAddressesKey
+        ] as [CNKeyDescriptor]
+    }
+
+    private func currentContactScope() throws -> ContactReconciliationScope {
+        switch contactsState() {
+        case .authorized:
+            return .complete
+        case .limited:
+            return .limited
+        default:
+            throw ContactReconciliationPlannerError.stalePlan
+        }
+    }
+
+    private func contactProjections() throws -> [ContactProjection] {
+        let request = CNContactFetchRequest(keysToFetch: contactKeys)
+        var contacts: [ContactProjection] = []
+        try contactStore.enumerateContacts(with: request) { [weak self] contact, _ in
+            guard let self else { return }
+            contacts.append(self.projection(from: contact))
+        }
+        return contacts
+    }
+
+    private func projection(from card: PersonCard) -> ContactCardProjection {
+        ContactCardProjection(name: card.name, company: card.company, role: card.role, phone: card.phone, email: card.email)
+    }
+
+    private func projection(from contact: CNContact) -> ContactProjection {
+        ContactProjection(
+            identifier: contact.identifier,
+            givenName: contact.givenName,
+            familyName: contact.familyName,
+            company: contact.organizationName,
+            role: contact.jobTitle,
+            phones: contact.phoneNumbers.map { $0.value.stringValue },
+            emails: contact.emailAddresses.map { $0.value as String }
+        )
+    }
+
+    private func apply(_ card: PersonCard, to contact: CNMutableContact) {
+        let current = projection(from: contact)
+        let projected = ContactReconciliationPlanner.projectedContact(applying: projection(from: card), to: current)
+        contact.givenName = projected.givenName
+        contact.familyName = projected.familyName
+        contact.organizationName = projected.company
+        contact.jobTitle = projected.role
+        if projected.phones.count > current.phones.count, let phone = projected.phones.last {
+            contact.phoneNumbers.append(CNLabeledValue(label: CNLabelPhoneNumberMain, value: CNPhoneNumber(stringValue: phone)))
+        }
+        if projected.emails.count > current.emails.count, let email = projected.emails.last {
+            contact.emailAddresses.append(CNLabeledValue(label: CNLabelWork, value: email as NSString))
+        }
     }
 
     func makeContact(_ card: PersonCard) -> CNMutableContact {
@@ -76,8 +187,12 @@ final class PermissionCenter: NSObject, CLLocationManagerDelegate {
         contact.familyName = names.count > 1 ? names[1] : ""
         contact.organizationName = card.company
         contact.jobTitle = card.role
-        contact.phoneNumbers = [CNLabeledValue(label: CNLabelPhoneNumberMain, value: CNPhoneNumber(stringValue: card.phone))]
-        contact.emailAddresses = [CNLabeledValue(label: CNLabelWork, value: card.email as NSString)]
+        if ContactMatchPolicy.normalizedPhone(card.phone) != nil {
+            contact.phoneNumbers = [CNLabeledValue(label: CNLabelPhoneNumberMain, value: CNPhoneNumber(stringValue: card.phone))]
+        }
+        if ContactMatchPolicy.normalizedEmail(card.email) != nil {
+            contact.emailAddresses = [CNLabeledValue(label: CNLabelWork, value: card.email.trimmingCharacters(in: .whitespacesAndNewlines) as NSString)]
+        }
         return contact
     }
 

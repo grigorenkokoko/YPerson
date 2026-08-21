@@ -838,3 +838,5 @@ release_blockers:
     description: approve report categories, filtering rules, published contact, and response SLA
   - id: app_store_answers
     description: derive and verify current App Store privacy, age rating, export compliance, and reviewer-contact answers at release
+  - id: third_party_vcard_sync_contract
+    description: resolve the mismatch between local-only third-party vCard imports and required confirmed photo/scanned payload synchronization by approving backend ownership, retention, deletion, and update semantics or explicitly re-approving the local-only AppSpec/AppPrivacy behavior

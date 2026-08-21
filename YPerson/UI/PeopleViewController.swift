@@ -8,6 +8,7 @@ final class PeopleViewController: YPBaseViewController, CNContactPickerDelegate 
     private let analytics: AppMetricaAnalyticsClient
     private let makePerson: (PersonCard) -> UIViewController
     private let onContactsImported: ([PersonCard]) throws -> [PersonCard]
+    private lazy var contactReconciliation = ContactReconciliationPresenter(host: self, permissions: permissions, analytics: analytics)
 
     init(people: [PersonCard], permissions: PermissionCenter, analytics: AppMetricaAnalyticsClient, makePerson: @escaping (PersonCard) -> UIViewController, onContactsImported: @escaping ([PersonCard]) throws -> [PersonCard]) {
         self.people = people
@@ -55,6 +56,10 @@ final class PeopleViewController: YPBaseViewController, CNContactPickerDelegate 
         let sync = YPStyle.button("Синхронизация с Контактами", symbol: "person.crop.circle.badge.checkmark", primary: true)
         sync.addTarget(self, action: #selector(syncContacts), for: .touchUpInside)
         contentStack.addArrangedSubview(sync)
+        let importContacts = YPStyle.button("Добавить из Контактов", symbol: "person.crop.circle.badge.plus")
+        importContacts.addTarget(self, action: #selector(openContactPicker), for: .touchUpInside)
+        importContacts.accessibilityHint = "Открывает системный выбор нескольких контактов"
+        contentStack.addArrangedSubview(importContacts)
         sectionTitle("Сохранённые люди")
         for (index, person) in people.enumerated() {
             let button = YPStyle.button("\(person.name) · \(person.role)", symbol: "person.crop.circle")
@@ -104,41 +109,25 @@ final class PeopleViewController: YPBaseViewController, CNContactPickerDelegate 
     }
 
     @objc private func syncContacts() {
-        guard let person = people.first else { return }
-        explainPermission(title: "Синхронизация с Контактами", message: "Контакты нужны, чтобы находить дубликаты, добавлять визитки YPerson в адресную книгу и обновлять их при изменениях владельца.") { [weak self] in
-            guard let self else { return }
-            let continueSync: () -> Void = { [weak self] in
-                guard let self else { return }
-                do {
-                    let duplicates = try self.permissions.duplicateContactCount(for: person)
-                    let alert = UIAlertController(title: "План изменений", message: "Найдено совпадений: \(duplicates). Добавить карточку «\(person.name)»? Ничего не изменится без подтверждения.", preferredStyle: .alert)
-                    alert.addAction(UIAlertAction(title: "Добавить", style: .default) { [weak self] _ in
-                        do {
-                            try self?.permissions.saveContact(person)
-                            self?.analytics.report(.contactSaved)
-                            self?.showMessage("Контакт сохранён", "Изменение применено после подтверждения.")
-                        } catch {
-                            self?.showMessage("Не удалось сохранить", error.localizedDescription)
-                        }
-                    })
-                    alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
-                    self.present(alert, animated: true)
-                } catch {
-                    self.showMessage("Контакты недоступны", error.localizedDescription, settingsAction: self.permissions.openSystemSettings)
-                }
-            }
-            switch self.permissions.contactsState() {
-            case .authorized, .limited:
-                continueSync()
-            case .notDetermined:
-                self.permissions.requestContacts { state in
-                    if case .authorized = state { continueSync() }
-                    else if case .limited = state { continueSync() }
-                    else { self.showMessage("Доступ не включён", "Карточки остаются в YPerson. Один контакт можно экспортировать системным интерфейсом.", settingsAction: self.permissions.openSystemSettings) }
-                }
-            default:
-                self.showMessage("Доступ не включён", "Карточки остаются в YPerson. Один контакт можно экспортировать системным интерфейсом.", settingsAction: self.permissions.openSystemSettings)
-            }
+        guard !people.isEmpty else { return }
+        guard people.count > 1 else {
+            contactReconciliation.start(for: people[0])
+            return
         }
+        let alert = UIAlertController(title: "Выберите карточку YPerson", message: "Выберите человека, которого нужно сверить с Контактами. До подтверждения ничего не изменится.", preferredStyle: .actionSheet)
+        for person in people {
+            let title = ContactIdentityFormatter.savedCardChoiceLabel(
+                name: person.name,
+                role: person.role,
+                company: person.company,
+                phone: person.phone,
+                email: person.email
+            )
+            alert.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
+                self?.contactReconciliation.start(for: person)
+            })
+        }
+        alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
+        present(alert, animated: true)
     }
 }

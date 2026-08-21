@@ -12,6 +12,68 @@ protocol InstallationCredentialStoring {
     func deleteCredential() throws
 }
 
+#if DEBUG
+enum ReviewFixtureIsolationPolicy {
+    static func isEnabled(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        environment["YP_SCREENSHOT_STATE"] != nil
+    }
+
+    static let credential = InstallationCredential(
+        installationID: "00000000-0000-0000-0000-000000000001",
+        bearer: Base64URL.encode(Data(repeating: 0xA5, count: 32))
+    )
+
+    static func isolate(_ configuration: URLSessionConfiguration) {
+        configuration.protocolClasses = [ReviewFixtureURLProtocol.self]
+        configuration.waitsForConnectivity = false
+    }
+}
+
+final class EphemeralInstallationCredentialStore: InstallationCredentialStoring {
+    private var credential: InstallationCredential?
+
+    init(seed: InstallationCredential) {
+        credential = seed
+    }
+
+    func existingCredential() throws -> InstallationCredential? {
+        credential
+    }
+
+    func createCredential() throws -> InstallationCredential {
+        if let credential { return credential }
+        let created = InstallationCredential(
+            installationID: UUID().uuidString.lowercased(),
+            bearer: Base64URL.encode(Data(repeating: 0xA5, count: 32))
+        )
+        credential = created
+        return created
+    }
+
+    func deleteCredential() throws {
+        credential = nil
+    }
+}
+
+final class ReviewFixtureURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+    }
+
+    override func stopLoading() {}
+}
+#endif
+
 final class InstallationCredentialStore: InstallationCredentialStoring {
     enum CredentialError: LocalizedError {
         case keychain(OSStatus)

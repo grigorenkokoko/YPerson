@@ -10,8 +10,9 @@ final class YPersonExperienceBuilder {
     private let syncCoordinator: SyncCoordinator
     private let analytics: AppMetricaAnalyticsClient
     private let permissions: PermissionCenter
-    private let credentialStore: InstallationCredentialStore
+    private let credentialStore: any InstallationCredentialStoring
     private let mediaTransfer: MediaTransferClient
+    private let persistsUserChanges: Bool
     private let nearby = NearbyExchangeController()
     private let photoScanner = PhotoCardScanner()
     private let audio = AudioGreetingController()
@@ -21,14 +22,49 @@ final class YPersonExperienceBuilder {
 
     init(configuration: AppConfiguration) throws {
         self.configuration = configuration
+#if DEBUG
+        let usesReviewFixtures = ReviewFixtureIsolationPolicy.isEnabled()
+        self.persistsUserChanges = !usesReviewFixtures
+#else
+        self.persistsUserChanges = true
+#endif
         let sessionConfiguration = URLSessionConfiguration.ephemeral
         sessionConfiguration.timeoutIntervalForRequest = 12
         sessionConfiguration.timeoutIntervalForResource = 20
         sessionConfiguration.waitsForConnectivity = true
+#if DEBUG
+        if usesReviewFixtures {
+            ReviewFixtureIsolationPolicy.isolate(sessionConfiguration)
+        }
+#endif
         self.session = URLSession(configuration: sessionConfiguration)
-        let store = AppGroupSnapshotStore(appGroupIdentifier: configuration.appGroupIdentifier)
+        let store: AppGroupSnapshotStore?
+#if DEBUG
+        if usesReviewFixtures {
+            store = AppGroupSnapshotStore.inMemory()
+        } else {
+            store = AppGroupSnapshotStore(appGroupIdentifier: configuration.appGroupIdentifier)
+        }
+#else
+        store = AppGroupSnapshotStore(appGroupIdentifier: configuration.appGroupIdentifier)
+#endif
         self.snapshotStore = store
-        let credentialStore = InstallationCredentialStore(service: "\(configuration.appGroupIdentifier).installation")
+        let credentialStore: any InstallationCredentialStoring
+#if DEBUG
+        if usesReviewFixtures {
+            credentialStore = EphemeralInstallationCredentialStore(
+                seed: ReviewFixtureIsolationPolicy.credential
+            )
+        } else {
+            credentialStore = InstallationCredentialStore(
+                service: "\(configuration.appGroupIdentifier).installation"
+            )
+        }
+#else
+        credentialStore = InstallationCredentialStore(
+            service: "\(configuration.appGroupIdentifier).installation"
+        )
+#endif
         self.credentialStore = credentialStore
         let mediaTransfer = MediaTransferClient(session: session)
         self.mediaTransfer = mediaTransfer
@@ -52,12 +88,10 @@ final class YPersonExperienceBuilder {
         _ = analytics.activateIfConsented()
         var ownCard = snapshotStore?.readOwnCard()
         var savedPeople = snapshotStore?.readPeople() ?? []
-        var usesReviewFixtures = false
 #if DEBUG
-        if ProcessInfo.processInfo.environment["YP_SCREENSHOT_STATE"] != nil {
+        if !persistsUserChanges {
             ownCard = .reviewOwn
             savedPeople = [.reviewAlexey, .reviewMaria]
-            usesReviewFixtures = true
         }
 #endif
         let makeAppearance = { [permissions, analytics]
@@ -73,7 +107,7 @@ final class YPersonExperienceBuilder {
         let makeEditor: (PersonCard?, @escaping (PersonCard) throws -> Void) -> UIViewController = { [permissions, audio] card, onSave in
             CardEditorViewController(card: card, permissions: permissions, audio: audio, makeAppearance: makeAppearance, onSave: onSave)
         }
-        let card = CardViewController(card: ownCard, persistsChanges: !usesReviewFixtures, permissions: permissions, audio: audio, imageSaver: imageSaver, syncCoordinator: syncCoordinator, analytics: analytics, snapshotStore: snapshotStore, makeEditor: makeEditor)
+        let card = CardViewController(card: ownCard, persistsChanges: persistsUserChanges, permissions: permissions, audio: audio, imageSaver: imageSaver, syncCoordinator: syncCoordinator, analytics: analytics, snapshotStore: snapshotStore, makeEditor: makeEditor)
         let person = { [permissions, imageSaver, syncCoordinator, analytics, snapshotStore, mediaTransfer, audio] card in
             PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, syncCoordinator: syncCoordinator, mediaTransfer: mediaTransfer, audio: audio, analytics: analytics, snapshotStore: snapshotStore)
         }
@@ -111,7 +145,7 @@ final class YPersonExperienceBuilder {
         let root = MainTabBarController(card: card, exchange: exchange, people: people, privacy: privacy)
         self.rootViewController = root
         root.route(to: context.entryPoint)
-        if !usesReviewFixtures {
+        if persistsUserChanges {
             syncCoordinator.onPeopleChanged = { [weak people, snapshotStore] in
                 people?.reload(people: snapshotStore?.readPeople() ?? [])
             }

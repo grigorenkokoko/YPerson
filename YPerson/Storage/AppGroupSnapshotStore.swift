@@ -145,7 +145,7 @@ final class AppGroupSnapshotStore {
         defaults.set(operations, forKey: Key.pendingOperationIDs)
     }
 
-    private let defaults: UserDefaults
+    private let defaults: any SnapshotKeyValueStore
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
@@ -154,6 +154,16 @@ final class AppGroupSnapshotStore {
         self.defaults = defaults
         migrateLegacyValues()
     }
+
+#if DEBUG
+    private init(defaults: any SnapshotKeyValueStore) {
+        self.defaults = defaults
+    }
+
+    static func inMemory() -> AppGroupSnapshotStore {
+        AppGroupSnapshotStore(defaults: InMemorySnapshotKeyValueStore())
+    }
+#endif
 
     func cachedConfiguration() -> (RemoteConfiguration, String?)? {
         guard let data = defaults.data(forKey: Key.remoteConfiguration),
@@ -268,3 +278,61 @@ final class AppGroupSnapshotStore {
         defaults.removeObject(forKey: legacyKey)
     }
 }
+
+private protocol SnapshotKeyValueStore: AnyObject {
+    func data(forKey defaultName: String) -> Data?
+    func string(forKey defaultName: String) -> String?
+    func bool(forKey defaultName: String) -> Bool
+    func dictionary(forKey defaultName: String) -> [String: Any]?
+    func object(forKey defaultName: String) -> Any?
+    func set(_ value: Any?, forKey defaultName: String)
+    func removeObject(forKey defaultName: String)
+}
+
+extension UserDefaults: SnapshotKeyValueStore {}
+
+#if DEBUG
+private final class InMemorySnapshotKeyValueStore: SnapshotKeyValueStore {
+    private let lock = NSLock()
+    private var values: [String: Any] = [:]
+
+    func data(forKey defaultName: String) -> Data? {
+        value(forKey: defaultName) as? Data
+    }
+
+    func string(forKey defaultName: String) -> String? {
+        value(forKey: defaultName) as? String
+    }
+
+    func bool(forKey defaultName: String) -> Bool {
+        if let value = value(forKey: defaultName) as? Bool { return value }
+        return (value(forKey: defaultName) as? NSNumber)?.boolValue ?? false
+    }
+
+    func dictionary(forKey defaultName: String) -> [String: Any]? {
+        value(forKey: defaultName) as? [String: Any]
+    }
+
+    func object(forKey defaultName: String) -> Any? {
+        value(forKey: defaultName)
+    }
+
+    func set(_ value: Any?, forKey defaultName: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        values[defaultName] = value
+    }
+
+    func removeObject(forKey defaultName: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        values.removeValue(forKey: defaultName)
+    }
+
+    private func value(forKey defaultName: String) -> Any? {
+        lock.lock()
+        defer { lock.unlock() }
+        return values[defaultName]
+    }
+}
+#endif

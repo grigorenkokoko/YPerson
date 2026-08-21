@@ -287,6 +287,20 @@ struct ExchangePayload: Codable, Equatable {
     let expiresAt: Date?
 }
 
+enum ImportedCardPersistence {
+    static func card(
+        from payload: ExchangePayload,
+        allowsCloudClaim: Bool,
+        meetingPlace: String?
+    ) -> PersonCard {
+        var localCard = payload.card
+        localCard.sourceInstallationID = nil
+        localCard.syncState = allowsCloudClaim ? .pending : .localOnly
+        localCard.meetingPlace = meetingPlace
+        return localCard
+    }
+}
+
 enum ExchangePayloadCodec {
     private static let prefix = "yperson:v2:"
 

@@ -353,6 +353,7 @@ Bluetooth-сценарий требует только обычный второ
 6. APNs production credentials и проверенный push flow без секретов в репозитории.
 7. Утверждённые moderation categories, фильтр и SLA ответа на UGC-жалобы.
 8. Финальные App Store privacy answers, age rating, export-compliance ответ и reviewer contact по текущим требованиям Apple.
+9. Устранить несоответствие для сторонних vCard: либо утвердить backend-контракт владения, хранения, удаления и обновления импортов, либо явно повторно утвердить локальное-only поведение в `AppSpec.md` и `AppPrivacy.yml` вместо требуемой синхронизации подтверждённых photo/scanned payloads.
 
 ## Проверенные первичные источники
 

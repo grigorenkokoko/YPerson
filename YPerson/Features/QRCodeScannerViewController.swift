@@ -89,7 +89,7 @@ final class QRCodeScannerViewController: UIViewController, AVCaptureMetadataOutp
     func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
         guard let object = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
               let value = object.stringValue else { return }
-        guard value.hasPrefix("yperson:") || value.hasPrefix("BEGIN:VCARD") else {
+        guard ScanCandidatePolicy.isSupported(value) else {
             statusLabel.text = "Это не визитка YPerson или vCard. Попробуйте другой QR-код."
             return
         }
