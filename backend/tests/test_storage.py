@@ -482,9 +482,7 @@ def test_prepare_exchange_atomically_persists_public_card_private_fields_and_exp
     assert "$token_hash, $installation_id, $fields_json, $expires_at" in mutation_query
     assert mutation_query.count("UPSERT INTO operations") == 1
     assert json.loads(_parameter(mutation_parameters, "$card_json"))["phone"] == ""
-    assert json.loads(_parameter(mutation_parameters, "$fields_json")) == {
-        "phone": card.phone
-    }
+    assert json.loads(_parameter(mutation_parameters, "$fields_json")) == {"phone": card.phone}
     assert _parameter(mutation_parameters, "$expires_at") == expires_at
     assert json.loads(_parameter(mutation_parameters, "$result_json")) == {
         "expiresAt": expires_at.isoformat(),
@@ -537,11 +535,7 @@ def test_prepare_exchange_replay_returns_original_version_and_expiry() -> None:
 
     def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
         if "FROM operations" in query:
-            return [
-                ResultSet(
-                    [{"operation_type": "prepareExchange", "result_json": persisted}]
-                )
-            ]
+            return [ResultSet([{"operation_type": "prepareExchange", "result_json": persisted}])]
         return []
 
     store = YDBSyncStore(ScriptedPool(transaction_handler=transaction_handler))  # type: ignore[arg-type]
@@ -741,11 +735,17 @@ def test_delete_private_state_and_profile_replays_without_recreating_installatio
         for query, parameters in pool.transaction_calls
         if "DELETE FROM installations" in query
     )
-    assert """DELETE FROM exchange_private_fields
-                WHERE issuer_installation_id = $installation_id;""" in deletion_query
-    assert """DELETE FROM connection_private_fields
+    assert (
+        """DELETE FROM exchange_private_fields
+                WHERE issuer_installation_id = $installation_id;"""
+        in deletion_query
+    )
+    assert (
+        """DELETE FROM connection_private_fields
                 WHERE owner_installation_id = $installation_id
-                   OR peer_installation_id = $installation_id;""" in deletion_query
+                   OR peer_installation_id = $installation_id;"""
+        in deletion_query
+    )
     stored_result = json.loads(_parameter(deletion_parameters, "$result_json"))
     assert stored_result == deletion_result
     assert any(
@@ -883,9 +883,7 @@ def test_claim_exchange_copies_private_fields_only_to_claimant_direction(
     assert "$installation_id, $issuer_id, $fields_json, $now" in mutation_query
     assert _parameter(mutation_parameters, "$installation_id") == "installation-peer"
     assert _parameter(mutation_parameters, "$issuer_id") == "installation-owner"
-    assert json.loads(_parameter(mutation_parameters, "$fields_json")) == {
-        "phone": card.phone
-    }
+    assert json.loads(_parameter(mutation_parameters, "$fields_json")) == {"phone": card.phone}
     assert json.loads(_parameter(mutation_parameters, "$result_json")) == {
         "issuerInstallationID": "installation-owner",
         "tokenHash": sha256(raw_token.encode()).hexdigest(),
@@ -1115,6 +1113,7 @@ def test_refresh_private_or_claim_private_rejects_malformed_or_unknown_fields(
     }
 
     if path == "refresh":
+
         def read_handler(_query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
             return [ResultSet([]), ResultSet([row]), ResultSet([])]
 
@@ -1127,6 +1126,7 @@ def test_refresh_private_or_claim_private_rejects_malformed_or_unknown_fields(
         with pytest.raises(StorageIntegrityError):
             store.refresh("installation-peer", None)
     else:
+
         def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
             if "FROM operations" in query:
                 return [ResultSet([])]

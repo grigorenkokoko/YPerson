@@ -279,10 +279,7 @@ def derive_exchange_code(bearer: str, installation_id: str, operation_id: str) -
         operation_id,
     )
     value = int.from_bytes(digest[:8], "big") >> 4
-    payload = "".join(
-        EXCHANGE_CODE_ALPHABET[(value >> shift) & 31]
-        for shift in range(55, -1, -5)
-    )
+    payload = "".join(EXCHANGE_CODE_ALPHABET[(value >> shift) & 31] for shift in range(55, -1, -5))
     return f"YP-{payload[:4]}-{payload[4:8]}-{payload[8:]}"
 
 
@@ -291,7 +288,9 @@ def normalize_exchange_code(value: str) -> str:
 
     normalized = value.upper().replace(" ", "").replace("-", "")
     normalized = normalized.removeprefix("YP")
-    if len(normalized) != 12 or any(character not in EXCHANGE_CODE_ALPHABET for character in normalized):
+    if len(normalized) != 12 or any(
+        character not in EXCHANGE_CODE_ALPHABET for character in normalized
+    ):
         raise ValueError("invalid exchange code")
     return f"YP-{normalized[:4]}-{normalized[4:8]}-{normalized[8:]}"
 

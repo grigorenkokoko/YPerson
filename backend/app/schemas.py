@@ -155,7 +155,9 @@ class SyncRequest(BaseModel):
             and self.privateFields is not None
             and self.exchangeMethod in {"qr", "photo"}
         ):
-            raise ValueError("prepareExchange does not accept privateFields with public-only exchange methods")
+            raise ValueError(
+                "prepareExchange does not accept privateFields with public-only exchange methods"
+            )
 
         if self.operation in {SyncOperation.claim_exchange, SyncOperation.cancel_exchange}:
             credential_count = sum(

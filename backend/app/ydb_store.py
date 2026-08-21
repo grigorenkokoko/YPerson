@@ -599,9 +599,7 @@ class YDBSyncStore:
                 }
             )
             private_declaration = ""
-            private_mutation = (
-                "DELETE FROM exchange_private_fields WHERE token_hash = $token_hash;"
-            )
+            private_mutation = "DELETE FROM exchange_private_fields WHERE token_hash = $token_hash;"
             parameters: dict[str, Any] = {
                 "$token_hash": _string(token_hash),
                 "$installation_id": _utf8(installation_id),
@@ -740,9 +738,7 @@ class YDBSyncStore:
                 ),
                 version=_stored_version(row),
             )
-            result_json = _json(
-                {"tokenHash": token_hash.hex(), "issuerInstallationID": issuer_id}
-            )
+            result_json = _json({"tokenHash": token_hash.hex(), "issuerInstallationID": issuer_id})
             private_declaration = ""
             private_mutation = ""
             parameters: dict[str, Any] = {
