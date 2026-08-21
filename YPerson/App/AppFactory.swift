@@ -16,9 +16,14 @@ final class YPersonExperienceBuilder {
     private let nearby = NearbyExchangeController()
     private let photoScanner = PhotoCardScanner()
     private let audio = AudioGreetingController()
+    private let contactCommitBarrier = ContactReconciliationCommitBarrier()
     private let imageSaver = CardImageSaver()
     private weak var output: (any YPersonExperienceOutput)?
     private weak var rootViewController: MainTabBarController?
+    private let personControllers = NSHashTable<PersonViewController>.weakObjects()
+    private var bootstrapTaskOwnership = ProfileBootstrapTaskOwnership()
+    private var bootstrapTasks: [ProfileBootstrapTaskOwnership.Ticket: Task<Void, Never>] = [:]
+    private var pushTokenTask: Task<Void, Never>?
 
     init(configuration: AppConfiguration) throws {
         self.configuration = configuration
@@ -88,12 +93,31 @@ final class YPersonExperienceBuilder {
         _ = analytics.activateIfConsented()
         var ownCard = snapshotStore?.readOwnCard()
         var savedPeople = snapshotStore?.readPeople() ?? []
+        if !syncCoordinator.isProfileActive {
+            ownCard = nil
+            savedPeople = []
+        }
 #if DEBUG
         if !persistsUserChanges {
             ownCard = .reviewOwn
             savedPeople = [.reviewAlexey, .reviewMaria]
         }
 #endif
+        let pendingAudioCommit = snapshotStore?.pendingAudioCardCommitRecord
+        _ = audio.recoverPendingCardAudioCommit(
+            pendingAudioCommit,
+            currentCard: ownCard,
+            pendingOperations: snapshotStore?.pendingOperations ?? []
+        )
+        if let pendingAudioCommit {
+            snapshotStore?.clearPendingAudioCardCommitRecord(ifCurrent: pendingAudioCommit)
+        }
+        audio.restoreSavedPublicGreetingIfAvailable(
+            expected: ownCard?.hasAudioGreeting == true
+        )
+        syncCoordinator.publicationGreetingProvider = { [weak audio] in
+            audio?.savedGreeting()
+        }
         let makeAppearance = { [permissions, analytics]
             (card: PersonCard, selectedTemplateID: String, onSelect: @escaping (String) -> Void) in
             AppearanceViewController(
@@ -108,16 +132,20 @@ final class YPersonExperienceBuilder {
             CardEditorViewController(card: card, permissions: permissions, audio: audio, makeAppearance: makeAppearance, onSave: onSave)
         }
         let card = CardViewController(card: ownCard, persistsChanges: persistsUserChanges, permissions: permissions, audio: audio, imageSaver: imageSaver, syncCoordinator: syncCoordinator, analytics: analytics, snapshotStore: snapshotStore, makeEditor: makeEditor)
-        let person = { [permissions, imageSaver, syncCoordinator, analytics, snapshotStore, mediaTransfer, audio] card in
-            PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, syncCoordinator: syncCoordinator, mediaTransfer: mediaTransfer, audio: audio, analytics: analytics, snapshotStore: snapshotStore)
+        let person = { [weak self, permissions, imageSaver, syncCoordinator, analytics, snapshotStore, mediaTransfer, audio, contactCommitBarrier] card in
+            let controller = PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, syncCoordinator: syncCoordinator, mediaTransfer: mediaTransfer, audio: audio, analytics: analytics, snapshotStore: snapshotStore, contactCommitBarrier: contactCommitBarrier)
+            self?.personControllers.add(controller)
+            return controller
         }
         let people = PeopleViewController(
             people: savedPeople,
             permissions: permissions,
             analytics: analytics,
+            contactCommitBarrier: contactCommitBarrier,
             makePerson: person,
-            onContactsImported: { [snapshotStore] cards in
-                guard let snapshotStore else {
+            isProfileActive: { [syncCoordinator] in syncCoordinator.isProfileActive },
+            onContactsImported: { [snapshotStore, syncCoordinator] cards in
+                guard syncCoordinator.isProfileActive, let snapshotStore else {
                     throw NSError(
                         domain: "YPerson.ContactsImport",
                         code: 1,
@@ -137,7 +165,8 @@ final class YPersonExperienceBuilder {
             analytics: analytics,
             snapshotStore: snapshotStore,
             ownCard: { [weak card] in card?.currentCard },
-            onPersonSaved: { [weak people, snapshotStore] _ in
+            onPersonSaved: { [weak people, snapshotStore, syncCoordinator] _ in
+                guard syncCoordinator.isProfileActive else { return }
                 people?.reload(people: snapshotStore?.readPeople() ?? [])
             }
         )
@@ -145,19 +174,35 @@ final class YPersonExperienceBuilder {
         let root = MainTabBarController(card: card, exchange: exchange, people: people, privacy: privacy)
         self.rootViewController = root
         root.route(to: context.entryPoint)
+        syncCoordinator.onProfileDeletionPreparation = { [weak self, weak card, weak exchange, weak people, weak privacy, audio, analytics] in
+            guard let self else { return }
+            let contactInvalidation = self.contactCommitBarrier.beginDeletion()
+            let personControllers = self.personControllers.allObjects
+            people?.beginProfileDeletion()
+            personControllers.forEach { $0.beginProfileDeletion() }
+            self.cancelActiveBootstrapTask()
+            self.pushTokenTask?.cancel()
+            self.pushTokenTask = nil
+            audio.delete()
+            analytics.setConsent(false)
+            card?.applyProfileDeletion()
+            exchange?.applyProfileDeletion()
+            privacy?.applyProfileDeletion()
+            await contactInvalidation.waitForInFlightCommits()
+        }
+        syncCoordinator.onProfileReactivated = { [weak self, weak people, weak privacy] in
+            self?.contactCommitBarrier.reactivateForUserCreation()
+            people?.applyProfileReactivation()
+            privacy?.applyProfileReactivation()
+        }
+        syncCoordinator.onAudioInvalidated = { [mediaTransfer] in
+            mediaTransfer.removeAllCachedAudio()
+        }
         if persistsUserChanges {
             syncCoordinator.onPeopleChanged = { [weak people, snapshotStore] in
                 people?.reload(people: snapshotStore?.readPeople() ?? [])
             }
             syncCoordinator.onOwnCardChanged = { [weak card] published in card?.applyPublishedCard(published) }
-            syncCoordinator.onProfileDeleted = { [weak card, weak people, mediaTransfer] in
-                mediaTransfer.removeAllCachedAudio()
-                card?.applyProfileDeletion()
-                people?.reload(people: [])
-            }
-            syncCoordinator.onAudioInvalidated = { [mediaTransfer] in
-                mediaTransfer.removeAllCachedAudio()
-            }
             refreshPeople()
         }
 #if DEBUG
@@ -221,11 +266,59 @@ final class YPersonExperienceBuilder {
 #endif
 
     private func updatePushToken(_ token: String?) {
-        Task { [syncCoordinator] in await syncCoordinator.updatePushToken(token) }
+        guard let profileContext = syncCoordinator.captureProfileOperationContext() else { return }
+        pushTokenTask?.cancel()
+        pushTokenTask = Task { [syncCoordinator] in
+            guard !Task.isCancelled,
+                  syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
+            await syncCoordinator.updatePushToken(token, context: profileContext)
+        }
     }
 
     private func refreshPeople() {
-        Task { [syncCoordinator] in await syncCoordinator.bootstrap() }
+        let profileContext = syncCoordinator.captureProfileOperationContext()
+        if let profileContext {
+            startActiveBootstrap(context: profileContext)
+            return
+        }
+        guard syncCoordinator.needsDeletionRecovery else { return }
+        startDeletionRecoveryBootstrap()
+    }
+
+    private func startActiveBootstrap(context profileContext: ProfileOperationContext) {
+        let start = bootstrapTaskOwnership.beginActive()
+        cancelBootstrapTask(start.replaced)
+        let ticket = start.ticket
+        bootstrapTasks[ticket] = Task { [weak self, syncCoordinator] in
+            defer { self?.finishBootstrapTask(ticket) }
+            guard !Task.isCancelled,
+                  syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
+            await syncCoordinator.bootstrap(context: profileContext)
+        }
+    }
+
+    private func startDeletionRecoveryBootstrap() {
+        guard let ticket = bootstrapTaskOwnership.beginDeletionRecovery() else { return }
+        bootstrapTasks[ticket] = Task { [weak self, syncCoordinator] in
+            defer { self?.finishBootstrapTask(ticket) }
+            guard !Task.isCancelled else { return }
+            guard syncCoordinator.needsDeletionRecovery else { return }
+            await syncCoordinator.bootstrap(context: nil)
+        }
+    }
+
+    private func cancelActiveBootstrapTask() {
+        cancelBootstrapTask(bootstrapTaskOwnership.invalidateActive())
+    }
+
+    private func cancelBootstrapTask(_ ticket: ProfileBootstrapTaskOwnership.Ticket?) {
+        guard let ticket else { return }
+        bootstrapTasks.removeValue(forKey: ticket)?.cancel()
+    }
+
+    private func finishBootstrapTask(_ ticket: ProfileBootstrapTaskOwnership.Ticket) {
+        bootstrapTaskOwnership.finish(ticket)
+        bootstrapTasks.removeValue(forKey: ticket)
     }
 }
 

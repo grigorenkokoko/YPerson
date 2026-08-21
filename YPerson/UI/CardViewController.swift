@@ -15,20 +15,38 @@ final class CardViewController: YPBaseViewController {
     private var cardView: CardSummaryView?
     private var showsPrivateFields = false
     private var preparedQRToken: String?
+    private var preparedQRContext: ProfileOperationContext?
+    private var preparedQRProfileGeneration: UUID?
     private var prepareQRTask: Task<Void, Never>?
+    private var publishTask: Task<Void, Never>?
+    private var cancellationTasks: [UUID: Task<Void, Never>] = [:]
     private var prepareQRGeneration: UUID?
+    private var lifecycleGeneration = UUID()
 
     var currentCard: PersonCard? { card }
 
     func applyPublishedCard(_ published: PersonCard) {
+        guard syncCoordinator.isProfileActive else { return }
         card = published
         render()
     }
 
     func applyProfileDeletion() {
+        lifecycleGeneration = UUID()
+        prepareQRTask?.cancel()
+        prepareQRTask = nil
+        publishTask?.cancel()
+        publishTask = nil
+        cancellationTasks.values.forEach { $0.cancel() }
+        cancellationTasks.removeAll()
+        prepareQRGeneration = nil
+        preparedQRToken = nil
+        preparedQRContext = nil
+        preparedQRProfileGeneration = nil
         card = nil
         showsPrivateFields = false
         render()
+        navigationController?.popToRootViewController(animated: false)
     }
 
     init(card: PersonCard?, persistsChanges: Bool, permissions: PermissionCenter, audio: AudioGreetingController, imageSaver: CardImageSaver, syncCoordinator: SyncCoordinator, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, makeEditor: @escaping (PersonCard?, @escaping (PersonCard) throws -> Void) -> UIViewController) {
@@ -117,9 +135,14 @@ final class CardViewController: YPBaseViewController {
     }
 
     @objc private func showQR() {
-        guard let card else { return }
+        guard let card,
+              let profileContext = syncCoordinator.captureProfileOperationContext() else { return }
+        let profileGeneration = lifecycleGeneration
+        let greeting = audio.savedGreeting()
         let showOffline: () -> Void = { [weak self] in
-            guard let self else { return }
+            guard let self,
+                  self.lifecycleGeneration == profileGeneration,
+                  self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
             guard let installationID = self.syncCoordinator.installationID else {
                 self.showMessage("Сначала сохраните визитку", "После сохранения YPerson создаст защищённый идентификатор для QR-кода.")
                 return
@@ -143,7 +166,10 @@ final class CardViewController: YPBaseViewController {
         let generation = UUID()
         prepareQRGeneration = generation
         prepareQRTask = Task { [weak self] in
-            guard let self else { return }
+            guard !Task.isCancelled,
+                  let self,
+                  self.lifecycleGeneration == profileGeneration,
+                  self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
             defer {
                 if self.prepareQRGeneration == generation {
                     self.prepareQRTask = nil
@@ -151,26 +177,40 @@ final class CardViewController: YPBaseViewController {
                 }
             }
             do {
-                let token = try await self.syncCoordinator.prepareExchange(
+                let prepared = try await self.syncCoordinator.prepareExchange(
                     card: card,
                     method: "qr",
-                    greeting: self.audio.savedGreeting()
+                    privateFields: nil,
+                    greeting: greeting,
+                    context: profileContext
                 )
+                guard self.lifecycleGeneration == profileGeneration else { return }
+                guard case .token(let token) = prepared.credential else {
+                    throw APIClient.ClientError.invalidResponse
+                }
                 guard !Task.isCancelled, self.viewIfLoaded?.window != nil else {
-                    await self.syncCoordinator.cancelExchange(token: token)
+                    await self.syncCoordinator.cancelExchange(
+                        credential: .token(token),
+                        context: profileContext
+                    )
                     return
                 }
                 guard let installationID = self.syncCoordinator.installationID else {
-                    await self.syncCoordinator.cancelExchange(token: token)
+                    await self.syncCoordinator.cancelExchange(
+                        credential: .token(token),
+                        context: profileContext
+                    )
                     throw SyncCoordinator.CoordinatorError.noProfile
                 }
                 self.preparedQRToken = token
+                self.preparedQRContext = profileContext
+                self.preparedQRProfileGeneration = profileGeneration
                 self.showQRCode(ExchangePayload(
                     version: 2,
                     issuerInstallationID: installationID,
                     card: card.exchangeCopy,
                     exchangeToken: token,
-                    expiresAt: Date().addingTimeInterval(10 * 60)
+                    expiresAt: prepared.expiresAt
                 ), isOffline: false)
             } catch where Task.isCancelled {
                 return
@@ -193,9 +233,18 @@ final class CardViewController: YPBaseViewController {
         let controller = QRExchangeViewController()
         if !isOffline, let token = exchangePayload.exchangeToken {
             controller.onClose = { [weak self] in
-                guard let self, self.preparedQRToken == token else { return }
+                guard let self,
+                      self.preparedQRToken == token,
+                      let profileContext = self.preparedQRContext,
+                      let profileGeneration = self.preparedQRProfileGeneration else { return }
                 self.preparedQRToken = nil
-                Task { await self.syncCoordinator.cancelExchange(token: token) }
+                self.preparedQRContext = nil
+                self.preparedQRProfileGeneration = nil
+                self.cancelPreparedQR(
+                    token: token,
+                    context: profileContext,
+                    generation: profileGeneration
+                )
             }
         }
         controller.title = "Мой QR"
@@ -228,26 +277,56 @@ final class CardViewController: YPBaseViewController {
     }
 
     @objc private func editCard() {
+        let isNew = card == nil
+        let editorGeneration = lifecycleGeneration
         let editor = makeEditor(card) { [weak self] updatedCard in
             guard let self else { return }
-            let isNew = self.card == nil
-            if self.persistsChanges {
-                guard let snapshotStore = self.snapshotStore else {
-                    throw CardSaveError.localStorageUnavailable
-                }
-                try snapshotStore.writeOwnCard(updatedCard)
+            guard self.lifecycleGeneration == editorGeneration else {
+                throw CardSaveError.profileLifecycleChanged
             }
+            if self.persistsChanges {
+                let audioCommit = try self.syncCoordinator.saveUserCardForPublication(
+                    updatedCard,
+                    allowsProfileReactivation: isNew,
+                    audioCommitIntent: self.audio.pendingCardCommitIntent
+                )
+                try self.audio.commitEditsForCardSave(
+                    authorizedBy: audioCommit,
+                    currentCard: updatedCard,
+                    pendingOperations: self.snapshotStore?.pendingOperations ?? []
+                )
+                if let audioCommit {
+                    self.syncCoordinator.completeAudioCardCommit(audioCommit)
+                }
+            }
+            self.lifecycleGeneration = UUID()
+            let profileGeneration = self.lifecycleGeneration
             self.card = updatedCard
             self.showsPrivateFields = false
             if isNew { self.analytics.report(.cardCreated) }
             self.render()
             guard self.persistsChanges else { return }
-            Task { [weak self] in
-                guard let self else { return }
-                guard let response = await self.syncCoordinator.publish(
+            guard let profileContext = self.syncCoordinator.captureProfileOperationContext() else {
+                throw CardSaveError.profileLifecycleChanged
+            }
+            let greeting = self.audio.savedGreeting()
+            self.publishTask?.cancel()
+            self.publishTask = Task { [weak self] in
+                guard !Task.isCancelled,
+                      let self,
+                      self.lifecycleGeneration == profileGeneration,
+                      self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
+                defer {
+                    if self.lifecycleGeneration == profileGeneration { self.publishTask = nil }
+                }
+                let response = await self.syncCoordinator.publish(
                     updatedCard,
-                    greeting: self.audio.savedGreeting()
-                ) else {
+                    greeting: greeting,
+                    context: profileContext
+                )
+                guard self.lifecycleGeneration == profileGeneration,
+                      self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
+                guard let response else {
                     self.showMessage(
                         "Карточка сохранена на iPhone",
                         "Онлайн-версия пока не обновлена. Повторите сохранение позже."
@@ -272,10 +351,16 @@ final class CardViewController: YPBaseViewController {
     }
 
     @objc private func unlockPrivate() {
-        guard card != nil else { return }
+        guard card != nil,
+              let profileContext = syncCoordinator.captureProfileOperationContext() else { return }
+        let profileGeneration = lifecycleGeneration
         explainPermission(title: "Закрытые поля", message: "Face ID защищает закрытые поля вашей визитки и подтверждает их передачу выбранному человеку.") { [weak self] in
-            self?.permissions.authenticatePrivateFields { result in
-                guard let self else { return }
+            guard let self,
+                  self.lifecycleGeneration == profileGeneration,
+                  self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
+            self.permissions.authenticatePrivateFields(for: .revealPrivateFields) { result in
+                guard self.lifecycleGeneration == profileGeneration,
+                      self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
                 if case .success = result {
                     self.showsPrivateFields = true
                     self.render()
@@ -287,15 +372,18 @@ final class CardViewController: YPBaseViewController {
         }
     }
 
-    @objc private func playGreeting() { audio.play() }
+    @objc private func playGreeting() {
+        guard syncCoordinator.isProfileActive else { return }
+        audio.play()
+    }
 
     private func saveImage() {
-        guard let cardView else { return }
+        guard syncCoordinator.isProfileActive, let cardView else { return }
         imageSaver.save(imageSaver.render(cardView), from: self)
     }
 
     private func shareImage() {
-        guard let cardView else { return }
+        guard syncCoordinator.isProfileActive, let cardView else { return }
         imageSaver.share(imageSaver.render(cardView), from: self, sourceView: cardView)
     }
 
@@ -305,14 +393,44 @@ final class CardViewController: YPBaseViewController {
 
     deinit {
         prepareQRTask?.cancel()
-        guard let token = preparedQRToken else { return }
+        publishTask?.cancel()
+        cancellationTasks.values.forEach { $0.cancel() }
+        guard let token = preparedQRToken,
+              let profileContext = preparedQRContext else { return }
         let coordinator = syncCoordinator
-        Task { @MainActor in await coordinator.cancelExchange(token: token) }
+        Task { @MainActor in
+            guard !Task.isCancelled,
+                  coordinator.isCurrentProfileOperationContext(profileContext) else { return }
+            await coordinator.cancelExchange(
+                credential: .token(token),
+                context: profileContext
+            )
+        }
+    }
+
+    private func cancelPreparedQR(
+        token: String,
+        context profileContext: ProfileOperationContext,
+        generation: UUID
+    ) {
+        let taskID = UUID()
+        cancellationTasks[taskID] = Task { [weak self] in
+            guard !Task.isCancelled,
+                  let self,
+                  self.lifecycleGeneration == generation,
+                  self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
+            defer { self.cancellationTasks.removeValue(forKey: taskID) }
+            await self.syncCoordinator.cancelExchange(
+                credential: .token(token),
+                context: profileContext
+            )
+        }
     }
 }
 
 private enum CardSaveError: Error {
     case localStorageUnavailable
+    case profileLifecycleChanged
 }
 
 private final class QRExchangeViewController: UIViewController {

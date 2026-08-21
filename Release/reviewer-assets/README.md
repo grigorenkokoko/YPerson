@@ -2,21 +2,22 @@
 
 All identities and contact details below are fictional.
 
-## QR card
+## Offline public QR card
 
-- File: `test-qr.png`
-- Payload: `yperson:card:person-anna:review-token`
-- Path: Exchange → Scan QR → continue from the camera pre-prompt → scan the file displayed on another screen → review Alexey Morozov → Add person.
+- File: `test-qr.png`; its exact deterministic source is `offline-public-qr-payload.txt`.
+- Payload: canonical `yperson:v2:` data accepted by the production decoder for the fictional Dmitry Volkov (`Tech Lead`, `Signal Garden`). This identity is separate from every Debug-only screenshot fixture. The payload contains no phone, private fields, meeting place, exchange token, or expiry.
+- Path: Exchange → Scan QR → continue from the camera pre-prompt → scan the PNG displayed on another screen → review Dmitry Volkov → Add person.
+- Expected: the preview identifies the import as offline. Saving adds the public card only to this iPhone; it does not establish a cloud connection because the payload has no exchange token.
 
-## Manual fallback
+The fixture can be regenerated and checked with `verify-offline-public-qr.sh --write`. Verification compiles the real production models/codec and requires `ZXING_CORE_JAR` pointing to a compatible local ZXing Core jar, so PNG decoding fails closed when an independent decoder is unavailable.
 
-- Code: `YP-1234`
-- Path: Exchange → Enter short code → enter the code → Check.
-- Expected: a fictional Alexey Morozov card preview; no address-book write occurs automatically.
+## Runtime manual-code path
+
+No bundled or static manual code works. On two authenticated online installations, create and save an own card on iPhone A, then choose Exchange → Show short code. On iPhone B choose Exchange → Enter short code, enter the current server-issued `YP-XXXX-XXXX-XXXX`, and tap Check before the expiry displayed on A. The code is one-time and server-validated. If only one device is available, use the offline QR fixture above.
 
 ## Two-iPhone nearby exchange
 
-Open Exchange → Nearby on two physical iPhones. Start discovery on both, select the test card, and confirm on both devices. The exchange token is short lived and is not claimed before mutual confirmation. If physical BLE setup is unavailable to App Review, use the QR or manual path, which exercises the same receive/confirm UI.
+Open Exchange → Nearby on two physical iPhones. Start search on both; backend public-card and short-lived-token preparation begins before BLE discovery. Each installation independently claims the peer token only after its own local confirmation and saves its own connection. There is no peer-confirmation signal, so do not interpret one device's confirmation as proof that the other user confirmed. The exchanged cards remain public and omit phone. If physical BLE setup is unavailable to App Review, use the runtime manual-code path with two online installations, or the bundled offline QR when only one device is available.
 
 ## Notification payload shape
 

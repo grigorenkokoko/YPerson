@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+import re
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from hmac import compare_digest
 from types import SimpleNamespace
@@ -14,14 +15,29 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 from app.observability import JsonRequestFormatter, request_logger
-from app.schemas import PersonCard, SyncedPerson
+from app.schemas import PersonCard, PrivateCardFields, SyncedPerson
 from app.settings import Settings
-from app.storage import InvalidCredential, StorageConflict, StorageIntegrityError, SyncSnapshot
-from app.sync_service import SyncService, derive_exchange_token
+from app.storage import (
+    InvalidCredential,
+    PreparedExchangeResult,
+    StorageConflict,
+    StorageIntegrityError,
+    SyncSnapshot,
+)
+from app.sync_service import (
+    SyncService,
+    derive_exchange_code,
+    derive_exchange_token,
+    normalize_exchange_code,
+)
 
 NOW = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
 OWNER = ("installation-owner-0001", "owner-bearer-secret-000000000000000000000000")
 PEER = ("installation-peer-00002", "peer-bearer-secret-0000000000000000000000000")
+OTHER = (
+    "installation-other-0003",
+    "other-bearer-secret-000000000000000000000000",
+)
 
 
 def card(card_id: str, name: str) -> PersonCard:
@@ -30,7 +46,7 @@ def card(card_id: str, name: str) -> PersonCard:
         name=name,
         role="Engineer",
         company="YPerson",
-        phone="+70000000000",
+        phone="",
         email=f"{card_id}@example.invalid",
         tagline="Hello",
         hasAudioGreeting=False,
@@ -47,6 +63,9 @@ class MemoryStore:
         self.connections: set[tuple[str, str]] = set()
         self.push_tokens: dict[str, str] = {}
         self.claims: dict[str, tuple[str, datetime, str | None]] = {}
+        self.exchange_private_fields: dict[str, PrivateCardFields] = {}
+        self.connection_private_fields: dict[tuple[str, str], PrivateCardFields] = {}
+        self.operation_results: dict[tuple[str, str], dict[str, object]] = {}
         self.deleted: dict[tuple[str, str], tuple[bytes, list[str]]] = {}
         self.auth_calls: list[str] = []
         self.moderation: list[tuple[str, str, str, str | None]] = []
@@ -82,7 +101,7 @@ class MemoryStore:
         people = tuple(
             SyncedPerson(
                 installationID=peer,
-                card=self.cards[peer][1],
+                card=self._card_for(installation_id, peer),
                 version=self.cards[peer][0],
             )
             for owner, peer in sorted(self.connections)
@@ -101,14 +120,48 @@ class MemoryStore:
         installation_id: str,
         operation_id: str,
         method: str,
-        raw_token: str,
+        public_card: PersonCard,
+        private_fields: PrivateCardFields | None,
+        raw_credential: str,
         expires_at: datetime,
-    ) -> None:
-        del operation_id, method
-        previous = self.claims.get(raw_token)
+    ) -> PreparedExchangeResult:
+        operation_key = (installation_id, operation_id)
+        credential_hash = sha256(raw_credential.encode()).digest()
+        result = self.operation_results.get(operation_key)
+        if result is not None:
+            if (
+                result.get("operation") != "prepareExchange"
+                or result.get("credential_hash") != credential_hash
+            ):
+                raise StorageConflict("operation identifier already used")
+            version = result.get("card_version")
+            stored_expiry = result.get("expires_at")
+            if not isinstance(version, int) or not isinstance(stored_expiry, datetime):
+                raise StorageIntegrityError
+            return PreparedExchangeResult(card_version=version, expires_at=stored_expiry)
+
+        previous = self.claims.get(raw_credential)
         if previous is not None and previous[0] != installation_id:
             raise StorageConflict("exchange unavailable")
-        self.claims[raw_token] = (installation_id, expires_at, previous[2] if previous else None)
+        version = self.cards.get(installation_id, (0, public_card))[0] + 1
+        self.cards[installation_id] = (version, public_card)
+        self.claims[raw_credential] = (
+            installation_id,
+            expires_at,
+            previous[2] if previous else None,
+        )
+        if private_fields is None:
+            self.exchange_private_fields.pop(raw_credential, None)
+        else:
+            self.exchange_private_fields[raw_credential] = private_fields
+        self.operation_results[operation_key] = {
+            "operation": "prepareExchange",
+            "credential_hash": credential_hash,
+            "card_version": version,
+            "expires_at": expires_at,
+            "method": method,
+        }
+        return PreparedExchangeResult(card_version=version, expires_at=expires_at)
 
     def claim_exchange(
         self,
@@ -116,15 +169,46 @@ class MemoryStore:
         operation_id: str,
         raw_token: str,
     ) -> SyncedPerson:
-        del operation_id
+        operation_key = (installation_id, operation_id)
+        credential_hash = sha256(raw_token.encode()).digest()
+        result = self.operation_results.get(operation_key)
+        if result is not None:
+            if (
+                result.get("operation") != "claimExchange"
+                or result.get("credential_hash") != credential_hash
+            ):
+                raise StorageConflict("operation identifier already used")
+            issuer = result.get("issuer")
+            if not isinstance(issuer, str) or issuer not in self.cards:
+                raise StorageIntegrityError
+            return SyncedPerson(
+                installationID=issuer,
+                card=self._card_for(installation_id, issuer),
+                version=self.cards[issuer][0],
+            )
+
         claim = self.claims.get(raw_token)
         if claim is None or claim[1] <= NOW or claim[2] is not None:
             raise StorageConflict("exchange unavailable")
         issuer = claim[0]
+        if issuer == installation_id:
+            raise StorageConflict("exchange unavailable")
         self.claims[raw_token] = (issuer, claim[1], installation_id)
         self.connections.update({(issuer, installation_id), (installation_id, issuer)})
-        version, issuer_card = self.cards[issuer]
-        return SyncedPerson(installationID=issuer, card=issuer_card, version=version)
+        private_fields = self.exchange_private_fields.pop(raw_token, None)
+        if private_fields is not None:
+            self.connection_private_fields[(installation_id, issuer)] = private_fields
+        self.operation_results[operation_key] = {
+            "operation": "claimExchange",
+            "credential_hash": credential_hash,
+            "issuer": issuer,
+        }
+        version, _ = self.cards[issuer]
+        return SyncedPerson(
+            installationID=issuer,
+            card=self._card_for(installation_id, issuer),
+            version=version,
+        )
 
     def cancel_exchange(
         self,
@@ -132,13 +216,27 @@ class MemoryStore:
         operation_id: str,
         raw_token: str,
     ) -> None:
-        del operation_id
+        operation_key = (installation_id, operation_id)
+        credential_hash = sha256(raw_token.encode()).digest()
+        result = self.operation_results.get(operation_key)
+        if result is not None:
+            if (
+                result.get("operation") != "cancelExchange"
+                or result.get("credential_hash") != credential_hash
+            ):
+                raise StorageConflict("operation identifier already used")
+            return
         claim = self.claims.get(raw_token)
         if claim is None:
-            return
-        if claim[0] != installation_id or claim[2] is not None:
+            raise StorageConflict("exchange unavailable")
+        if claim[0] != installation_id or claim[1] <= NOW or claim[2] is not None:
             raise StorageConflict("exchange unavailable")
         self.claims.pop(raw_token)
+        self.exchange_private_fields.pop(raw_token, None)
+        self.operation_results[operation_key] = {
+            "operation": "cancelExchange",
+            "credential_hash": credential_hash,
+        }
 
     def save_push_token(
         self,
@@ -174,6 +272,19 @@ class MemoryStore:
         self.connections = {
             connection for connection in self.connections if installation_id not in connection
         }
+        self.connection_private_fields = {
+            connection: private_fields
+            for connection, private_fields in self.connection_private_fields.items()
+            if installation_id not in connection
+        }
+        owned_credentials = {
+            credential
+            for credential, claim in self.claims.items()
+            if claim[0] == installation_id or claim[2] == installation_id
+        }
+        for credential in owned_credentials:
+            self.claims.pop(credential, None)
+            self.exchange_private_fields.pop(credential, None)
         self.deleted[(installation_id, operation_id)] = (credential_hash, object_keys)
         return object_keys
 
@@ -184,10 +295,26 @@ class MemoryStore:
         bearer: str,
     ) -> list[str] | None:
         deleted = self.deleted.get((installation_id, operation_id))
-        if deleted is None:
+        candidates = [
+            candidate
+            for (candidate_installation_id, _), candidate in self.deleted.items()
+            if candidate_installation_id == installation_id
+        ]
+        if len(candidates) > 1:
+            raise StorageIntegrityError
+        if installation_id in self.installations:
+            if candidates:
+                raise StorageIntegrityError
             return None
+        operation_collision = (installation_id, operation_id) in self.operation_results
+        if deleted is None:
+            if not candidates:
+                return None
+            deleted = candidates[0]
         if not compare_digest(deleted[0], sha256(bearer.encode()).digest()):
             raise InvalidCredential
+        if operation_collision:
+            raise StorageConflict("operation identifier already used")
         return list(deleted[1])
 
     def snapshot(self, installation_id: str) -> SimpleNamespace | None:
@@ -197,6 +324,13 @@ class MemoryStore:
             card=self.cards.get(installation_id),
             push_token=self.push_tokens.get(installation_id),
         )
+
+    def _card_for(self, requester: str, peer: str) -> PersonCard:
+        public_card = self.cards[peer][1]
+        private_fields = self.connection_private_fields.get((requester, peer))
+        if private_fields is None:
+            return public_card
+        return public_card.model_copy(update=private_fields.model_dump())
 
 
 def make_client(
@@ -235,7 +369,7 @@ def post_sync(
     )
 
 
-def test_two_installations_claim_exchange_and_receive_peer_card() -> None:
+def test_qr_exchange_returns_only_token_and_claims_peer_card() -> None:
     store = MemoryStore()
     owner_card = PersonCard.model_validate(
         card("card-owner", "Owner").model_dump(mode="json") | {"templateID": "indigo-studio"}
@@ -249,6 +383,7 @@ def test_two_installations_claim_exchange_and_receive_peer_card() -> None:
             "prepareExchange",
             operation_id="prepare-op-0001",
             card=owner_card.model_dump(mode="json"),
+            exchangeMethod="qr",
         )
         claimed = post_sync(
             client,
@@ -261,11 +396,360 @@ def test_two_installations_claim_exchange_and_receive_peer_card() -> None:
     assert owner_bootstrap.status_code == peer_bootstrap.status_code == 200
     assert prepared.status_code == 200
     assert prepared.json()["exchangeToken"] == "eWQup1GlqgOm0k5ncRitNgHsikQEtrXKV9uM01_Y-W8"
+    assert prepared.json()["exchangeCode"] is None
+    assert prepared.json()["exchangeExpiresAt"] == "2026-08-20T12:10:00Z"
     assert "=" not in prepared.json()["exchangeToken"]
     assert claimed.status_code == 200
     assert claimed.json()["people"][0]["card"]["id"] == "card-owner"
     assert claimed.json()["people"][0]["card"]["templateID"] == "indigo-studio"
     assert claimed.json()["people"][0]["installationID"] == OWNER[0]
+
+
+def test_omitted_method_replays_legacy_opaque_token_without_code() -> None:
+    store = MemoryStore()
+    with make_client(store) as client:
+        post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-legacy-token")
+        payload = {"card": card("card-owner", "Owner").model_dump(mode="json")}
+        first = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-op-0001",
+            **payload,
+        )
+        replay = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-op-0001",
+            **payload,
+        )
+
+    assert first.status_code == replay.status_code == 200
+    assert first.json() == replay.json()
+    assert first.json()["exchangeToken"] == "eWQup1GlqgOm0k5ncRitNgHsikQEtrXKV9uM01_Y-W8"
+    assert re.fullmatch(r"[A-Za-z0-9_-]{43}", first.json()["exchangeToken"])
+    assert first.json()["exchangeCode"] is None
+    assert first.json()["exchangeExpiresAt"] == "2026-08-20T12:10:00Z"
+    assert store.operation_results[(OWNER[0], "prepare-op-0001")]["method"] == "legacy"
+    assert len(store.claims) == 1
+
+
+def test_manual_private_phone_is_directional_and_survives_refresh() -> None:
+    store = MemoryStore()
+    with make_client(store) as client:
+        post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-private")
+        post_sync(client, PEER, "refresh", operation_id="peer-bootstrap-private")
+        post_sync(client, OTHER, "refresh", operation_id="other-bootstrap-private")
+        prepared = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-private-code-1",
+            card=card("card-owner", "Owner").model_dump(mode="json"),
+            exchangeMethod="manual",
+            privateFields={"phone": "+70000000000"},
+        )
+        assert prepared.json()["exchangeToken"] is None
+        assert prepared.json()["exchangeCode"].startswith("YP-")
+        assert prepared.json()["exchangeExpiresAt"] == "2026-08-20T12:10:00Z"
+        claimed = post_sync(
+            client,
+            PEER,
+            "claimExchange",
+            operation_id="claim-private-code-01",
+            exchangeCode=prepared.json()["exchangeCode"],
+        )
+        assert claimed.json()["people"][0]["card"]["phone"] == "+70000000000"
+        public_prepared = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-public-code-01",
+            card=card("card-owner", "Owner").model_dump(mode="json"),
+            exchangeMethod="manual",
+        )
+        post_sync(
+            client,
+            OTHER,
+            "claimExchange",
+            operation_id="claim-public-code-001",
+            exchangeCode=public_prepared.json()["exchangeCode"],
+        )
+        refreshed_peer = post_sync(
+            client,
+            PEER,
+            "refresh",
+            operation_id="peer-refresh-private",
+        )
+        refreshed_other = post_sync(
+            client,
+            OTHER,
+            "refresh",
+            operation_id="other-refresh-public",
+        )
+        assert refreshed_peer.json()["people"][0]["card"]["phone"] == "+70000000000"
+        assert refreshed_other.json()["people"][0]["installationID"] == OWNER[0]
+        assert all(item["card"]["phone"] == "" for item in refreshed_other.json()["people"])
+
+
+def test_prepare_replay_returns_stable_credential_expiry_and_card_version() -> None:
+    store = MemoryStore()
+    with make_client(store) as client:
+        post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-replay")
+        payload = {
+            "card": card("card-owner", "Owner").model_dump(mode="json"),
+            "exchangeMethod": "manual",
+            "privateFields": {"phone": "+70000000000"},
+        }
+        first = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-replay-0001",
+            **payload,
+        )
+        replay = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-replay-0001",
+            **payload,
+        )
+
+    assert first.status_code == replay.status_code == 200
+    assert first.json() == replay.json()
+    assert first.json()["ownCardVersion"] == 1
+    assert len(store.claims) == 1
+
+
+def test_prepare_replay_returns_original_expiry_after_clock_advances() -> None:
+    store = MemoryStore()
+    clock_values = iter([NOW, NOW + timedelta(minutes=5)])
+    service = SyncService(store, clock=lambda: next(clock_values))
+    with TestClient(create_app(Settings(_env_file=None), sync_service=service)) as client:
+        post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-time-replay")
+        payload = {
+            "card": card("card-owner", "Owner").model_dump(mode="json"),
+            "exchangeMethod": "manual",
+        }
+        first = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-time-replay",
+            **payload,
+        )
+        replay = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-time-replay",
+            **payload,
+        )
+
+    assert first.status_code == replay.status_code == 200
+    assert first.json()["exchangeExpiresAt"] == "2026-08-20T12:10:00Z"
+    assert replay.json()["exchangeExpiresAt"] == first.json()["exchangeExpiresAt"]
+    assert store.claims[first.json()["exchangeCode"]][1] == NOW + timedelta(minutes=10)
+
+
+@pytest.mark.parametrize(
+    ("operation", "credentials"),
+    [("claimExchange", PEER), ("cancelExchange", OWNER)],
+)
+def test_legacy_code_in_exchange_token_can_claim_or_cancel_manual_exchange(
+    operation: str,
+    credentials: tuple[str, str],
+) -> None:
+    store = MemoryStore()
+    with make_client(store) as client:
+        post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-legacy")
+        post_sync(client, PEER, "refresh", operation_id="peer-bootstrap-legacy")
+        prepared = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-legacy-code",
+            card=card("card-owner", "Owner").model_dump(mode="json"),
+            exchangeMethod="manual",
+        )
+        response = post_sync(
+            client,
+            credentials,
+            operation,
+            operation_id=f"legacy-code-{operation}",
+            exchangeToken=prepared.json()["exchangeCode"],
+        )
+
+    assert response.status_code == 200
+    if operation == "claimExchange":
+        assert response.json()["people"][0]["installationID"] == OWNER[0]
+    else:
+        assert prepared.json()["exchangeCode"] not in store.claims
+
+
+def test_manual_exchange_code_accepts_tolerant_human_formatting() -> None:
+    store = MemoryStore()
+    with make_client(store) as client:
+        post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-format")
+        post_sync(client, PEER, "refresh", operation_id="peer-bootstrap-format")
+        prepared = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-format-code",
+            card=card("card-owner", "Owner").model_dump(mode="json"),
+            exchangeMethod="manual",
+        )
+        formatted_code = prepared.json()["exchangeCode"].lower().replace("-", " ")
+        claimed = post_sync(
+            client,
+            PEER,
+            "claimExchange",
+            operation_id="claim-format-code-01",
+            exchangeCode=formatted_code,
+        )
+
+    assert claimed.status_code == 200
+    assert claimed.json()["people"][0]["installationID"] == OWNER[0]
+
+
+@pytest.mark.parametrize("operation", ["claimExchange", "cancelExchange"])
+def test_invalid_manual_code_returns_sanitized_conflict(operation: str) -> None:
+    store = MemoryStore()
+    with make_client(store) as client:
+        post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-invalid")
+        response = post_sync(
+            client,
+            OWNER,
+            operation,
+            operation_id=f"invalid-code-{operation}",
+            exchangeCode="not-a-manual-code",
+        )
+
+    assert response.status_code == 409
+    assert set(response.json()) == {"error", "requestID"}
+    assert response.json()["error"] == "conflict"
+    assert "manual" not in response.text
+
+
+def test_exchange_can_only_be_claimed_once() -> None:
+    store = MemoryStore()
+    with make_client(store) as client:
+        for credentials, operation_id in (
+            (OWNER, "owner-bootstrap-once"),
+            (PEER, "peer-bootstrap-once"),
+            (OTHER, "other-bootstrap-once"),
+        ):
+            post_sync(client, credentials, "refresh", operation_id=operation_id)
+        prepared = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-claim-once",
+            card=card("card-owner", "Owner").model_dump(mode="json"),
+            exchangeMethod="qr",
+        )
+        token = prepared.json()["exchangeToken"]
+        first = post_sync(
+            client,
+            PEER,
+            "claimExchange",
+            operation_id="claim-once-peer-01",
+            exchangeToken=token,
+        )
+        second = post_sync(
+            client,
+            OTHER,
+            "claimExchange",
+            operation_id="claim-once-other-1",
+            exchangeToken=token,
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert (OTHER[0], OWNER[0]) not in store.connections
+
+
+def test_expired_exchange_cannot_be_claimed() -> None:
+    store = MemoryStore()
+    with make_client(store) as client:
+        post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-expired")
+        post_sync(client, PEER, "refresh", operation_id="peer-bootstrap-expired")
+        prepared = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-expired-code",
+            card=card("card-owner", "Owner").model_dump(mode="json"),
+            exchangeMethod="manual",
+        )
+        code = prepared.json()["exchangeCode"]
+        issuer, _, claimant = store.claims[code]
+        store.claims[code] = (issuer, NOW, claimant)
+        claimed = post_sync(
+            client,
+            PEER,
+            "claimExchange",
+            operation_id="claim-expired-code-1",
+            exchangeCode=code,
+        )
+
+    assert claimed.status_code == 409
+    assert store.connections == set()
+
+
+def test_owner_cannot_claim_own_exchange() -> None:
+    store = MemoryStore()
+    with make_client(store) as client:
+        post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-self")
+        prepared = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-self-code-1",
+            card=card("card-owner", "Owner").model_dump(mode="json"),
+            exchangeMethod="manual",
+        )
+        claimed = post_sync(
+            client,
+            OWNER,
+            "claimExchange",
+            operation_id="claim-self-code-001",
+            exchangeCode=prepared.json()["exchangeCode"],
+        )
+
+    assert claimed.status_code == 409
+    assert store.connections == set()
+
+
+@pytest.mark.parametrize("operation", ["publishCard", "prepareExchange"])
+@pytest.mark.parametrize(
+    "private_public_field",
+    [
+        {"phone": "+70000000000"},
+        {"meetingPlace": "Secret meeting place"},
+    ],
+)
+def test_public_card_rejects_private_fields(
+    operation: str,
+    private_public_field: dict[str, str],
+) -> None:
+    store = MemoryStore()
+    with make_client(store) as client:
+        post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-public")
+        public_card = card("card-owner", "Owner").model_dump(mode="json") | private_public_field
+        response = post_sync(
+            client,
+            OWNER,
+            operation,
+            operation_id=f"reject-public-{operation}",
+            card=public_card,
+        )
+
+    assert response.status_code == 409
+    assert OWNER[0] not in store.cards
 
 
 def test_owner_can_cancel_prepared_exchange_idempotently_before_peer_claim() -> None:
@@ -279,34 +763,37 @@ def test_owner_can_cancel_prepared_exchange_idempotently_before_peer_claim() -> 
             "prepareExchange",
             operation_id="prepare-op-cancel",
             card=card("card-owner", "Owner").model_dump(mode="json"),
+            exchangeMethod="manual",
+            privateFields={"phone": "+70000000000"},
         )
-        token = prepared.json()["exchangeToken"]
+        code = prepared.json()["exchangeCode"]
         first = post_sync(
             client,
             OWNER,
             "cancelExchange",
             operation_id="cancel-op-stable",
-            exchangeToken=token,
+            exchangeCode=code.lower().replace("-", " "),
         )
         replay = post_sync(
             client,
             OWNER,
             "cancelExchange",
             operation_id="cancel-op-stable",
-            exchangeToken=token,
+            exchangeCode=code,
         )
         claim = post_sync(
             client,
             PEER,
             "claimExchange",
             operation_id="claim-after-cancel",
-            exchangeToken=token,
+            exchangeCode=code,
         )
 
     assert first.status_code == replay.status_code == 200
     assert first.json()["message"] == replay.json()["message"] == "exchange cancelled"
     assert claim.status_code == 409
     assert store.connections == set()
+    assert store.exchange_private_fields == {}
 
 
 def test_exchange_token_derivation_length_prefixes_ambiguous_components() -> None:
@@ -324,6 +811,45 @@ def test_exchange_token_derivation_length_prefixes_ambiguous_components() -> Non
     )
 
     assert first != second
+
+
+def test_manual_code_is_deterministic_unambiguous_and_domain_separated() -> None:
+    first = derive_exchange_code(OWNER[1], OWNER[0], "prepare-manual-0001")
+    replay = derive_exchange_code(OWNER[1], OWNER[0], "prepare-manual-0001")
+    other = derive_exchange_code(OWNER[1], OWNER[0], "prepare-manual-0002")
+
+    assert first == replay
+    assert first != other
+    assert re.fullmatch(r"YP-[0-9A-HJKMNP-TV-Z]{4}(?:-[0-9A-HJKMNP-TV-Z]{4}){2}", first)
+
+
+@pytest.mark.parametrize(
+    ("value", "canonical"),
+    [
+        ("yp 0123 4567 89ab", "YP-0123-4567-89AB"),
+        ("0123-4567-89AB", "YP-0123-4567-89AB"),
+        ("YP-0123-4567-89AB", "YP-0123-4567-89AB"),
+    ],
+)
+def test_manual_code_normalization(value: str, canonical: str) -> None:
+    assert normalize_exchange_code(value) == canonical
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "YP-0123-4567-89A",
+        "YP-0123-4567-89AI",
+        "YP-0123-4567-89AL",
+        "YP-0123-4567-89AO",
+        "YP-0123-4567-89AU",
+        "YP-0123-4567-89A!",
+        "arbitrary-token-text",
+    ],
+)
+def test_manual_code_normalization_rejects_invalid_values(value: str) -> None:
+    with pytest.raises(ValueError):
+        normalize_exchange_code(value)
 
 
 def test_wrong_bearer_returns_generic_401_without_installation_enumeration() -> None:
@@ -381,6 +907,139 @@ def test_delete_profile_replays_cleanup_without_recreating_installation() -> Non
         ["private/object-key-sentinel"],
         ["private/object-key-sentinel"],
     ]
+
+
+def test_delete_profile_with_new_operation_deletes_an_active_installation() -> None:
+    store = MemoryStore()
+    cleaned: list[list[str]] = []
+    store.object_keys[OWNER[0]] = ["private/pre-enqueue-window.m4a"]
+    with make_client(store, cleaned=cleaned) as client:
+        bootstrap = post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-delete")
+        response = post_sync(
+            client,
+            OWNER,
+            "deleteProfile",
+            operation_id="delete-op-after-pre-enqueue-crash",
+        )
+
+    assert bootstrap.status_code == 200
+    assert response.status_code == 200
+    assert store.snapshot(OWNER[0]) is None
+    assert cleaned == [["private/pre-enqueue-window.m4a"]]
+
+
+def test_delete_profile_with_new_operation_replays_a_lost_prior_deletion() -> None:
+    store = MemoryStore()
+    cleaned: list[list[str]] = []
+    store.object_keys[OWNER[0]] = ["private/post-ack-window.m4a"]
+    with make_client(store, cleaned=cleaned) as client:
+        bootstrap = post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-replay")
+        original = post_sync(
+            client,
+            OWNER,
+            "deleteProfile",
+            operation_id="delete-op-lost-after-server-ack",
+        )
+        recovered = post_sync(
+            client,
+            OWNER,
+            "deleteProfile",
+            operation_id="delete-op-recreated-by-migration",
+        )
+        wrong_bearer = post_sync(
+            client,
+            (OWNER[0], "wrong-bearer-secret-00000000000000000000000"),
+            "deleteProfile",
+            operation_id="delete-op-recreated-by-migration",
+        )
+        wrong_installation = post_sync(
+            client,
+            ("installation-not-owner", OWNER[1]),
+            "deleteProfile",
+            operation_id="delete-op-recreated-by-migration",
+        )
+
+    assert bootstrap.status_code == original.status_code == recovered.status_code == 200
+    assert wrong_bearer.status_code == wrong_installation.status_code == 401
+    assert store.snapshot(OWNER[0]) is None
+    assert cleaned == [
+        ["private/post-ack-window.m4a"],
+        ["private/post-ack-window.m4a"],
+    ]
+
+
+def test_delete_profile_reprobes_after_a_concurrent_delete_wins_authentication() -> None:
+    class ConcurrentlyDeletedStore(MemoryStore):
+        def authenticate(self, installation_id: str, bearer: str) -> None:
+            self.delete_profile(installation_id, "delete-op-concurrent-winner")
+            super().authenticate(installation_id, bearer)
+
+    store = ConcurrentlyDeletedStore()
+    cleaned: list[list[str]] = []
+    store.object_keys[OWNER[0]] = ["private/concurrent-delete.m4a"]
+    with make_client(store, cleaned=cleaned) as client:
+        bootstrap = post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-race")
+        response = post_sync(
+            client,
+            OWNER,
+            "deleteProfile",
+            operation_id="delete-op-racing-client",
+        )
+        wrong_bearer = post_sync(
+            client,
+            (OWNER[0], "wrong-bearer-secret-00000000000000000000000"),
+            "deleteProfile",
+            operation_id="delete-op-racing-client",
+        )
+
+    assert bootstrap.status_code == response.status_code == 200
+    assert wrong_bearer.status_code == 401
+    assert cleaned == [["private/concurrent-delete.m4a"]]
+
+
+def test_delete_rejects_whitespace_operation_id_before_store_access() -> None:
+    store = MemoryStore()
+    with make_client(store) as client:
+        response = post_sync(client, OWNER, "deleteProfile", operation_id="        ")
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_request"
+    assert store.auth_calls == []
+    assert store.installations == {}
+    assert store.deleted == {}
+
+
+def test_memory_store_rejects_ambiguous_tombstones_even_for_an_exact_replay() -> None:
+    store = MemoryStore()
+    credential_hash = sha256(OWNER[1].encode()).digest()
+    store.deleted[(OWNER[0], "delete-op-exact")] = (credential_hash, [])
+    store.deleted[(OWNER[0], "delete-op-other")] = (credential_hash, [])
+
+    with pytest.raises(StorageIntegrityError):
+        store.replay_deleted_profile(OWNER[0], "delete-op-exact", OWNER[1])
+
+
+def test_memory_store_authenticates_tombstone_before_revealing_exact_collision() -> None:
+    store = MemoryStore()
+    credential_hash = sha256(OWNER[1].encode()).digest()
+    store.deleted[(OWNER[0], "delete-op-original")] = (credential_hash, [])
+    store.operation_results[(OWNER[0], "delete-op-collision")] = {"operation": "publishCard"}
+    with make_client(store) as client:
+        wrong_bearer = post_sync(
+            client,
+            (OWNER[0], "wrong-bearer-secret-00000000000000000000000"),
+            "deleteProfile",
+            operation_id="delete-op-collision",
+        )
+        matching_bearer = post_sync(
+            client,
+            OWNER,
+            "deleteProfile",
+            operation_id="delete-op-collision",
+        )
+
+    assert wrong_bearer.status_code == 401
+    assert matching_bearer.status_code == 409
 
 
 def test_delete_with_private_objects_fails_closed_without_cleanup_service() -> None:

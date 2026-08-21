@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
+import uuid
 from pathlib import Path
 
 import yaml
@@ -195,3 +197,146 @@ def test_ios_debug_and_release_use_the_existing_gateway() -> None:
     assert f"API_BASE_URL = https:/$()/{gateway}" in release
     assert f"PRIVACY_POLICY_URL = https:/$()/{gateway}/privacy" in base
     assert f"SUPPORT_URL = https:/$()/{gateway}/support" in base
+
+
+def test_serverless_smoke_keeps_qr_and_manual_exchange_credentials_separate() -> None:
+    """Deployment must exercise both credential shapes without printing either secret."""
+
+    script = DEPLOY_SCRIPT.read_text()
+
+    for operation_id in (
+        "smoke-prepare-exchange-qr",
+        "smoke-claim-exchange-qr",
+        "smoke-prepare-exchange-manual",
+        "smoke-claim-exchange-manual",
+    ):
+        assert script.count(operation_id) == 1
+
+    assert 'payload["exchangeMethod"] = os.environ["SMOKE_EXCHANGE_METHOD"]' in script
+    assert 'payload["exchangeToken"] = os.environ["SMOKE_EXCHANGE_TOKEN"]' in script
+    assert 'payload["exchangeCode"] = os.environ["SMOKE_EXCHANGE_CODE"]' in script
+
+    qr_start = script.index('SMOKE_CARD_ID="smoke-card-${GITHUB_SHA:0:12}"')
+    manual_start = script.index(
+        'SMOKE_CARD_ID="smoke-card-${GITHUB_SHA:0:12}"',
+        qr_start + 1,
+    )
+    audio_start = script.index("printf 'YPerson smoke audio'", manual_start)
+    qr_block = script[qr_start:manual_start]
+    manual_block = script[manual_start:audio_start]
+
+    _assert_fragments_in_order(
+        qr_block,
+        (
+            "SMOKE_EXCHANGE_METHOD=qr",
+            'prepare-exchange-qr.json" prepareExchange',
+            "smoke-prepare-exchange-qr",
+            'prepare-exchange-qr-response.json"',
+            'prepare-exchange-qr-response.json" exchangeToken',
+            'prepare-exchange-qr-response.json" exchangeExpiresAt',
+            "SMOKE_EXCHANGE_FIELD=exchangeToken",
+            'claim-exchange-qr.json" claimExchange',
+            "smoke-claim-exchange-qr",
+            'claim-exchange-qr-response.json"',
+            "unset SMOKE_EXCHANGE_TOKEN",
+        ),
+    )
+    assert qr_block.count("prepare-exchange-qr-response.json") == 3
+    assert "SMOKE_EXCHANGE_METHOD=manual" not in qr_block
+    assert "SMOKE_EXCHANGE_FIELD=exchangeCode" not in qr_block
+
+    _assert_fragments_in_order(
+        manual_block,
+        (
+            "SMOKE_EXCHANGE_METHOD=manual",
+            'prepare-exchange-manual.json" prepareExchange',
+            "smoke-prepare-exchange-manual",
+            'prepare-exchange-manual-response.json"',
+            'prepare-exchange-manual-response.json" exchangeCode',
+            'prepare-exchange-manual-response.json" exchangeExpiresAt',
+            "SMOKE_EXCHANGE_FIELD=exchangeCode",
+            'claim-exchange-manual.json" claimExchange',
+            "smoke-claim-exchange-manual",
+            'claim-exchange-manual-response.json"',
+            "unset SMOKE_EXCHANGE_CODE",
+        ),
+    )
+    assert manual_block.count("prepare-exchange-manual-response.json") == 3
+    assert "SMOKE_EXCHANGE_METHOD=qr" not in manual_block
+    assert "SMOKE_EXCHANGE_FIELD=exchangeToken" not in manual_block
+
+    cleanup = script[script.index("finish() {") : script.index("trap finish EXIT")]
+    credential_unset = cleanup.index("unset SMOKE_EXCHANGE_TOKEN SMOKE_EXCHANGE_CODE")
+    assert credential_unset < cleanup.index("delete_smoke_profile")
+    assert credential_unset < cleanup.index("rollback_previous_revision")
+
+    output_lines = [
+        line for line in script.splitlines() if line.lstrip().startswith(("echo ", "printf "))
+    ]
+    assert all("SMOKE_EXCHANGE_TOKEN" not in line for line in output_lines)
+    assert all("SMOKE_EXCHANGE_CODE" not in line for line in output_lines)
+
+
+def test_inherited_xtrace_cannot_expose_deployment_environment() -> None:
+    """A caller's ``bash -x`` must stop before required values are inspected."""
+
+    nonce = uuid.uuid4().hex
+    sentinels = {
+        "YC_FOLDER_ID": f"folder-{nonce}",
+        "YC_API_GATEWAY_ID": f"gateway-{nonce}",
+        "YC_HTTP_CONTAINER_ID": f"container-{nonce}",
+        "YC_RUNTIME_SA_ID": f"runtime-sa-{nonce}",
+        "YC_GATEWAY_SA_ID": f"gateway-sa-{nonce}",
+        "YC_HEALTH_URL": f"https://health-{nonce}.example.invalid/health",
+        "YPERSON_CONFIG_VERSION": f"config-{nonce}",
+        "YPERSON_PRIVACY_URL": f"https://privacy-{nonce}.example.invalid",
+        "YPERSON_SUPPORT_URL": f"https://support-{nonce}.example.invalid",
+        "YDB_ENDPOINT": f"grpcs://ydb-{nonce}.example.invalid:2135",
+        "YDB_DATABASE": f"/database-{nonce}",
+        "YPERSON_OBJECT_BUCKET": f"bucket-{nonce}",
+        "YPERSON_S3_LOCKBOX_SECRET_ID": f"lockbox-secret-{nonce}",
+        "YPERSON_S3_LOCKBOX_VERSION_ID": f"lockbox-version-{nonce}",
+        "IMAGE_URL": f"registry.example.invalid/yperson:{nonce}",
+        "GITHUB_SHA": f"invalid-sha-{nonce}",
+        "YC_IAM_TOKEN": f"iam-token-{nonce}",
+    }
+    assert len(sentinels) == len(set(sentinels.values()))
+
+    result = subprocess.run(
+        ["/bin/bash", "-x", str(DEPLOY_SCRIPT)],
+        cwd=ROOT,
+        env={"PATH": "/usr/bin:/bin", **sentinels},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    combined_output = result.stdout + result.stderr
+    leaked_names = [name for name, value in sentinels.items() if value in combined_output]
+
+    assert result.returncode == 2
+    assert "IMAGE_URL must use the full Git commit SHA tag" in combined_output
+    assert not leaked_names, f"xtrace exposed deployment values for: {leaked_names}"
+    assert DEPLOY_SCRIPT.read_text().splitlines()[:3] == [
+        "#!/usr/bin/env bash",
+        "set +x",
+        "set -Eeuo pipefail",
+    ]
+
+
+def test_private_exchange_manifest_references_existing_evidence() -> None:
+    """Every private-exchange evidence path must resolve to a real repository file."""
+
+    manifest = json.loads((ROOT / "Release" / "release-manifest.json").read_text())
+    evidence = manifest["privateExchange"]["evidence"]
+
+    assert "YPerson/Networking/SyncCoordinator.swift" in evidence
+    missing = [path for path in evidence if not (ROOT / path).is_file()]
+    assert not missing, f"private-exchange evidence paths do not exist: {missing}"
+
+
+def _assert_fragments_in_order(source: str, fragments: tuple[str, ...]) -> None:
+    cursor = 0
+    for fragment in fragments:
+        position = source.find(fragment, cursor)
+        assert position >= 0, f"missing ordered deployment fragment: {fragment}"
+        cursor = position + len(fragment)

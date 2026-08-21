@@ -4,16 +4,20 @@ import asyncio
 import json
 import time
 from collections.abc import Generator
+from datetime import UTC, datetime
 
 import anyio
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import BaseModel, ConfigDict
 from starlette.requests import Request
 
 from app.main import MAX_SYNC_BODY_BYTES, _bounded_body, create_app
-from app.schemas import SyncResponse
+from app.schemas import PersonCard, PrivateCardFields, SyncedPerson, SyncResponse
 from app.settings import Settings
+from app.storage import PreparedExchangeResult, StorageConflict
+from app.sync_service import SyncService
 
 EXPECTED_CONFIG = {
     "version": "2026-08-18.1",
@@ -186,6 +190,116 @@ def test_sync_fails_closed_after_valid_authentication_and_validation(
     assert response.status_code == 503
     assert response.json()["error"] == "temporarily_unavailable"
     assert response.json()["requestID"] == response.headers["x-request-id"]
+
+
+def test_legacy_v2_decoder_can_claim_omitted_method_token_from_http_response(
+    settings: Settings,
+) -> None:
+    expires_at = datetime(2026, 8, 20, 12, 10, tzinfo=UTC)
+
+    class LegacyV2PrepareResponse(BaseModel):
+        model_config = ConfigDict(extra="ignore")
+
+        accepted: bool
+        serverVersion: str
+        updateCount: int
+        message: str
+        exchangeToken: str | None = None
+
+    class LegacyRoundTripStore:
+        def __init__(self) -> None:
+            self.raw_credential: str | None = None
+            self.method: str | None = None
+            self.private_fields: PrivateCardFields | None = None
+
+        def authenticate(self, installation_id: str, bearer: str) -> None:
+            del installation_id, bearer
+
+        def prepare_exchange(
+            self,
+            installation_id: str,
+            operation_id: str,
+            method: str,
+            public_card: PersonCard,
+            private_fields: PrivateCardFields | None,
+            raw_credential: str,
+            requested_expiry: datetime,
+        ) -> PreparedExchangeResult:
+            del installation_id, operation_id, public_card, requested_expiry
+            self.method = method
+            self.private_fields = private_fields
+            self.raw_credential = raw_credential
+            return PreparedExchangeResult(card_version=1, expires_at=expires_at)
+
+        def claim_exchange(
+            self,
+            installation_id: str,
+            operation_id: str,
+            raw_token: str,
+        ) -> SyncedPerson:
+            del installation_id, operation_id
+            if raw_token != self.raw_credential:
+                raise StorageConflict("exchange unavailable")
+            return SyncedPerson(
+                installationID="installation-owner-0001",
+                card=PersonCard(
+                    id="card-owner",
+                    name="Owner",
+                    role="Engineer",
+                    company="YPerson",
+                    phone="",
+                    email="owner@example.invalid",
+                    tagline="Hello",
+                    hasAudioGreeting=False,
+                    isBlocked=False,
+                ),
+                version=1,
+            )
+
+    store = LegacyRoundTripStore()
+    service = SyncService(store, clock=lambda: datetime(2026, 8, 20, 12, 0, tzinfo=UTC))  # type: ignore[arg-type]
+    with TestClient(create_app(settings, sync_service=service)) as legacy_client:
+        prepared = legacy_client.post(
+            "/sync",
+            headers={"Authorization": "Bearer owner-bearer-secret-000000000000000000000000"},
+            json={
+                "contractVersion": 2,
+                "operationID": "prepare-op-0001",
+                "installationID": "installation-owner-0001",
+                "operation": "prepareExchange",
+                "card": {
+                    "id": "card-owner",
+                    "name": "Owner",
+                    "role": "Engineer",
+                    "company": "YPerson",
+                    "phone": "",
+                    "email": "owner@example.invalid",
+                    "tagline": "Hello",
+                    "hasAudioGreeting": False,
+                    "isBlocked": False,
+                },
+            },
+        )
+        old_response = LegacyV2PrepareResponse.model_validate(prepared.json())
+        claimed = legacy_client.post(
+            "/sync",
+            headers={"Authorization": "Bearer peer-bearer-secret-0000000000000000000000000"},
+            json={
+                "contractVersion": 2,
+                "operationID": "claim-op-000001",
+                "installationID": "installation-peer-00002",
+                "operation": "claimExchange",
+                "exchangeToken": old_response.exchangeToken,
+            },
+        )
+
+    assert prepared.status_code == claimed.status_code == 200
+    assert prepared.json()["exchangeExpiresAt"] == "2026-08-20T12:10:00Z"
+    assert prepared.json()["exchangeCode"] is None
+    assert old_response.exchangeToken == "eWQup1GlqgOm0k5ncRitNgHsikQEtrXKV9uM01_Y-W8"
+    assert store.method == "legacy"
+    assert store.private_fields is None
+    assert claimed.json()["people"][0]["installationID"] == "installation-owner-0001"
 
 
 @pytest.mark.parametrize(

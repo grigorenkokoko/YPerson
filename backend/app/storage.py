@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
-from .schemas import PersonCard, SyncedPerson
+from .schemas import PersonCard, PrivateCardFields, SyncedPerson
 
 
 class InvalidCredential(Exception):
@@ -44,6 +44,14 @@ class SyncSnapshot:
     next_cursor: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedExchangeResult:
+    """Persisted preparation values that must remain stable on replay."""
+
+    card_version: int
+    expires_at: datetime
+
+
 class SyncStore(Protocol):
     """Installation-scoped persistence consumed by the sync service."""
 
@@ -70,10 +78,12 @@ class SyncStore(Protocol):
         installation_id: str,
         operation_id: str,
         method: str,
-        raw_token: str,
+        public_card: PersonCard,
+        private_fields: PrivateCardFields | None,
+        raw_credential: str,
         expires_at: datetime,
-    ) -> None:
-        """Persist a one-time exchange-token digest."""
+    ) -> PreparedExchangeResult:
+        """Atomically publish a public card and prepare a one-time exchange."""
 
     def claim_exchange(
         self,
@@ -118,4 +128,10 @@ class SyncStore(Protocol):
         operation_id: str,
         bearer: str,
     ) -> list[str] | None:
-        """Authenticate and replay a completed deletion without bootstrapping state."""
+        """Authenticate and replay one unambiguous completed deletion tombstone.
+
+        An adapter may recover a unique prior deletion when a migrated client
+        retains the original installation credential but lost its operation ID.
+        Active installations and ambiguous persisted deletion state must never
+        be treated as completed deletions.
+        """

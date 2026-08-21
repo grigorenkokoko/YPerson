@@ -9,10 +9,12 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
 from .media_service import MediaInvalid, MediaService
-from .schemas import SyncedPerson, SyncOperation, SyncRequest, SyncResponse
-from .storage import StorageConflict, SyncSnapshot, SyncStore
+from .schemas import PersonCard, SyncedPerson, SyncOperation, SyncRequest, SyncResponse
+from .storage import InvalidCredential, StorageConflict, SyncSnapshot, SyncStore
 
 EXCHANGE_TOKEN_LIFETIME = timedelta(minutes=10)
+EXCHANGE_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+LEGACY_EXCHANGE_METHOD = "legacy"
 
 
 class SyncUnavailable(Exception):
@@ -58,10 +60,23 @@ class SyncService:
                 self._object_cleanup(replayed_keys)
                 return _response("profile deleted")
 
-        if request.operation in {SyncOperation.refresh, SyncOperation.publish_card}:
-            self._store.authenticate_or_create(request.installationID, bearer)
-        else:
-            self._store.authenticate(request.installationID, bearer)
+        try:
+            if request.operation in {SyncOperation.refresh, SyncOperation.publish_card}:
+                self._store.authenticate_or_create(request.installationID, bearer)
+            else:
+                self._store.authenticate(request.installationID, bearer)
+        except InvalidCredential:
+            if request.operation is not SyncOperation.delete_profile:
+                raise
+            replayed_keys = self._store.replay_deleted_profile(
+                request.installationID,
+                request.operationID,
+                bearer,
+            )
+            if replayed_keys is None:
+                raise
+            self._object_cleanup(replayed_keys)
+            return _response("profile deleted")
 
         match request.operation:
             case SyncOperation.refresh:
@@ -93,6 +108,7 @@ class SyncService:
     def _publish(self, request: SyncRequest) -> SyncResponse:
         if request.card is None:  # Pydantic enforces this before dispatch.
             raise ValueError("missing card")
+        _require_public_card(request.card)
         if request.card.hasAudioGreeting and request.audioAssetID is None:
             raise StorageConflict("audio unavailable")
         if request.audioAssetID is not None and not request.card.hasAudioGreeting:
@@ -120,39 +136,41 @@ class SyncService:
     def _prepare_exchange(self, request: SyncRequest, bearer: str) -> SyncResponse:
         if request.card is None:  # Pydantic enforces this before dispatch.
             raise ValueError("missing card")
-        card_operation_id = _sub_operation_id(request.operationID, "prepareExchange.card")
-        version = self._store.publish_card(
+        _require_public_card(request.card)
+        method = request.exchangeMethod or LEGACY_EXCHANGE_METHOD
+        raw_credential = (
+            derive_exchange_code(bearer, request.installationID, request.operationID)
+            if method == "manual"
+            else self._exchange_token_deriver(
+                bearer,
+                request.installationID,
+                request.operationID,
+            )
+        )
+        expires_at = self._clock() + EXCHANGE_TOKEN_LIFETIME
+        result = self._store.prepare_exchange(
             request.installationID,
-            card_operation_id,
+            request.operationID,
+            method,
             request.card,
-            None,
-        )
-        raw_token = self._exchange_token_deriver(
-            bearer,
-            request.installationID,
-            request.operationID,
-        )
-        self._store.prepare_exchange(
-            request.installationID,
-            request.operationID,
-            request.exchangeMethod or "manual",
-            raw_token,
-            self._clock() + EXCHANGE_TOKEN_LIFETIME,
+            request.privateFields,
+            raw_credential,
+            expires_at,
         )
         return _response(
             "exchange prepared",
             update_count=1,
-            ownCardVersion=version,
-            exchangeToken=raw_token,
+            ownCardVersion=result.card_version,
+            exchangeToken=raw_credential if method != "manual" else None,
+            exchangeCode=raw_credential if method == "manual" else None,
+            exchangeExpiresAt=result.expires_at,
         )
 
     def _claim_exchange(self, request: SyncRequest) -> SyncResponse:
-        if request.exchangeToken is None:  # Pydantic enforces this before dispatch.
-            raise ValueError("missing exchange token")
         person = self._store.claim_exchange(
             request.installationID,
             request.operationID,
-            request.exchangeToken,
+            _exchange_credential(request),
         )
         person = self._person_with_audio(request.installationID, person)
         return _response("exchange claimed", update_count=1, people=[person])
@@ -174,12 +192,10 @@ class SyncService:
         return _response("audio upload prepared", audioUpload=upload)
 
     def _cancel_exchange(self, request: SyncRequest) -> SyncResponse:
-        if request.exchangeToken is None:  # Pydantic enforces this before dispatch.
-            raise ValueError("missing exchange token")
         self._store.cancel_exchange(
             request.installationID,
             request.operationID,
-            request.exchangeToken,
+            _exchange_credential(request),
         )
         return _response("exchange cancelled")
 
@@ -258,26 +274,77 @@ def derive_exchange_token(bearer: str, installation_id: str, operation_id: str) 
     YDB adapter stores only SHA-256 of the returned base64url token.
     """
 
+    digest = _derive_exchange_digest(
+        b"yperson.exchange.v1",
+        bearer,
+        installation_id,
+        operation_id,
+    )
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def derive_exchange_code(bearer: str, installation_id: str, operation_id: str) -> str:
+    """Derive a stable, manually transcribable exchange code."""
+
+    digest = _derive_exchange_digest(
+        b"yperson.exchange.code.v1",
+        bearer,
+        installation_id,
+        operation_id,
+    )
+    value = int.from_bytes(digest[:8], "big") >> 4
+    payload = "".join(EXCHANGE_CODE_ALPHABET[(value >> shift) & 31] for shift in range(55, -1, -5))
+    return f"YP-{payload[:4]}-{payload[4:8]}-{payload[8:]}"
+
+
+def normalize_exchange_code(value: str) -> str:
+    """Return the grouped exchange code form or reject an invalid manual code."""
+
+    normalized = value.upper().replace(" ", "").replace("-", "")
+    normalized = normalized.removeprefix("YP")
+    if len(normalized) != 12 or any(
+        character not in EXCHANGE_CODE_ALPHABET for character in normalized
+    ):
+        raise ValueError("invalid exchange code")
+    return f"YP-{normalized[:4]}-{normalized[4:8]}-{normalized[8:]}"
+
+
+def _derive_exchange_digest(
+    domain: bytes,
+    bearer: str,
+    installation_id: str,
+    operation_id: str,
+) -> bytes:
     message = b"".join(
         _length_prefixed(component)
         for component in (
-            b"yperson.exchange.v1",
+            domain,
             SyncOperation.prepare_exchange.value.encode("utf-8"),
             installation_id.encode("utf-8"),
             operation_id.encode("utf-8"),
         )
     )
-    digest = hmac.new(bearer.encode("utf-8"), message, sha256).digest()
-    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return hmac.new(bearer.encode("utf-8"), message, sha256).digest()
 
 
 def _length_prefixed(component: bytes) -> bytes:
     return len(component).to_bytes(4, "big") + component
 
 
-def _sub_operation_id(operation_id: str, purpose: str) -> str:
-    payload = f"yperson.operation.v1\0{purpose}\0{operation_id}".encode()
-    return sha256(payload).hexdigest()
+def _exchange_credential(request: SyncRequest) -> str:
+    if request.exchangeCode is not None:
+        try:
+            return normalize_exchange_code(request.exchangeCode)
+        except ValueError as error:
+            raise StorageConflict("exchange unavailable") from error
+    if request.exchangeToken is None:  # Pydantic enforces this before dispatch.
+        raise ValueError("missing exchange credential")
+    return request.exchangeToken
+
+
+def _require_public_card(card: PersonCard) -> None:
+    if card.phone or card.meetingPlace is not None:
+        raise StorageConflict("public card required")
 
 
 def _fail_closed_object_cleanup(object_keys: Sequence[str]) -> None:

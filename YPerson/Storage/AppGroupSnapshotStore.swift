@@ -15,6 +15,10 @@ final class AppGroupSnapshotStore {
         static let pendingAPNSToken = "yperson.v2.pending_apns_token"
         static let pendingAPNSRemoval = "yperson.v2.pending_apns_removal"
         static let profileTerminallyDeleted = "yperson.v2.profile_terminally_deleted"
+        static let profileDeletionRecord = "yperson.v3.profile_deletion_record"
+        static let cardPublicationJournal = "yperson.v4.card_publication_journal"
+        static let pendingPushTokenSyncRecord = "yperson.v4.pending_push_token_sync_record"
+        static let pendingAudioCardCommitRecord = "yperson.v5.pending_audio_card_commit_record"
 
         enum Legacy {
             static let ownCard = "own_card"
@@ -33,6 +37,94 @@ final class AppGroupSnapshotStore {
 
     func writeOwnCard(_ card: PersonCard) throws {
         defaults.set(try encoder.encode(card), forKey: Key.ownCard)
+    }
+
+    @discardableResult
+    func writeOwnCardAndStagePublication(
+        _ card: PersonCard,
+        audioCommitIntent: AudioCardCommitIntent? = nil
+    ) throws -> PendingSyncOperation {
+        let operation = PendingSyncOperation(
+            request: SyncRequest(operation: .publishCard, card: card.exchangeCopy),
+            expiresAt: nil,
+            localCardID: nil
+        )
+        let journal = CardPublicationJournal(
+            card: card,
+            operation: operation,
+            audioCommitIntent: audioCommitIntent
+        )
+        defaults.set(try encoder.encode(journal), forKey: Key.cardPublicationJournal)
+        try recoverPendingCardPublication()
+        return operation
+    }
+
+    var pendingCardPublicationJournal: CardPublicationJournal? {
+        get {
+            guard let data = defaults.data(forKey: Key.cardPublicationJournal) else { return nil }
+            return try? decoder.decode(CardPublicationJournal.self, from: data)
+        }
+        set {
+            if let newValue {
+                defaults.set(try? encoder.encode(newValue), forKey: Key.cardPublicationJournal)
+            } else {
+                defaults.removeObject(forKey: Key.cardPublicationJournal)
+            }
+        }
+    }
+
+    func recoverPendingCardPublication() throws {
+        guard let journal = pendingCardPublicationJournal else { return }
+        try writeOwnCard(journal.card)
+        enqueue(journal.operation)
+        if let intent = journal.audioCommitIntent {
+            pendingAudioCardCommitRecord = PendingAudioCardCommitRecord(
+                intent: intent,
+                publicationOperationID: journal.operation.id,
+                cardID: journal.card.id
+            )
+        } else {
+            pendingAudioCardCommitRecord = nil
+        }
+        pendingCardPublicationJournal = nil
+    }
+
+    var pendingAudioCardCommitRecord: PendingAudioCardCommitRecord? {
+        get {
+            guard let data = defaults.data(forKey: Key.pendingAudioCardCommitRecord) else {
+                return nil
+            }
+            return try? decoder.decode(PendingAudioCardCommitRecord.self, from: data)
+        }
+        set {
+            if let newValue {
+                defaults.set(
+                    try? encoder.encode(newValue),
+                    forKey: Key.pendingAudioCardCommitRecord
+                )
+            } else {
+                defaults.removeObject(forKey: Key.pendingAudioCardCommitRecord)
+            }
+        }
+    }
+
+    @discardableResult
+    func clearPendingAudioCardCommitRecord(
+        ifCurrent record: PendingAudioCardCommitRecord
+    ) -> Bool {
+        guard pendingAudioCardCommitRecord == record else { return false }
+        pendingAudioCardCommitRecord = nil
+        return true
+    }
+
+    @discardableResult
+    func writePublishedOwnCard(
+        _ card: PersonCard,
+        ifCurrent ownership: PublicationCardOwnership
+    ) throws -> Bool {
+        guard ownership.matches(readOwnCard()) else { return false }
+        try writeOwnCard(card)
+        return true
     }
 
     func readPeople() -> [PersonCard] {
@@ -90,11 +182,22 @@ final class AppGroupSnapshotStore {
             guard let data = defaults.data(forKey: Key.pendingOperations) else { return [] }
             return (try? decoder.decode([PendingSyncOperation].self, from: data)) ?? []
         }
-        set { defaults.set(try? encoder.encode(newValue), forKey: Key.pendingOperations) }
+        set {
+            let durable = PendingSyncOperationPersistencePolicy.durableOperations(from: newValue)
+            defaults.set(try? encoder.encode(durable), forKey: Key.pendingOperations)
+        }
     }
 
     func enqueue(_ operation: PendingSyncOperation) {
+        guard PendingSyncOperationPersistencePolicy.allowsDurablePersistence(
+            operation.request.operation
+        ) else { return }
         var operations = pendingOperations
+        if operation.request.operation == .publishCard {
+            operations.removeAll {
+                $0.request.operation == .publishCard && $0.id != operation.id
+            }
+        }
         if let index = operations.firstIndex(where: { $0.id == operation.id }) {
             operations[index] = operation
         } else {
@@ -105,6 +208,63 @@ final class AppGroupSnapshotStore {
 
     func removePendingOperation(id: String) {
         pendingOperations = pendingOperations.filter { $0.id != id }
+    }
+
+    func containsPendingOperation(id: String) -> Bool {
+        pendingOperations.contains { $0.id == id }
+    }
+
+    @discardableResult
+    func revalidatePendingPublication(_ operation: PendingSyncOperation) -> Bool {
+        guard operation.request.operation == .publishCard,
+              containsPendingOperation(id: operation.id),
+              let queuedCard = operation.request.card,
+              let currentCard = readOwnCard() else { return false }
+        let ownership = PublicationCardOwnership(card: queuedCard.exchangeCopy)
+        guard ownership.matches(currentCard.exchangeCopy) else {
+            enqueue(PendingSyncOperation(
+                request: SyncRequest(
+                    operation: .publishCard,
+                    card: currentCard.exchangeCopy
+                ),
+                expiresAt: nil,
+                localCardID: nil
+            ))
+            return false
+        }
+        return true
+    }
+
+    func purgeNonDurablePendingOperations() {
+        let operations = pendingOperations
+        let durable = PendingSyncOperationPersistencePolicy.durableOperations(from: operations)
+        guard operations != durable else { return }
+        pendingOperations = durable
+    }
+
+    var pendingPushTokenSyncRecord: PendingPushTokenSyncRecord? {
+        get {
+            guard let data = defaults.data(forKey: Key.pendingPushTokenSyncRecord) else {
+                return nil
+            }
+            return try? decoder.decode(PendingPushTokenSyncRecord.self, from: data)
+        }
+        set {
+            if let newValue {
+                defaults.set(try? encoder.encode(newValue), forKey: Key.pendingPushTokenSyncRecord)
+            } else {
+                defaults.removeObject(forKey: Key.pendingPushTokenSyncRecord)
+            }
+        }
+    }
+
+    @discardableResult
+    func clearPendingPushTokenSyncRecord(
+        ifCurrent record: PendingPushTokenSyncRecord
+    ) -> Bool {
+        guard pendingPushTokenSyncRecord == record else { return false }
+        pendingPushTokenSyncRecord = nil
+        return true
     }
 
     var pendingAPNSToken: String? {
@@ -145,6 +305,11 @@ final class AppGroupSnapshotStore {
         defaults.set(operations, forKey: Key.pendingOperationIDs)
     }
 
+    func existingPendingOperationID(for key: String) -> String? {
+        let operations = defaults.dictionary(forKey: Key.pendingOperationIDs) as? [String: String]
+        return operations?[key]
+    }
+
     private let defaults: any SnapshotKeyValueStore
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -153,6 +318,9 @@ final class AppGroupSnapshotStore {
         guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else { return nil }
         self.defaults = defaults
         migrateLegacyValues()
+        migrateLegacyPendingPushToken()
+        try? recoverPendingCardPublication()
+        purgeNonDurablePendingOperations()
     }
 
 #if DEBUG
@@ -191,6 +359,20 @@ final class AppGroupSnapshotStore {
         set { defaults.set(newValue, forKey: Key.profileTerminallyDeleted) }
     }
 
+    var profileDeletionRecord: ProfileDeletionRecord? {
+        get {
+            guard let data = defaults.data(forKey: Key.profileDeletionRecord) else { return nil }
+            return try? decoder.decode(ProfileDeletionRecord.self, from: data)
+        }
+        set {
+            if let newValue {
+                defaults.set(try? encoder.encode(newValue), forKey: Key.profileDeletionRecord)
+            } else {
+                defaults.removeObject(forKey: Key.profileDeletionRecord)
+            }
+        }
+    }
+
     func clearUserData() {
         let removableKeys = [
             Key.ownCard,
@@ -204,6 +386,9 @@ final class AppGroupSnapshotStore {
             Key.pendingOperations,
             Key.pendingAPNSToken,
             Key.pendingAPNSRemoval,
+            Key.cardPublicationJournal,
+            Key.pendingPushTokenSyncRecord,
+            Key.pendingAudioCardCommitRecord,
             Key.Legacy.ownCard,
             Key.Legacy.obsoleteWidgetSnapshot,
             Key.Legacy.remoteConfiguration,
@@ -211,6 +396,28 @@ final class AppGroupSnapshotStore {
             Key.Legacy.analyticsConsent
         ]
         removableKeys.forEach(defaults.removeObject(forKey:))
+    }
+
+    private func migrateLegacyPendingPushToken() {
+        guard pendingPushTokenSyncRecord == nil else {
+            defaults.removeObject(forKey: Key.pendingAPNSToken)
+            defaults.removeObject(forKey: Key.pendingAPNSRemoval)
+            clearPendingOperationID(for: "apns-token")
+            return
+        }
+        let removal = defaults.bool(forKey: Key.pendingAPNSRemoval)
+        let token = defaults.string(forKey: Key.pendingAPNSToken)
+        guard removal || token != nil else { return }
+        let operationID = existingPendingOperationID(for: "apns-token")
+            ?? UUID().uuidString.lowercased()
+        if removal {
+            pendingPushTokenSyncRecord = .removal(operationID: operationID)
+        } else if let token {
+            pendingPushTokenSyncRecord = .update(token: token, operationID: operationID)
+        }
+        defaults.removeObject(forKey: Key.pendingAPNSToken)
+        defaults.removeObject(forKey: Key.pendingAPNSRemoval)
+        clearPendingOperationID(for: "apns-token")
     }
 
     private func storePeople(_ people: [PersonCard]) throws {

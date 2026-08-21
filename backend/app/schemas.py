@@ -61,19 +61,33 @@ class PersonCard(BaseModel):
     )
 
 
+class PrivateCardFields(BaseModel):
+    """Private data supplied only while preparing an exchange."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    phone: str = Field(min_length=1, max_length=64)
+
+
 class SyncRequest(BaseModel):
     """A single authenticated, versioned synchronization operation."""
 
     model_config = ConfigDict(extra="forbid")
 
     contractVersion: Literal[2] = 2
-    operationID: str = Field(min_length=8, max_length=128)
+    operationID: str = Field(
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$",
+    )
     installationID: str = Field(min_length=16, max_length=128)
     apnsToken: str | None = Field(default=None, max_length=256)
     operation: SyncOperation
     cursor: str | None = Field(default=None, max_length=64)
     card: PersonCard | None = None
+    privateFields: PrivateCardFields | None = None
     exchangeToken: str | None = Field(default=None, max_length=256)
+    exchangeCode: str | None = Field(default=None, min_length=1, max_length=32)
     exchangeMethod: Literal["qr", "bluetooth", "photo", "manual"] | None = None
     audioAssetID: str | None = Field(default=None, max_length=128)
     audioSizeBytes: int | None = Field(default=None, ge=1, le=1_048_576)
@@ -93,8 +107,8 @@ class SyncRequest(BaseModel):
             SyncOperation.refresh: (),
             SyncOperation.publish_card: ("card",),
             SyncOperation.prepare_exchange: ("card",),
-            SyncOperation.claim_exchange: ("exchangeToken",),
-            SyncOperation.cancel_exchange: ("exchangeToken",),
+            SyncOperation.claim_exchange: (),
+            SyncOperation.cancel_exchange: (),
             SyncOperation.prepare_audio_upload: ("audioSizeBytes", "audioDurationMS"),
             SyncOperation.update_push_token: ("apnsToken",),
             SyncOperation.remove_push_token: (),
@@ -105,9 +119,9 @@ class SyncRequest(BaseModel):
         allowed_by_operation: dict[SyncOperation, frozenset[str]] = {
             SyncOperation.refresh: frozenset({"cursor"}),
             SyncOperation.publish_card: frozenset({"card", "audioAssetID"}),
-            SyncOperation.prepare_exchange: frozenset({"card", "exchangeMethod"}),
-            SyncOperation.claim_exchange: frozenset({"exchangeToken"}),
-            SyncOperation.cancel_exchange: frozenset({"exchangeToken"}),
+            SyncOperation.prepare_exchange: frozenset({"card", "privateFields", "exchangeMethod"}),
+            SyncOperation.claim_exchange: frozenset({"exchangeToken", "exchangeCode"}),
+            SyncOperation.cancel_exchange: frozenset({"exchangeToken", "exchangeCode"}),
             SyncOperation.prepare_audio_upload: frozenset({"audioSizeBytes", "audioDurationMS"}),
             SyncOperation.update_push_token: frozenset({"apnsToken"}),
             SyncOperation.remove_push_token: frozenset(),
@@ -120,7 +134,9 @@ class SyncRequest(BaseModel):
                 "cursor",
                 "apnsToken",
                 "card",
+                "privateFields",
                 "exchangeToken",
+                "exchangeCode",
                 "exchangeMethod",
                 "audioAssetID",
                 "audioSizeBytes",
@@ -137,6 +153,22 @@ class SyncRequest(BaseModel):
         ]
         if missing_fields:
             raise ValueError(f"{self.operation.value} requires {', '.join(sorted(missing_fields))}")
+
+        if (
+            self.operation is SyncOperation.prepare_exchange
+            and self.privateFields is not None
+            and self.exchangeMethod != "manual"
+        ):
+            raise ValueError(
+                "prepareExchange accepts privateFields only with explicit manual exchange method"
+            )
+
+        if self.operation in {SyncOperation.claim_exchange, SyncOperation.cancel_exchange}:
+            credential_count = sum(
+                credential is not None for credential in (self.exchangeToken, self.exchangeCode)
+            )
+            if credential_count != 1:
+                raise ValueError(f"{self.operation.value} requires exactly one exchange credential")
 
         prohibited_fields = supplied_fields - allowed_by_operation[self.operation]
         if prohibited_fields:
@@ -201,6 +233,8 @@ class SyncResponse(BaseModel):
     people: list[SyncedPerson] = Field(default_factory=list)
     revokedCardIDs: list[str] = Field(default_factory=list)
     exchangeToken: str | None = Field(default=None, max_length=256)
+    exchangeCode: str | None = Field(default=None, min_length=1, max_length=32)
+    exchangeExpiresAt: datetime | None = None
     audioUpload: AudioUpload | None = None
     notificationConfiguration: dict[str, bool] | None = None
 

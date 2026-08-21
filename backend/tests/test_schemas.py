@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 from pydantic import ValidationError
 
@@ -5,6 +7,7 @@ from app.schemas import (
     AudioAsset,
     AudioUpload,
     PersonCard,
+    PrivateCardFields,
     PublicConfigResponse,
     SyncOperation,
     SyncRequest,
@@ -18,6 +21,21 @@ def valid_request() -> dict[str, object]:
         "operationID": "op-12345678",
         "installationID": "ios-installation-123",
         "operation": "refresh",
+    }
+
+
+def public_card() -> dict[str, object]:
+    return {
+        "id": "card-owner",
+        "name": "Owner",
+        "role": "Engineer",
+        "company": "YPerson",
+        "phone": "",
+        "email": "owner@example.invalid",
+        "tagline": "Hello",
+        "hasAudioGreeting": False,
+        "meetingPlace": None,
+        "isBlocked": False,
     }
 
 
@@ -64,18 +82,36 @@ def test_all_existing_operations_remain_supported() -> None:
     }
 
 
-def test_cancel_exchange_requires_only_the_exchange_token() -> None:
-    request = SyncRequest.model_validate(
+def test_claim_and_cancel_exchange_require_exactly_one_credential() -> None:
+    token_request = SyncRequest.model_validate(
         valid_request()
         | {
-            "operation": "cancelExchange",
+            "operation": "claimExchange",
             "exchangeToken": "prepared-token",
         }
     )
+    code_request = SyncRequest.model_validate(
+        valid_request()
+        | {
+            "operation": "cancelExchange",
+            "exchangeCode": "YP-0123-4567-89AB",
+        }
+    )
 
-    assert request.exchangeToken == "prepared-token"
-    with pytest.raises(ValidationError, match="cancelExchange requires exchangeToken"):
-        SyncRequest.model_validate(valid_request() | {"operation": "cancelExchange"})
+    assert token_request.exchangeToken == "prepared-token"
+    assert code_request.exchangeCode == "YP-0123-4567-89AB"
+    for operation in ("claimExchange", "cancelExchange"):
+        with pytest.raises(ValidationError, match="exactly one"):
+            SyncRequest.model_validate(valid_request() | {"operation": operation})
+        with pytest.raises(ValidationError, match="exactly one"):
+            SyncRequest.model_validate(
+                valid_request()
+                | {
+                    "operation": operation,
+                    "exchangeToken": "opaque-token",
+                    "exchangeCode": "YP-0123-4567-89AB",
+                }
+            )
     with pytest.raises(ValidationError, match="cancelExchange does not accept card"):
         SyncRequest.model_validate(
             valid_request()
@@ -95,6 +131,77 @@ def test_cancel_exchange_requires_only_the_exchange_token() -> None:
                 },
             }
         )
+
+
+def test_prepare_exchange_accepts_strict_private_phone() -> None:
+    request = SyncRequest.model_validate(
+        valid_request()
+        | {
+            "operation": "prepareExchange",
+            "card": public_card(),
+            "exchangeMethod": "manual",
+            "privateFields": {"phone": "  +7 900 555-10-20  "},
+        }
+    )
+
+    assert request.privateFields == PrivateCardFields(phone="+7 900 555-10-20")
+
+
+def test_private_fields_require_explicit_manual_exchange_method() -> None:
+    request = SyncRequest.model_validate(
+        valid_request()
+        | {
+            "operation": "prepareExchange",
+            "card": public_card(),
+            "exchangeMethod": "manual",
+            "privateFields": {"phone": "+79005550102"},
+        }
+    )
+
+    assert request.privateFields == PrivateCardFields(phone="+79005550102")
+
+
+@pytest.mark.parametrize("exchange_method", ["bluetooth", "qr", "photo", None])
+def test_private_fields_reject_non_manual_and_omitted_exchange_methods(
+    exchange_method: str | None,
+) -> None:
+    payload: dict[str, object] = valid_request() | {
+        "operation": "prepareExchange",
+        "card": public_card(),
+        "privateFields": {"phone": "+79005550102"},
+    }
+    if exchange_method is not None:
+        payload["exchangeMethod"] = exchange_method
+
+    with pytest.raises(ValidationError, match="privateFields"):
+        SyncRequest.model_validate(payload)
+
+
+@pytest.mark.parametrize("phone", ["", "   ", "1" * 65])
+def test_private_phone_is_bounded(phone: str) -> None:
+    with pytest.raises(ValidationError):
+        SyncRequest.model_validate(
+            valid_request()
+            | {
+                "operation": "prepareExchange",
+                "card": public_card(),
+                "privateFields": {"phone": phone},
+            }
+        )
+
+
+def test_private_fields_reject_unknown_fields_and_other_operations() -> None:
+    with pytest.raises(ValidationError):
+        SyncRequest.model_validate(
+            valid_request()
+            | {
+                "operation": "prepareExchange",
+                "card": public_card(),
+                "privateFields": {"email": "private@example.invalid"},
+            }
+        )
+    with pytest.raises(ValidationError, match="refresh does not accept privateFields"):
+        SyncRequest.model_validate(valid_request() | {"privateFields": {"phone": "+79005550102"}})
 
 
 def test_sync_request_accepts_the_published_person_card_contract() -> None:
@@ -227,6 +334,27 @@ def test_sync_request_enforces_identifier_and_token_length_limits(field: str, va
         SyncRequest.model_validate(valid_request() | {field: value})
 
 
+@pytest.mark.parametrize("operation_id", ["        ", "delete op", "delete/op", "удаление-01"])
+def test_sync_request_rejects_unsafe_operation_identifiers(operation_id: str) -> None:
+    with pytest.raises(ValidationError):
+        SyncRequest.model_validate(valid_request() | {"operationID": operation_id})
+
+
+@pytest.mark.parametrize(
+    "operation_id",
+    [
+        "67ba0e22-6e66-4d6f-a327-1666413185f7",
+        "bc0b18c013556bad4a5c38c7b2382ae8689dd30c888636d4cdd3c04f41564fdc",
+        "legacy.operation_id:0001",
+    ],
+)
+def test_sync_request_accepts_established_safe_operation_identifiers(operation_id: str) -> None:
+    assert (
+        SyncRequest.model_validate(valid_request() | {"operationID": operation_id}).operationID
+        == operation_id
+    )
+
+
 def test_sync_request_rejects_unknown_moderation_categories() -> None:
     with pytest.raises(ValidationError):
         SyncRequest.model_validate(valid_request() | {"moderationCategory": "harassment"})
@@ -323,7 +451,7 @@ def test_audio_signed_urls_require_https(model: type, url_field: str) -> None:
         model.model_validate(payload | {url_field: "http://storage.example/private/object"})
 
 
-def test_sync_v2_models_preserve_v1_fields_and_add_people_audio() -> None:
+def test_exchange_response_preserves_v1_fields_and_adds_people_audio() -> None:
     request = SyncRequest.model_validate(valid_request())
     response = SyncResponse.model_validate(
         {
@@ -332,6 +460,8 @@ def test_sync_v2_models_preserve_v1_fields_and_add_people_audio() -> None:
             "updateCount": 1,
             "message": "refreshed",
             "nextCursor": "7",
+            "exchangeCode": "YP-0123-4567-89AB",
+            "exchangeExpiresAt": "2026-08-20T12:10:00Z",
             "people": [
                 {
                     "installationID": "installation-peer-00002",
@@ -361,6 +491,8 @@ def test_sync_v2_models_preserve_v1_fields_and_add_people_audio() -> None:
     assert request.contractVersion == 2
     assert response.people[0].audio is not None
     assert response.people[0].audio.assetID == "asset-1"
+    assert response.exchangeCode == "YP-0123-4567-89AB"
+    assert response.exchangeExpiresAt == datetime(2026, 8, 20, 12, 10, tzinfo=UTC)
     assert response.model_dump()["accepted"] is True
 
 

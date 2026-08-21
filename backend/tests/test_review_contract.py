@@ -80,6 +80,8 @@ def test_unknown_route_returns_exact_404_contract(client: TestClient) -> None:
 def test_logs_exclude_hostile_url_and_sync_secrets(client: TestClient) -> None:
     logger = request_logger()
     captured: list[str] = []
+    exchange_code_secret = "YP-0123-4567-89AB"
+    private_phone_secret = "+7-private-phone-sentinel"
 
     class Capture(logging.Handler):
         def emit(self, record: logging.LogRecord) -> None:
@@ -95,6 +97,8 @@ def test_logs_exclude_hostile_url_and_sync_secrets(client: TestClient) -> None:
         "bearer-sentinel-000000000000000000000000000",
         "apns-sentinel-0001",
         "exchange-sentinel-0001",
+        exchange_code_secret,
+        private_phone_secret,
         "https://storage.invalid/signed-url-sentinel",
         "private/object-key-sentinel",
         "card-name-sentinel",
@@ -148,11 +152,48 @@ def test_logs_exclude_hostile_url_and_sync_secrets(client: TestClient) -> None:
                 },
             },
         )
+        prepare_response = client.post(
+            "/sync",
+            headers={"Authorization": "Bearer bearer-sentinel-000000000000000000000000000"},
+            json={
+                "contractVersion": 2,
+                "operationID": "log-sentinel-op-0004",
+                "installationID": "installation-sentinel-0001",
+                "operation": "prepareExchange",
+                "exchangeMethod": "manual",
+                "card": {
+                    "id": "card-sentinel-id",
+                    "name": "card-name-sentinel",
+                    "role": "Engineer",
+                    "company": "YPerson",
+                    "phone": "",
+                    "email": "sentinel@example.invalid",
+                    "tagline": "Hello",
+                    "hasAudioGreeting": False,
+                    "isBlocked": False,
+                },
+                "privateFields": {"phone": private_phone_secret},
+            },
+        )
+        claim_response = client.post(
+            "/sync",
+            headers={"Authorization": "Bearer bearer-sentinel-000000000000000000000000000"},
+            json={
+                "contractVersion": 2,
+                "operationID": "log-sentinel-op-0005",
+                "installationID": "installation-sentinel-0001",
+                "operation": "claimExchange",
+                "exchangeCode": exchange_code_secret,
+            },
+        )
     finally:
         logger.removeHandler(handler)
 
     output = "\n".join(captured)
     assert all(secret not in output for secret in secrets)
+    assert prepare_response.status_code == claim_response.status_code == 503
+    assert private_phone_secret not in prepare_response.text
+    assert exchange_code_secret not in claim_response.text
     assert all(
         json.loads(line)["route"] in {"/privacy", "/support", "/sync", "unknown"}
         for line in captured

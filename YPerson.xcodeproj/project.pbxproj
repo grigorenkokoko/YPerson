@@ -12,6 +12,7 @@
 		0BBDBC3B2095B4CFB56BD1A6 /* ContactReconciliationPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09E8A9CA24609DFA4CB57EDE /* ContactReconciliationPresenter.swift */; };
 		13CCCAFA15AD9B93B570C5A2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F5EFCA26B0528FD85942ED0E /* PrivacyInfo.xcprivacy */; };
 		1616764F166B74ACAEAB5862 /* AppMetricaAnalyticsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A82460406C63E9A3C7FA221 /* AppMetricaAnalyticsClient.swift */; };
+		1BDCE5770E601925D21EFF5F /* ShortCodeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5F6B08113A23E2F0394C2F4 /* ShortCodeViewController.swift */; };
 		1CC276E33DE38045887039FF /* ContactMatchPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1940142612C79090191B943B /* ContactMatchPolicy.swift */; };
 		232809C4B65AC451691AC6B6 /* MediaTransferClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0A9390AFFB941DA8CB57AB /* MediaTransferClient.swift */; };
 		245F6C0FB5C326CC2DEB3B73 /* PersonViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAC46C8858C0D992879AF1C4 /* PersonViewController.swift */; };
@@ -52,6 +53,7 @@
 		C0DECAFE0000000000000002 /* VCardParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE0000000000000001 /* VCardParser.swift */; };
 		C7F0484158BF86CE1B2D6328 /* NotificationViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A13996E6F0278470DBD08AA /* NotificationViewController.swift */; };
 		D1A9937B73944A0E814FA5EB /* AppMetricaCrashes in Frameworks */ = {isa = PBXBuildFile; productRef = ADEE88F4EC0C36A4E9868199 /* AppMetricaCrashes */; };
+		D5C73A6D6A3562B5F5935259 /* ExchangeContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42690DB42AC8D0CEFBEE0248 /* ExchangeContract.swift */; };
 		D91A4ED9BE788718888C6405 /* YPStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28094E2B2A847979C3FC21FB /* YPStyle.swift */; };
 		DCAB22468D62AE11C281CFE1 /* PrivacyViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 301DC0A1CD1DC7CEAA7DA940 /* PrivacyViewController.swift */; };
 		DCAE8E00CC6FEF2E6744D77C /* PermissionCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AAC508E043FF6F8B0B457A5 /* PermissionCenter.swift */; };
@@ -124,6 +126,7 @@
 		3E25CDD2FC15A3E7A1F9E6D9 /* InstallationCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstallationCredentialStore.swift; sourceTree = "<group>"; };
 		3E26B216E894AF52F079DC3D /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		3E940A52F8EAC0CB5F9E5619 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		42690DB42AC8D0CEFBEE0248 /* ExchangeContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExchangeContract.swift; sourceTree = "<group>"; };
 		444F6266844246A38742F30C /* PersonalDebug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = PersonalDebug.xcconfig; sourceTree = "<group>"; };
 		4742F7034AB58645F7946864 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		4AAC508E043FF6F8B0B457A5 /* PermissionCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionCenter.swift; sourceTree = "<group>"; };
@@ -163,6 +166,7 @@
 		F05D8628028E8CA968A66818 /* WidgetRelease.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = WidgetRelease.xcconfig; sourceTree = "<group>"; };
 		F3E533DAB9E006DADF68EA10 /* ExchangeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExchangeViewController.swift; sourceTree = "<group>"; };
 		F5EFCA26B0528FD85942ED0E /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		F5F6B08113A23E2F0394C2F4 /* ShortCodeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortCodeViewController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -282,6 +286,7 @@
 			isa = PBXGroup;
 			children = (
 				1B8B90166BA7ACF755B049CA /* CardEditingPolicy.swift */,
+				42690DB42AC8D0CEFBEE0248 /* ExchangeContract.swift */,
 				11D3A37C6321DE925FB87955 /* Models.swift */,
 				C0DECAFE0000000000000001 /* VCardParser.swift */,
 			);
@@ -371,6 +376,7 @@
 				3337EAFEF3B0198BB5BA9D44 /* PeopleViewController.swift */,
 				CAC46C8858C0D992879AF1C4 /* PersonViewController.swift */,
 				301DC0A1CD1DC7CEAA7DA940 /* PrivacyViewController.swift */,
+				F5F6B08113A23E2F0394C2F4 /* ShortCodeViewController.swift */,
 				28094E2B2A847979C3FC21FB /* YPStyle.swift */,
 			);
 			path = UI;
@@ -641,6 +647,7 @@
 				1CC276E33DE38045887039FF /* ContactMatchPolicy.swift in Sources */,
 				2CED0DBC79E18AC4C092ACEA /* ContactReconciliationPlanner.swift in Sources */,
 				0BBDBC3B2095B4CFB56BD1A6 /* ContactReconciliationPresenter.swift in Sources */,
+				D5C73A6D6A3562B5F5935259 /* ExchangeContract.swift in Sources */,
 				EE076FB1C42375DADCAD282A /* ExchangeViewController.swift in Sources */,
 				AAE2FC5FCA7708321265DE54 /* InstallationCredentialStore.swift in Sources */,
 				C1147F7D0E3CC883DB19DAB6 /* MainTabBarController.swift in Sources */,
@@ -657,6 +664,7 @@
 				48B8935AECD4A25733526E34 /* QRCodeScannerViewController.swift in Sources */,
 				6FE43A64E27A1AED3AED4626 /* QRScannerLaunchGate.swift in Sources */,
 				5F90883E088EE1F658318A61 /* ScannerWidgetRoute.swift in Sources */,
+				1BDCE5770E601925D21EFF5F /* ShortCodeViewController.swift in Sources */,
 				AF51485D3E619498E9AA5262 /* SyncCoordinator.swift in Sources */,
 				D91A4ED9BE788718888C6405 /* YPStyle.swift in Sources */,
 				98290ADBE47289C2AB496557 /* YPersonIntegrationContract.swift in Sources */,

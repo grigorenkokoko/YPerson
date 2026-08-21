@@ -190,7 +190,9 @@ struct SyncRequest: Codable, Equatable {
     let operation: SyncOperation
     let cursor: String?
     let card: PersonCard?
+    let privateFields: PrivateCardFields?
     let exchangeToken: String?
+    let exchangeCode: String?
     let exchangeMethod: String?
     let audioAssetID: String?
     let audioSizeBytes: Int?
@@ -204,7 +206,9 @@ struct SyncRequest: Codable, Equatable {
         operationID: String = UUID().uuidString.lowercased(),
         cursor: String? = nil,
         card: PersonCard? = nil,
+        privateFields: PrivateCardFields? = nil,
         exchangeToken: String? = nil,
+        exchangeCode: String? = nil,
         exchangeMethod: String? = nil,
         audioAssetID: String? = nil,
         audioSizeBytes: Int? = nil,
@@ -218,7 +222,9 @@ struct SyncRequest: Codable, Equatable {
         self.operationID = operationID
         self.cursor = cursor
         self.card = card
+        self.privateFields = privateFields
         self.exchangeToken = exchangeToken
+        self.exchangeCode = exchangeCode
         self.exchangeMethod = exchangeMethod
         self.audioAssetID = audioAssetID
         self.audioSizeBytes = audioSizeBytes
@@ -248,6 +254,8 @@ struct SyncResponse: Codable {
     let people: [SyncedPerson]
     let revokedCardIDs: [String]
     let exchangeToken: String?
+    let exchangeCode: String?
+    let exchangeExpiresAt: Date?
     let audioUpload: AudioUpload?
     let notificationConfiguration: [String: Bool]?
 }
@@ -400,7 +408,9 @@ struct SyncWireRequest: Encodable {
     let operation: SyncOperation
     let cursor: String?
     let card: SyncWirePersonCard?
+    let privateFields: PrivateCardFields?
     let exchangeToken: String?
+    let exchangeCode: String?
     let exchangeMethod: String?
     let audioAssetID: String?
     let audioSizeBytes: Int?

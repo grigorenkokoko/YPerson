@@ -6,68 +6,122 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
     private weak var host: YPBaseViewController?
     private let permissions: PermissionCenter
     private let analytics: AppMetricaAnalyticsClient
+    private let commitBarrier: ContactReconciliationCommitBarrier
+    private var activeSession: ContactReconciliationCommitBarrier.Session?
+    private weak var ownedAlert: UIAlertController?
     private var accessManagerController: UIViewController?
     private var accessManagerCompleted = false
+    private weak var systemContactController: CNContactViewController?
+    private var systemContactSession: ContactReconciliationCommitBarrier.Session?
+    private var profileLifecycle = ContactReconciliationProfileLifecycle()
 
-    init(host: YPBaseViewController, permissions: PermissionCenter, analytics: AppMetricaAnalyticsClient) {
+    init(
+        host: YPBaseViewController,
+        permissions: PermissionCenter,
+        analytics: AppMetricaAnalyticsClient,
+        commitBarrier: ContactReconciliationCommitBarrier
+    ) {
         self.host = host
         self.permissions = permissions
         self.analytics = analytics
+        self.commitBarrier = commitBarrier
         super.init()
     }
 
     func start(for card: PersonCard) {
-        guard let host else { return }
+        guard profileLifecycle.isActive else { return }
+        if let activeSession { commitBarrier.invalidateSession(activeSession) }
+        guard let session = commitBarrier.beginSession() else { return }
+        activeSession = session
+        dismissOwnedUI()
+        guard isCurrent(session), let host else { return }
         host.explainPermission(
             title: "Синхронизация с Контактами",
             message: "Контакты нужны, чтобы находить дубликаты, добавлять визитки YPerson в адресную книгу и обновлять их при изменениях владельца."
         ) { [weak self] in
-            self?.continueAfterPermission(for: card)
+            guard let self, self.isCurrent(session) else { return }
+            self.continueAfterPermission(for: card, session: session)
         }
     }
 
-    private func continueAfterPermission(for card: PersonCard) {
+    func beginProfileDeletion() {
+        profileLifecycle.beginDeletion()
+        if let activeSession { commitBarrier.invalidateSession(activeSession) }
+        activeSession = nil
+        dismissOwnedUI()
+    }
+
+    func applyProfileReactivation() {
+        profileLifecycle.reactivateForUserCreation()
+    }
+
+    private func dismissOwnedUI() {
+        accessManagerCompleted = true
+        ownedAlert?.dismiss(animated: false)
+        ownedAlert = nil
+        accessManagerController?.dismiss(animated: false)
+        accessManagerController = nil
+        dismissSystemContactController()
+    }
+
+    private func continueAfterPermission(
+        for card: PersonCard,
+        session: ContactReconciliationCommitBarrier.Session
+    ) {
+        guard isCurrent(session) else { return }
         switch permissions.contactsState() {
         case .authorized:
-            loadPlan(for: card, scope: .complete)
+            loadPlan(for: card, scope: .complete, session: session)
         case .limited:
-            loadPlan(for: card, scope: .limited)
+            loadPlan(for: card, scope: .limited, session: session)
         case .notDetermined:
             permissions.requestContacts { [weak self] state in
-                self?.handleRequestedState(state, for: card)
+                guard let self, self.isCurrent(session) else { return }
+                self.handleRequestedState(state, for: card, session: session)
             }
         case .denied, .restricted, .unavailable:
-            offerReadUnavailableFallback(for: card)
+            offerReadUnavailableFallback(for: card, session: session)
         }
     }
 
-    private func handleRequestedState(_ state: AuthorizationState, for card: PersonCard) {
+    private func handleRequestedState(
+        _ state: AuthorizationState,
+        for card: PersonCard,
+        session: ContactReconciliationCommitBarrier.Session
+    ) {
+        guard isCurrent(session) else { return }
         switch state {
         case .authorized:
-            loadPlan(for: card, scope: .complete)
+            loadPlan(for: card, scope: .complete, session: session)
         case .limited:
-            loadPlan(for: card, scope: .limited)
+            loadPlan(for: card, scope: .limited, session: session)
         default:
-            offerReadUnavailableFallback(for: card)
+            offerReadUnavailableFallback(for: card, session: session)
         }
     }
 
     private func loadPlan(
         for card: PersonCard,
         scope: ContactReconciliationScope,
-        choosing candidateIdentifier: String? = nil
+        choosing candidateIdentifier: String? = nil,
+        session: ContactReconciliationCommitBarrier.Session
     ) {
+        guard isCurrent(session) else { return }
         permissions.reconciliation(for: card, scope: scope, choosing: candidateIdentifier) { [weak self] result in
-            guard let self else { return }
+            guard let self, self.isCurrent(session) else { return }
             switch result {
             case .success(.plan(let plan)):
-                self.present(plan, for: card)
+                self.present(plan, for: card, session: session)
             case .success(.chooseCandidate(let candidates)):
-                self.chooseContact(candidates, for: card, scope: scope)
+                self.chooseContact(candidates, for: card, scope: scope, session: session)
             case .success(.insufficientAccess):
-                self.offerLimitedAccess(for: card)
+                self.offerLimitedAccess(for: card, session: session)
             case .failure(let error):
-                self.host?.showMessage("Контакты недоступны", error.localizedDescription, settingsAction: self.permissions.openSystemSettings)
+                guard self.isCurrent(session) else { return }
+                self.host?.showMessage("Контакты недоступны", error.localizedDescription, settingsAction: { [weak self] in
+                    guard let self, self.isCurrent(session) else { return }
+                    self.permissions.openSystemSettings()
+                })
             }
         }
     }
@@ -75,9 +129,10 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
     private func chooseContact(
         _ candidates: [ContactReconciliationCandidate],
         for card: PersonCard,
-        scope: ContactReconciliationScope
+        scope: ContactReconciliationScope,
+        session: ContactReconciliationCommitBarrier.Session
     ) {
-        guard let host else { return }
+        guard isCurrent(session) else { return }
         let alert = UIAlertController(
             title: "Выберите контакт",
             message: "Найдено несколько совпадений для «\(card.name)». Номер, компания и маскированные поля помогают различить карточки. До выбора и подтверждения ничего не изменится.",
@@ -86,15 +141,20 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
         for (index, candidate) in candidates.enumerated() {
             let details = candidate.identityDetail.isEmpty ? "Без дополнительных данных" : candidate.identityDetail
             alert.addAction(UIAlertAction(title: "\(index + 1). \(candidate.name) · \(details)", style: .default) { [weak self] _ in
-                self?.loadPlan(for: card, scope: scope, choosing: candidate.identifier)
+                guard let self, self.isCurrent(session) else { return }
+                self.loadPlan(for: card, scope: scope, choosing: candidate.identifier, session: session)
             })
         }
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
-        host.present(alert, animated: true)
+        presentOwned(alert, session: session)
     }
 
-    private func present(_ plan: ContactReconciliationPlan, for card: PersonCard) {
-        guard let host else { return }
+    private func present(
+        _ plan: ContactReconciliationPlan,
+        for card: PersonCard,
+        session: ContactReconciliationCommitBarrier.Session
+    ) {
+        guard isCurrent(session), let host else { return }
         let changedFields = plan.changedFields.isEmpty
             ? "Изменений нет."
             : "Изменятся: \(plan.changedFields.joined(separator: ", "))."
@@ -105,6 +165,7 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
 
         switch plan.action {
         case .noChange:
+            guard isCurrent(session) else { return }
             host.showMessage("Без изменений", "\(identity ?? "Выбранный контакт.") \(changedFields) Контакт уже актуален.")
         case .add, .update:
             let isAdd = plan.action == .add
@@ -118,16 +179,27 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
                 preferredStyle: .alert
             )
             alert.addAction(UIAlertAction(title: operation, style: .default) { [weak self] _ in
-                self?.apply(plan, for: card)
+                guard let self, self.isCurrent(session) else { return }
+                self.apply(plan, for: card, session: session)
             })
             alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
-            host.present(alert, animated: true)
+            presentOwned(alert, session: session)
         }
     }
 
-    private func apply(_ plan: ContactReconciliationPlan, for card: PersonCard) {
-        permissions.apply(plan, for: card) { [weak self] result in
-            guard let self, let host = self.host else { return }
+    private func apply(
+        _ plan: ContactReconciliationPlan,
+        for card: PersonCard,
+        session: ContactReconciliationCommitBarrier.Session
+    ) {
+        guard isCurrent(session) else { return }
+        permissions.apply(
+            plan,
+            for: card,
+            session: session,
+            commitBarrier: commitBarrier
+        ) { [weak self] result in
+            guard let self, self.isCurrent(session), let host = self.host else { return }
             switch result {
             case .success(.add):
                 self.analytics.report(.contactSaved)
@@ -138,25 +210,33 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
             case .success(.noChange):
                 host.showMessage("Без изменений", "Контакт уже актуален.")
             case .failure(let error as ContactReconciliationPlannerError) where error == .stalePlan || error == .invalidCandidate:
-                self.offerPlanRefresh(for: card, message: error.localizedDescription)
+                self.offerPlanRefresh(for: card, message: error.localizedDescription, session: session)
             case .failure(let error):
                 host.showMessage("Не удалось сохранить", error.localizedDescription)
             }
         }
     }
 
-    private func offerPlanRefresh(for card: PersonCard, message: String) {
-        guard let host else { return }
+    private func offerPlanRefresh(
+        for card: PersonCard,
+        message: String,
+        session: ContactReconciliationCommitBarrier.Session
+    ) {
+        guard isCurrent(session) else { return }
         let alert = UIAlertController(title: "План изменился", message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Показать новый план", style: .default) { [weak self] _ in
-            self?.continueAfterPermission(for: card)
+            guard let self, self.isCurrent(session) else { return }
+            self.continueAfterPermission(for: card, session: session)
         })
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
-        host.present(alert, animated: true)
+        presentOwned(alert, session: session)
     }
 
-    private func offerLimitedAccess(for card: PersonCard) {
-        guard let host else { return }
+    private func offerLimitedAccess(
+        for card: PersonCard,
+        session: ContactReconciliationCommitBarrier.Session
+    ) {
+        guard isCurrent(session) else { return }
         let alert = UIAlertController(
             title: "Доступ к Контактам ограничен",
             message: "YPerson видит только выбранные вами контакты и не может считать отсутствие совпадения окончательным или безопасно добавить новую карточку. Измените доступ через системный менеджер либо проверьте и сохраните карточку в форме Apple.",
@@ -164,37 +244,54 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
         )
         if #available(iOS 18.0, *) {
             alert.addAction(UIAlertAction(title: "Изменить доступ", style: .default) { [weak self] _ in
-                self?.presentLimitedAccessManager(for: card)
+                guard let self, self.isCurrent(session) else { return }
+                self.presentLimitedAccessManager(for: card, session: session)
             })
         }
         alert.addAction(UIAlertAction(title: "Открыть форму Apple", style: .default) { [weak self] _ in
-            self?.presentSystemContactForm(for: card)
+            guard let self, self.isCurrent(session) else { return }
+            self.presentSystemContactForm(for: card, session: session)
         })
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
-        host.present(alert, animated: true)
+        presentOwned(alert, session: session)
     }
 
-    private func offerReadUnavailableFallback(for card: PersonCard) {
-        guard let host else { return }
+    private func offerReadUnavailableFallback(
+        for card: PersonCard,
+        session: ContactReconciliationCommitBarrier.Session
+    ) {
+        guard isCurrent(session) else { return }
         let alert = UIAlertController(
             title: "Чтение Контактов недоступно",
             message: "YPerson не может проверить дубликаты. Можно открыть системную форму Apple и самостоятельно проверить карточку перед сохранением.",
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(title: "Открыть форму Apple", style: .default) { [weak self] _ in
-            self?.presentSystemContactForm(for: card)
+            guard let self, self.isCurrent(session) else { return }
+            self.presentSystemContactForm(for: card, session: session)
         })
         alert.addAction(UIAlertAction(title: "Открыть Настройки", style: .default) { [weak self] _ in
-            self?.permissions.openSystemSettings()
+            guard let self, self.isCurrent(session) else { return }
+            self.permissions.openSystemSettings()
         })
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
-        host.present(alert, animated: true)
+        presentOwned(alert, session: session)
     }
 
-    private func presentSystemContactForm(for card: PersonCard) {
-        guard let host else { return }
+    private func presentSystemContactForm(
+        for card: PersonCard,
+        session: ContactReconciliationCommitBarrier.Session
+    ) {
+        guard isCurrent(session), let host else { return }
         let controller = CNContactViewController(forNewContact: permissions.makeContact(card))
         controller.delegate = self
+        systemContactController = controller
+        systemContactSession = session
+        guard isCurrent(session) else {
+            systemContactController = nil
+            systemContactSession = nil
+            return
+        }
         if let navigationController = host.navigationController {
             navigationController.pushViewController(controller, animated: true)
         } else {
@@ -203,35 +300,71 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
     }
 
     func contactViewController(_ viewController: CNContactViewController, didCompleteWith contact: CNContact?) {
-        guard let navigationController = viewController.navigationController else {
-            viewController.dismiss(animated: true)
-            return
-        }
-        if navigationController.viewControllers.first === viewController,
-           navigationController.presentingViewController != nil {
-            navigationController.dismiss(animated: true)
-        } else {
-            navigationController.popViewController(animated: true)
-        }
+        let session = systemContactSession
+        dismissSystemContactController()
+        guard let session, isCurrent(session) else { return }
     }
 
     @available(iOS 18.0, *)
-    private func presentLimitedAccessManager(for card: PersonCard) {
-        guard let host else { return }
+    private func presentLimitedAccessManager(
+        for card: PersonCard,
+        session: ContactReconciliationCommitBarrier.Session
+    ) {
+        guard isCurrent(session), let host else { return }
         accessManagerCompleted = false
         let view = ContactAccessManagerView { [weak self] _ in
-            guard let self, !self.accessManagerCompleted else { return }
+            guard let self, self.isCurrent(session), !self.accessManagerCompleted else { return }
             self.accessManagerCompleted = true
             self.accessManagerController?.dismiss(animated: true) { [weak self] in
-                self?.accessManagerController = nil
-                self?.continueAfterPermission(for: card)
+                guard let self, self.isCurrent(session) else { return }
+                self.accessManagerController = nil
+                self.continueAfterPermission(for: card, session: session)
             }
         }
         let controller = UIHostingController(rootView: view)
         controller.modalPresentationStyle = .overFullScreen
         controller.view.backgroundColor = .clear
         accessManagerController = controller
+        guard isCurrent(session) else { return }
         host.present(controller, animated: false)
+    }
+
+    private func presentOwned(
+        _ alert: UIAlertController,
+        session: ContactReconciliationCommitBarrier.Session
+    ) {
+        guard isCurrent(session), let host else { return }
+        ownedAlert?.dismiss(animated: false)
+        ownedAlert = alert
+        guard isCurrent(session) else { return }
+        host.present(alert, animated: true)
+    }
+
+    private func dismissSystemContactController() {
+        guard let controller = systemContactController else {
+            systemContactSession = nil
+            return
+        }
+        if let navigationController = controller.navigationController {
+            if navigationController.viewControllers.first === controller,
+               navigationController.presentingViewController != nil {
+                navigationController.dismiss(animated: false)
+            } else if navigationController.topViewController === controller {
+                navigationController.popViewController(animated: false)
+            }
+        } else {
+            controller.dismiss(animated: false)
+        }
+        systemContactController = nil
+        systemContactSession = nil
+    }
+
+    private func isCurrent(_ session: ContactReconciliationCommitBarrier.Session) -> Bool {
+        activeSession == session && commitBarrier.isCurrent(session)
+    }
+
+    deinit {
+        if let activeSession { commitBarrier.invalidateSession(activeSession) }
     }
 }
 

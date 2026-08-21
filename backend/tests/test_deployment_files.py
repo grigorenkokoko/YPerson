@@ -30,6 +30,89 @@ FORBIDDEN_DATABASE_PACKAGES = {
 LOCKED_REQUIREMENT = re.compile(r"^([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?==[^\s\\]+(?:\s+\\)?$")
 SHA256_HASH = re.compile(r"--hash=sha256:[0-9a-f]{64}")
 
+SCHEMA_V1_DDL = (
+    """
+    CREATE TABLE IF NOT EXISTS installations (
+        installation_id Utf8 NOT NULL,
+        credential_hash String NOT NULL,
+        apns_token Utf8,
+        created_at Timestamp NOT NULL,
+        updated_at Timestamp NOT NULL,
+        deleted_at Timestamp,
+        PRIMARY KEY (installation_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS cards (
+        installation_id Utf8 NOT NULL,
+        card_id Utf8 NOT NULL,
+        version Uint64 NOT NULL,
+        card_json JsonDocument NOT NULL,
+        audio_asset_id Utf8,
+        published_at Timestamp NOT NULL,
+        updated_at Timestamp NOT NULL,
+        PRIMARY KEY (installation_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS connections (
+        owner_installation_id Utf8 NOT NULL,
+        peer_installation_id Utf8 NOT NULL,
+        status Utf8 NOT NULL,
+        created_at Timestamp NOT NULL,
+        updated_at Timestamp NOT NULL,
+        PRIMARY KEY (owner_installation_id, peer_installation_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS exchange_claims (
+        token_hash String NOT NULL,
+        issuer_installation_id Utf8 NOT NULL,
+        method Utf8 NOT NULL,
+        expires_at Timestamp NOT NULL,
+        claimed_by_installation_id Utf8,
+        PRIMARY KEY (token_hash)
+    ) WITH (
+        TTL = Interval("PT0S") ON expires_at
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS media_assets (
+        asset_id Utf8 NOT NULL,
+        owner_installation_id Utf8 NOT NULL,
+        object_key Utf8 NOT NULL,
+        content_type Utf8 NOT NULL,
+        size_bytes Uint64,
+        duration_ms Uint64,
+        state Utf8 NOT NULL,
+        created_at Timestamp NOT NULL,
+        updated_at Timestamp NOT NULL,
+        PRIMARY KEY (asset_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS moderation_actions (
+        reporter_installation_id Utf8 NOT NULL,
+        subject_installation_id Utf8 NOT NULL,
+        action_id Utf8 NOT NULL,
+        action Utf8 NOT NULL,
+        category Utf8,
+        created_at Timestamp NOT NULL,
+        PRIMARY KEY (reporter_installation_id, subject_installation_id, action_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS operations (
+        installation_id Utf8 NOT NULL,
+        operation_id Utf8 NOT NULL,
+        operation_type Utf8 NOT NULL,
+        result_json JsonDocument NOT NULL,
+        completed_at Timestamp NOT NULL,
+        PRIMARY KEY (installation_id, operation_id)
+    )
+    """,
+)
+
 
 def docker_instructions(path: Path) -> list[tuple[str, str]]:
     """Return logical Dockerfile instructions with continuations joined."""
@@ -308,3 +391,32 @@ def test_dotenv_example_is_complete_and_uses_safe_development_values() -> None:
         "YPERSON_ANALYTICS_KILL_SWITCH": "false",
         "GRACEFUL_SHUTDOWN_SECONDS": "15",
     }
+
+
+def test_schema_v2_is_additive_and_preserves_v1_ddl_byte_for_byte() -> None:
+    from app.ydb_schema import SCHEMA_VERSION, TABLE_DDL
+
+    assert SCHEMA_VERSION == 2
+    assert TABLE_DDL[: len(SCHEMA_V1_DDL)] == SCHEMA_V1_DDL
+    assert TABLE_DDL[len(SCHEMA_V1_DDL) :] == (
+        """
+    CREATE TABLE IF NOT EXISTS exchange_private_fields (
+        token_hash String NOT NULL,
+        issuer_installation_id Utf8 NOT NULL,
+        fields_json JsonDocument NOT NULL,
+        expires_at Timestamp NOT NULL,
+        PRIMARY KEY (token_hash)
+    ) WITH (
+        TTL = Interval("PT0S") ON expires_at
+    )
+    """,
+        """
+    CREATE TABLE IF NOT EXISTS connection_private_fields (
+        owner_installation_id Utf8 NOT NULL,
+        peer_installation_id Utf8 NOT NULL,
+        fields_json JsonDocument NOT NULL,
+        updated_at Timestamp NOT NULL,
+        PRIMARY KEY (owner_installation_id, peer_installation_id)
+    )
+    """,
+    )

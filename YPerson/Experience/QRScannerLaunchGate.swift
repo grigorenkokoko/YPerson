@@ -10,6 +10,10 @@ struct QRScannerLaunchGate {
     mutating func complete() {
         isPending = false
     }
+
+    mutating func reset() {
+        isPending = false
+    }
 }
 
 enum QRScannerPermissionPolicy {

@@ -38,6 +38,11 @@ final class CardEditorViewController: YPBaseViewController {
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
+    override func didMove(toParent parent: UIViewController?) {
+        super.didMove(toParent: parent)
+        if parent == nil { audio.discardUncommittedEdits() }
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Изменить"
@@ -135,7 +140,7 @@ final class CardEditorViewController: YPBaseViewController {
     }
     @objc private func unlock() {
         explainPermission(title: "Закрытые поля", message: "Face ID защищает закрытые поля вашей визитки и подтверждает их передачу выбранному человеку.") { [weak self] in
-            self?.permissions.authenticatePrivateFields { result in
+            self?.permissions.authenticatePrivateFields(for: .revealPrivateFields) { result in
                 guard let self else { return }
                 if case .success = result {
                     self.phoneField.text = self.existingCard?.phone
@@ -164,9 +169,15 @@ final class CardEditorViewController: YPBaseViewController {
     }
 
     @objc private func saveAudio() {
-        let alert = UIAlertController(title: "Где использовать аудиоприветствие?", message: "Публичную запись получат подтверждённые получатели обычной карточки. Закрытая запись передаётся только после Face ID.", preferredStyle: .actionSheet)
-        alert.addAction(UIAlertAction(title: "В публичной карточке", style: .default) { [weak self] _ in self?.audio.save(isPublic: true) })
-        alert.addAction(UIAlertAction(title: "Только в закрытой карточке", style: .default) { [weak self] _ in self?.audio.save(isPublic: false) })
+        let alert = UIAlertController(title: "Добавить аудиоприветствие?", message: "Запись войдёт в публичную карточку только после нажатия «Готово».", preferredStyle: .actionSheet)
+        alert.addAction(UIAlertAction(title: "Добавить в публичную карточку", style: .default) { [weak self] _ in
+            guard let self else { return }
+            do {
+                try self.audio.selectPublicDraft()
+            } catch {
+                self.showMessage("Не удалось сохранить запись", "Запишите аудиоприветствие ещё раз.")
+            }
+        })
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
         present(alert, animated: true)
     }
@@ -179,15 +190,15 @@ final class CardEditorViewController: YPBaseViewController {
         case .recording: audioStatus.text = "● Идёт запись · максимум 10 секунд"; audioAction.configuration?.title = "Остановить"; audioSecondary.isHidden = true; audioSave.isHidden = true; audioDelete.isHidden = true; UIAccessibility.post(notification: .announcement, argument: "Запись началась")
         case .preview(let duration): audioStatus.text = String(format: "Предпросмотр · %.0f секунд", duration); audioAction.configuration?.title = "Перезаписать"; audioSecondary.configuration?.title = "Воспроизвести"; audioSecondary.isHidden = false; audioSave.isHidden = false; audioDelete.isHidden = false
         case .playing(let duration): audioStatus.text = String(format: "Воспроизведение · %.0f секунд", duration); audioSecondary.configuration?.title = "Остановить"; audioSecondary.isHidden = false; audioSave.isHidden = true; audioDelete.isHidden = true
-        case .saved(let isPublic, let duration): audioStatus.text = String(format: "%@ · %.0f секунд", isPublic ? "Опубликовано" : "Только закрытая карточка", duration); audioAction.configuration?.title = "Перезаписать"; audioSecondary.configuration?.title = "Удалить"; audioSecondary.isHidden = false; audioSave.isHidden = true; audioDelete.isHidden = true
+        case .saved(_, let duration): audioStatus.text = String(format: "Публичная запись · %.0f секунд", duration); audioAction.configuration?.title = "Перезаписать"; audioSecondary.configuration?.title = "Удалить"; audioSecondary.isHidden = false; audioSave.isHidden = true; audioDelete.isHidden = true
         }
     }
 
     private func confirmDelete() {
-        let alert = UIAlertController(title: "Удалить аудиоприветствие?", message: "Запись исчезнет из карточки и будет удалена локально.", preferredStyle: .alert)
+        let alert = UIAlertController(title: "Удалить аудиоприветствие?", message: "Запись будет удалена после сохранения карточки кнопкой «Готово».", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Удалить", style: .destructive) { [weak self] _ in
             self?.audioWasEdited = true
-            self?.audio.delete()
+            self?.audio.stageRemovalForCardSave()
         }); alert.addAction(UIAlertAction(title: "Отмена", style: .cancel)); present(alert, animated: true)
     }
 

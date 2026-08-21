@@ -13,10 +13,11 @@ import ydb
 from pydantic import ValidationError
 
 from .media_service import AUDIO_CONTENT_TYPE, MediaRecord
-from .schemas import PersonCard, SyncedPerson
+from .schemas import PersonCard, PrivateCardFields, SyncedPerson
 from .storage import (
     InstallationRecord,
     InvalidCredential,
+    PreparedExchangeResult,
     StorageConflict,
     StorageIntegrityError,
     SyncSnapshot,
@@ -31,6 +32,9 @@ FROM media_assets
 WHERE asset_id = $asset_id
   AND owner_installation_id = $installation_id;
 """
+
+_EXCHANGE_METHODS = frozenset({"qr", "bluetooth", "photo", "manual", "legacy"})
+_PRIVATE_EXCHANGE_METHODS = frozenset({"manual"})
 
 
 class YDBSyncStore:
@@ -124,6 +128,7 @@ class YDBSyncStore:
         audio_asset_id: str | None,
     ) -> int:
         now = self._clock()
+        public_card = _public_card(card)
 
         def publish(tx: ydb.QueryTxContext) -> int:
             self._ensure_active(tx, installation_id)
@@ -132,7 +137,7 @@ class YDBSyncStore:
                 return _stored_positive_int(previous, "version")
 
             effective_audio_asset_id = audio_asset_id
-            if effective_audio_asset_id is None and card.hasAudioGreeting:
+            if effective_audio_asset_id is None and public_card.hasAudioGreeting:
                 current_audio_rows = self._tx_rows(
                     tx,
                     """
@@ -211,11 +216,9 @@ class YDBSyncStore:
                 {
                     "$installation_id": _utf8(installation_id),
                     "$operation_id": _utf8(operation_id),
-                    "$card_id": _utf8(card.id),
+                    "$card_id": _utf8(public_card.id),
                     "$version": _uint64(version),
-                    "$card_json": _json_document(
-                        _json(card.model_dump(mode="json", exclude={"meetingPlace"}))
-                    ),
+                    "$card_json": _json_document(_json(public_card.model_dump(mode="json"))),
                     "$audio_asset_id": _optional_utf8(effective_audio_asset_id),
                     "$result_json": _json_document(result_json),
                     "$now": _timestamp(now),
@@ -468,16 +471,23 @@ class YDBSyncStore:
         WHERE installation_id = $installation_id;
 
         SELECT connection.peer_installation_id AS installation_id,
-               peer.version AS version, peer.card_json AS card_json
+               peer.version AS version, peer.card_json AS card_json,
+               grant_fields.fields_json AS fields_json
         FROM connections AS connection
         INNER JOIN connections AS reverse
             ON reverse.owner_installation_id = connection.peer_installation_id
            AND reverse.peer_installation_id = connection.owner_installation_id
+        INNER JOIN installations AS peer_installation
+            ON peer_installation.installation_id = connection.peer_installation_id
         INNER JOIN cards AS peer
             ON peer.installation_id = connection.peer_installation_id
+        LEFT JOIN connection_private_fields AS grant_fields
+            ON grant_fields.owner_installation_id = connection.owner_installation_id
+           AND grant_fields.peer_installation_id = connection.peer_installation_id
         WHERE connection.owner_installation_id = $installation_id
           AND connection.status = "confirmed"u
-          AND reverse.status = "confirmed"u;
+          AND reverse.status = "confirmed"u
+          AND peer_installation.deleted_at IS NULL;
 
         SELECT operation_id, result_json
         FROM operations
@@ -496,12 +506,15 @@ class YDBSyncStore:
         revocation_rows = result_sets[2]
         if len(own_rows) > 1:
             raise StorageIntegrityError
-        own_card = _stored_card(own_rows[0]) if own_rows else None
+        own_card = _public_card(_stored_card(own_rows[0])) if own_rows else None
         own_version = _stored_version(own_rows[0]) if own_rows else None
         people = tuple(
             SyncedPerson(
                 installationID=_stored_text(row, "installation_id"),
-                card=_stored_card(row),
+                card=_overlay_private_fields(
+                    _public_card(_stored_card(row)),
+                    _stored_optional_private_fields(row, "fields_json"),
+                ),
                 version=_stored_version(row),
             )
             for row in people_rows
@@ -524,13 +537,27 @@ class YDBSyncStore:
         installation_id: str,
         operation_id: str,
         method: str,
-        raw_token: str,
+        public_card: PersonCard,
+        private_fields: PrivateCardFields | None,
+        raw_credential: str,
         expires_at: datetime,
-    ) -> None:
-        token_hash = _digest(raw_token)
+    ) -> PreparedExchangeResult:
+        token_hash = _digest(raw_credential)
         now = self._clock()
+        committed_expiry = _as_utc(expires_at)
+        public_card = _public_card(public_card)
+        validated_private_fields = (
+            PrivateCardFields.model_validate(
+                private_fields.model_dump(mode="json"),
+                strict=True,
+            )
+            if private_fields is not None
+            else None
+        )
+        if validated_private_fields is not None and method not in _PRIVATE_EXCHANGE_METHODS:
+            raise StorageConflict("private fields unavailable")
 
-        def prepare(tx: ydb.QueryTxContext) -> None:
+        def prepare(tx: ydb.QueryTxContext) -> PreparedExchangeResult:
             self._ensure_active(tx, installation_id)
             previous = self._operation_result(
                 tx,
@@ -542,7 +569,18 @@ class YDBSyncStore:
                 previous_hash = _stored_digest(previous, "tokenHash")
                 if not compare_digest(previous_hash, token_hash):
                     raise StorageConflict("operation identifier already used")
-                return
+                if set(previous) == {"tokenHash"}:
+                    return self._legacy_prepared_exchange_result(
+                        tx,
+                        installation_id,
+                        operation_id,
+                        method,
+                        token_hash,
+                    )
+                return PreparedExchangeResult(
+                    card_version=_stored_positive_int(previous, "version"),
+                    expires_at=_stored_iso_datetime(previous, "expiresAt"),
+                )
             token_rows = self._tx_rows(
                 tx,
                 """
@@ -553,16 +591,72 @@ class YDBSyncStore:
             )[0]
             if token_rows:
                 raise StorageConflict("exchange unavailable")
-            self._tx_rows(
+            current_rows = self._tx_rows(
                 tx,
                 """
+                DECLARE $installation_id AS Utf8;
+                SELECT version FROM cards WHERE installation_id = $installation_id;
+                """,
+                {"$installation_id": _utf8(installation_id)},
+            )[0]
+            if len(current_rows) > 1:
+                raise StorageIntegrityError
+            version = (_stored_version(current_rows[0]) if current_rows else 0) + 1
+            result_json = _json(
+                {
+                    "expiresAt": committed_expiry.isoformat(),
+                    "tokenHash": token_hash.hex(),
+                    "version": version,
+                }
+            )
+            private_declaration = ""
+            private_mutation = "DELETE FROM exchange_private_fields WHERE token_hash = $token_hash;"
+            parameters: dict[str, Any] = {
+                "$token_hash": _string(token_hash),
+                "$installation_id": _utf8(installation_id),
+                "$operation_id": _utf8(operation_id),
+                "$method": _utf8(method),
+                "$card_id": _utf8(public_card.id),
+                "$version": _uint64(version),
+                "$card_json": _json_document(_json(public_card.model_dump(mode="json"))),
+                "$expires_at": _timestamp(committed_expiry),
+                "$result_json": _json_document(result_json),
+                "$now": _timestamp(now),
+            }
+            if validated_private_fields is not None:
+                private_declaration = "DECLARE $fields_json AS JsonDocument;"
+                private_mutation = """
+                UPSERT INTO exchange_private_fields (
+                    token_hash, issuer_installation_id, fields_json, expires_at
+                ) VALUES (
+                    $token_hash, $installation_id, $fields_json, $expires_at
+                );
+                """
+                parameters["$fields_json"] = _json_document(
+                    _json(validated_private_fields.model_dump(mode="json"))
+                )
+            self._tx_rows(
+                tx,
+                f"""
                 DECLARE $token_hash AS String;
                 DECLARE $installation_id AS Utf8;
                 DECLARE $operation_id AS Utf8;
                 DECLARE $method AS Utf8;
+                DECLARE $card_id AS Utf8;
+                DECLARE $version AS Uint64;
+                DECLARE $card_json AS JsonDocument;
                 DECLARE $expires_at AS Timestamp;
                 DECLARE $result_json AS JsonDocument;
                 DECLARE $now AS Timestamp;
+                {private_declaration}
+
+                UPSERT INTO cards (
+                    installation_id, card_id, version, card_json,
+                    published_at, updated_at
+                ) VALUES (
+                    $installation_id, $card_id, $version, $card_json,
+                    $now, $now
+                );
 
                 UPSERT INTO exchange_claims (
                     token_hash, issuer_installation_id, method,
@@ -571,24 +665,18 @@ class YDBSyncStore:
                     $token_hash, $installation_id, $method,
                     $expires_at, CAST(NULL AS Utf8?)
                 );
+                {private_mutation}
                 UPSERT INTO operations (
                     installation_id, operation_id, operation_type, result_json, completed_at
                 ) VALUES (
                     $installation_id, $operation_id, "prepareExchange"u, $result_json, $now
                 );
                 """,
-                {
-                    "$token_hash": _string(token_hash),
-                    "$installation_id": _utf8(installation_id),
-                    "$operation_id": _utf8(operation_id),
-                    "$method": _utf8(method),
-                    "$expires_at": _timestamp(expires_at),
-                    "$result_json": _json_document(_json({"tokenHash": token_hash.hex()})),
-                    "$now": _timestamp(now),
-                },
+                parameters,
             )
+            return PreparedExchangeResult(card_version=version, expires_at=committed_expiry)
 
-        self._transaction(prepare)
+        return self._transaction(prepare)
 
     def claim_exchange(
         self,
@@ -606,23 +694,43 @@ class YDBSyncStore:
                 previous_hash = _stored_digest(previous, "tokenHash")
                 if not compare_digest(previous_hash, token_hash):
                     raise StorageConflict("operation identifier already used")
-                try:
-                    return SyncedPerson.model_validate(previous["person"], strict=True)
-                except (KeyError, TypeError, ValidationError) as error:
-                    raise StorageIntegrityError from error
+                if "issuerInstallationID" in previous:
+                    issuer_id = _stored_text(previous, "issuerInstallationID")
+                elif set(previous) == {"person", "tokenHash"}:
+                    try:
+                        legacy_person = SyncedPerson.model_validate(
+                            _stored_value(previous, "person"),
+                            strict=True,
+                        )
+                    except ValidationError as error:
+                        raise StorageIntegrityError from error
+                    issuer_id = legacy_person.installationID
+                else:
+                    raise StorageIntegrityError
+                return self._claimed_person(tx, installation_id, issuer_id)
             claim_rows = self._tx_rows(
                 tx,
                 """
                 DECLARE $token_hash AS String;
                 SELECT claim.issuer_installation_id AS issuer_installation_id,
+                       claim.method AS method,
                        claim.expires_at AS expires_at,
                        claim.claimed_by_installation_id AS claimed_by_installation_id,
                        card.version AS version,
-                       card.card_json AS card_json
+                       card.card_json AS card_json,
+                       exchange_fields.fields_json AS fields_json,
+                       exchange_fields.issuer_installation_id
+                           AS private_issuer_installation_id,
+                       exchange_fields.expires_at AS private_expires_at
                 FROM exchange_claims AS claim
+                INNER JOIN installations AS issuer
+                    ON issuer.installation_id = claim.issuer_installation_id
                 INNER JOIN cards AS card
                     ON card.installation_id = claim.issuer_installation_id
-                WHERE claim.token_hash = $token_hash;
+                LEFT JOIN exchange_private_fields AS exchange_fields
+                    ON exchange_fields.token_hash = claim.token_hash
+                WHERE claim.token_hash = $token_hash
+                  AND issuer.deleted_at IS NULL;
                 """,
                 {"$token_hash": _string(token_hash)},
             )[0]
@@ -632,33 +740,64 @@ class YDBSyncStore:
                 raise StorageIntegrityError
             row = claim_rows[0]
             issuer_id = _stored_text(row, "issuer_installation_id")
+            method = _stored_exchange_method(row)
+            claim_expiry = _stored_datetime(row, "expires_at")
             claimed_by = _stored_optional_text(row, "claimed_by_installation_id")
+            private_fields = _stored_claim_private_fields(
+                row,
+                issuer_id=issuer_id,
+                expires_at=claim_expiry,
+            )
+            if private_fields is not None and method not in _PRIVATE_EXCHANGE_METHODS:
+                raise StorageIntegrityError
             if (
                 issuer_id == installation_id
-                or _stored_datetime(row, "expires_at") <= _as_utc(now)
+                or claim_expiry <= _as_utc(now)
                 or claimed_by is not None
             ):
                 raise StorageConflict("exchange unavailable")
             person = SyncedPerson(
                 installationID=issuer_id,
-                card=_stored_card(row),
+                card=_overlay_private_fields(
+                    _public_card(_stored_card(row)),
+                    private_fields,
+                ),
                 version=_stored_version(row),
             )
-            result_json = _json(
-                {
-                    "person": person.model_dump(mode="json"),
-                    "tokenHash": token_hash.hex(),
-                }
-            )
+            result_json = _json({"tokenHash": token_hash.hex(), "issuerInstallationID": issuer_id})
+            private_declaration = ""
+            private_mutation = ""
+            parameters: dict[str, Any] = {
+                "$token_hash": _string(token_hash),
+                "$issuer_id": _utf8(issuer_id),
+                "$installation_id": _utf8(installation_id),
+                "$operation_id": _utf8(operation_id),
+                "$result_json": _json_document(result_json),
+                "$now": _timestamp(now),
+            }
+            if private_fields is not None:
+                private_declaration = "DECLARE $fields_json AS JsonDocument;"
+                private_mutation = """
+                UPSERT INTO connection_private_fields (
+                    owner_installation_id, peer_installation_id,
+                    fields_json, updated_at
+                ) VALUES (
+                    $installation_id, $issuer_id, $fields_json, $now
+                );
+                """
+                parameters["$fields_json"] = _json_document(
+                    _json(private_fields.model_dump(mode="json"))
+                )
             self._tx_rows(
                 tx,
-                """
+                f"""
                 DECLARE $token_hash AS String;
                 DECLARE $issuer_id AS Utf8;
                 DECLARE $installation_id AS Utf8;
                 DECLARE $operation_id AS Utf8;
                 DECLARE $result_json AS JsonDocument;
                 DECLARE $now AS Timestamp;
+                {private_declaration}
 
                 UPDATE exchange_claims
                 SET claimed_by_installation_id = $installation_id
@@ -669,24 +808,116 @@ class YDBSyncStore:
                 ) VALUES
                     ($installation_id, $issuer_id, "confirmed"u, $now, $now),
                     ($issuer_id, $installation_id, "confirmed"u, $now, $now);
+                {private_mutation}
+                DELETE FROM exchange_private_fields WHERE token_hash = $token_hash;
                 UPSERT INTO operations (
                     installation_id, operation_id, operation_type, result_json, completed_at
                 ) VALUES (
                     $installation_id, $operation_id, "claimExchange"u, $result_json, $now
                 );
                 """,
-                {
-                    "$token_hash": _string(token_hash),
-                    "$issuer_id": _utf8(issuer_id),
-                    "$installation_id": _utf8(installation_id),
-                    "$operation_id": _utf8(operation_id),
-                    "$result_json": _json_document(result_json),
-                    "$now": _timestamp(now),
-                },
+                parameters,
             )
             return person
 
         return self._transaction(claim)
+
+    def _legacy_prepared_exchange_result(
+        self,
+        tx: ydb.QueryTxContext,
+        installation_id: str,
+        operation_id: str,
+        method: str,
+        token_hash: bytes,
+    ) -> PreparedExchangeResult:
+        card_operation_id = sha256(
+            f"yperson.operation.v1\0prepareExchange.card\0{operation_id}".encode()
+        ).hexdigest()
+        try:
+            publish_result = self._operation_result(
+                tx,
+                installation_id,
+                card_operation_id,
+                "publishCard",
+            )
+        except StorageConflict as error:
+            raise StorageIntegrityError from error
+        if publish_result is None:
+            raise StorageIntegrityError
+        claim_rows = self._tx_rows(
+            tx,
+            """
+            DECLARE $token_hash AS String;
+            SELECT token_hash, issuer_installation_id, method, expires_at
+            FROM exchange_claims
+            WHERE token_hash = $token_hash;
+            """,
+            {"$token_hash": _string(token_hash)},
+        )[0]
+        if len(claim_rows) != 1:
+            raise StorageIntegrityError
+        claim_row = claim_rows[0]
+        expected_legacy_method = "manual" if method == "legacy" else method
+        if (
+            not compare_digest(
+                _stored_bytes(claim_row, "token_hash", expected_length=sha256().digest_size),
+                token_hash,
+            )
+            or _stored_text(claim_row, "issuer_installation_id") != installation_id
+            or _stored_exchange_method(claim_row) != expected_legacy_method
+        ):
+            raise StorageIntegrityError
+        return PreparedExchangeResult(
+            card_version=_stored_positive_int(publish_result, "version"),
+            expires_at=_stored_datetime(claim_row, "expires_at"),
+        )
+
+    def _claimed_person(
+        self,
+        tx: ydb.QueryTxContext,
+        installation_id: str,
+        issuer_id: str,
+    ) -> SyncedPerson:
+        rows = self._tx_rows(
+            tx,
+            """
+            DECLARE $installation_id AS Utf8;
+            DECLARE $issuer_id AS Utf8;
+            SELECT card.version AS version,
+                   card.card_json AS card_json,
+                   grant_fields.fields_json AS fields_json
+            FROM cards AS card
+            INNER JOIN installations AS issuer
+                ON issuer.installation_id = card.installation_id
+            INNER JOIN connections AS connection
+                ON connection.peer_installation_id = card.installation_id
+            INNER JOIN connections AS reverse
+                ON reverse.owner_installation_id = card.installation_id
+               AND reverse.peer_installation_id = connection.owner_installation_id
+            LEFT JOIN connection_private_fields AS grant_fields
+                ON grant_fields.owner_installation_id = connection.owner_installation_id
+               AND grant_fields.peer_installation_id = card.installation_id
+            WHERE card.installation_id = $issuer_id
+              AND connection.owner_installation_id = $installation_id
+              AND issuer.deleted_at IS NULL
+              AND connection.status = "confirmed"u
+              AND reverse.status = "confirmed"u;
+            """,
+            {
+                "$installation_id": _utf8(installation_id),
+                "$issuer_id": _utf8(issuer_id),
+            },
+        )[0]
+        if len(rows) != 1:
+            raise StorageIntegrityError
+        return SyncedPerson(
+            installationID=issuer_id,
+            card=_overlay_private_fields(
+                _public_card(_stored_card(rows[0])),
+                _stored_optional_private_fields(rows[0], "fields_json"),
+            ),
+            version=_stored_version(rows[0]),
+        )
 
     def cancel_exchange(
         self,
@@ -742,6 +973,7 @@ class YDBSyncStore:
                 DECLARE $result_json AS JsonDocument;
                 DECLARE $now AS Timestamp;
 
+                DELETE FROM exchange_private_fields WHERE token_hash = $token_hash;
                 DELETE FROM exchange_claims WHERE token_hash = $token_hash;
                 UPSERT INTO operations (
                     installation_id, operation_id, operation_type, result_json, completed_at
@@ -995,6 +1227,11 @@ class YDBSyncStore:
                 DELETE FROM connections
                 WHERE owner_installation_id = $installation_id
                    OR peer_installation_id = $installation_id;
+                DELETE FROM connection_private_fields
+                WHERE owner_installation_id = $installation_id
+                   OR peer_installation_id = $installation_id;
+                DELETE FROM exchange_private_fields
+                WHERE issuer_installation_id = $installation_id;
                 DELETE FROM exchange_claims
                 WHERE issuer_installation_id = $installation_id
                    OR claimed_by_installation_id = $installation_id;
@@ -1025,30 +1262,69 @@ class YDBSyncStore:
         operation_id: str,
         bearer: str,
     ) -> list[str] | None:
-        rows = self._execute(
+        installation_rows, exact_rows, deletion_rows = self._execute(
             """
             DECLARE $installation_id AS Utf8;
             DECLARE $operation_id AS Utf8;
-            SELECT operation_type, result_json
+
+            SELECT installation_id FROM installations
+            WHERE installation_id = $installation_id;
+
+            SELECT operation_id, operation_type, result_json
             FROM operations
             WHERE installation_id = $installation_id
-              AND operation_id = $operation_id
+              AND operation_id = $operation_id;
+
+            SELECT operation_id, operation_type, result_json
+            FROM operations
+            WHERE installation_id = $installation_id
               AND operation_type = "deleteProfile"u;
             """,
             {
                 "$installation_id": _utf8(installation_id),
                 "$operation_id": _utf8(operation_id),
             },
-        )[0]
-        if not rows:
-            return None
-        if len(rows) != 1:
+        )
+        if len(installation_rows) > 1 or len(exact_rows) > 1 or len(deletion_rows) > 1:
             raise StorageIntegrityError
-        result = _stored_json(rows[0], "result_json")
+        if installation_rows:
+            if deletion_rows:
+                raise StorageIntegrityError
+            return None
+
+        if not deletion_rows:
+            if exact_rows and _stored_text(exact_rows[0], "operation_type") == "deleteProfile":
+                raise StorageIntegrityError
+            return None
+
+        deletion = deletion_rows[0]
+        deletion_operation_id = _stored_text(deletion, "operation_id")
+        if not deletion_operation_id.strip():
+            raise StorageIntegrityError
+        if _stored_text(deletion, "operation_type") != "deleteProfile":
+            raise StorageIntegrityError
+        result = _stored_json(deletion, "result_json")
         stored_hash = _stored_digest(result, "credentialHash")
+        object_keys = _object_keys(result)
+
+        exact_operation_type: str | None = None
+        if exact_rows:
+            exact = exact_rows[0]
+            exact_operation_id = _stored_text(exact, "operation_id")
+            exact_operation_type = _stored_text(exact, "operation_type")
+            if exact_operation_id != operation_id or not exact_operation_type.strip():
+                raise StorageIntegrityError
+            if (
+                exact_operation_type == "deleteProfile"
+                and exact_operation_id != deletion_operation_id
+            ):
+                raise StorageIntegrityError
+
         if not compare_digest(stored_hash, _digest(bearer)):
             raise InvalidCredential
-        return _object_keys(result)
+        if exact_operation_type is not None and exact_operation_type != "deleteProfile":
+            raise StorageConflict("operation identifier already used")
+        return object_keys
 
     def debug_installation(self, installation_id: str) -> InstallationRecord | None:
         """Return secret-safe adapter state for deterministic injected-pool tests."""
@@ -1233,6 +1509,13 @@ def _stored_optional_text(row: Any, key: str) -> str | None:
     return value
 
 
+def _stored_exchange_method(row: Any) -> str:
+    method = _stored_text(row, "method")
+    if method not in _EXCHANGE_METHODS:
+        raise StorageIntegrityError
+    return method
+
+
 def _stored_bytes(row: Any, key: str, *, expected_length: int | None = None) -> bytes:
     value = _stored_value(row, key)
     if not isinstance(value, (bytes, bytearray, memoryview)):
@@ -1270,6 +1553,17 @@ def _stored_datetime(row: Any, key: str) -> datetime:
     return _as_utc(value)
 
 
+def _stored_iso_datetime(row: Any, key: str) -> datetime:
+    value = _stored_text(row, key)
+    try:
+        stored = datetime.fromisoformat(value)
+    except ValueError as error:
+        raise StorageIntegrityError from error
+    if stored.tzinfo is None:
+        raise StorageIntegrityError
+    return _as_utc(stored)
+
+
 def _stored_optional_datetime(row: Any, key: str) -> datetime | None:
     value = _stored_value(row, key)
     if value is None:
@@ -1285,6 +1579,50 @@ def _stored_json(row: Any, key: str) -> dict[str, Any]:
 
 def _stored_card(row: Any) -> PersonCard:
     return _card(_stored_value(row, "card_json"))
+
+
+def _public_card(card: PersonCard) -> PersonCard:
+    return card.model_copy(update={"phone": "", "meetingPlace": None})
+
+
+def _stored_optional_private_fields(row: Any, key: str) -> PrivateCardFields | None:
+    value = _stored_value(row, key)
+    if value is None:
+        return None
+    try:
+        return PrivateCardFields.model_validate(_json_value(value), strict=True)
+    except ValidationError as error:
+        raise StorageIntegrityError from error
+
+
+def _stored_claim_private_fields(
+    row: Any,
+    *,
+    issuer_id: str,
+    expires_at: datetime,
+) -> PrivateCardFields | None:
+    fields = _stored_optional_private_fields(row, "fields_json")
+    private_issuer = _stored_value(row, "private_issuer_installation_id")
+    private_expiry = _stored_value(row, "private_expires_at")
+    if fields is None:
+        if private_issuer is not None or private_expiry is not None:
+            raise StorageIntegrityError
+        return None
+    if (
+        _stored_text(row, "private_issuer_installation_id") != issuer_id
+        or _stored_datetime(row, "private_expires_at") != expires_at
+    ):
+        raise StorageIntegrityError
+    return fields
+
+
+def _overlay_private_fields(
+    card: PersonCard,
+    fields: PrivateCardFields | None,
+) -> PersonCard:
+    if fields is None:
+        return card
+    return card.model_copy(update={"phone": fields.phone})
 
 
 def _stored_object_key(row: Any, key: str) -> str:
