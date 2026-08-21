@@ -13,6 +13,7 @@ final class PersonViewController: YPBaseViewController {
     private let placeLabel = YPStyle.label("Место знакомства не добавлено", style: .footnote)
     private var audioButton: UIButton?
     private var audioTask: Task<Void, Never>?
+    private var moderationTasks: [UUID: Task<Void, Never>] = [:]
     private var lifecycleGeneration = UUID()
     private var profileDeleted = false
     private lazy var contactReconciliation = ContactReconciliationPresenter(host: self, permissions: permissions, analytics: analytics)
@@ -57,7 +58,11 @@ final class PersonViewController: YPBaseViewController {
         ])
     }
 
-    @objc private func reviewUpdate() { analytics.report(.cardUpdateOpened); showMessage("Проверка обновлений", "Новых изменений нет. Если владелец обновит визитку, YPerson покажет разницу перед применением.") }
+    @objc private func reviewUpdate() {
+        guard !profileDeleted else { return }
+        analytics.report(.cardUpdateOpened)
+        showMessage("Проверка обновлений", "Новых изменений нет. Если владелец обновит визитку, YPerson покажет разницу перед применением.")
+    }
 
     @objc private func addLocation() {
         guard !profileDeleted else { return }
@@ -89,20 +94,28 @@ final class PersonViewController: YPBaseViewController {
     }
 
     @objc private func saveContact() {
+        guard !profileDeleted else { return }
         contactReconciliation.start(for: card)
     }
 
-    @objc private func savePhoto() { imageSaver.save(imageSaver.render(summary), from: self) }
+    @objc private func savePhoto() {
+        guard !profileDeleted else { return }
+        imageSaver.save(imageSaver.render(summary), from: self)
+    }
 
     @objc private func playAudioGreeting() {
         guard !profileDeleted,
               audioTask == nil,
-              let peerInstallationID = card.sourceInstallationID else { return }
+              let peerInstallationID = card.sourceInstallationID,
+              let profileContext = syncCoordinator.captureProfileOperationContext() else { return }
         let generation = lifecycleGeneration
         audioButton?.isEnabled = false
         audioButton?.configuration?.title = "Загрузка…"
         audioTask = Task { [weak self] in
-            guard let self else { return }
+            guard !Task.isCancelled,
+                  let self,
+                  self.isCurrentProfileLifecycle(generation),
+                  self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
             defer {
                 if self.isCurrentProfileLifecycle(generation) {
                     self.audioTask = nil
@@ -111,51 +124,88 @@ final class PersonViewController: YPBaseViewController {
                 }
             }
             do {
-                let asset = try await self.syncCoordinator.audioAsset(for: peerInstallationID)
+                let asset = try await self.syncCoordinator.audioAsset(
+                    for: peerInstallationID,
+                    context: profileContext
+                )
                 guard self.isCurrentProfileLifecycle(generation), !Task.isCancelled else { return }
                 let fileURL = try await self.mediaTransfer.cachedAudio(for: asset) {
-                    try await self.syncCoordinator.audioAsset(for: peerInstallationID)
+                    try await self.syncCoordinator.audioAsset(
+                        for: peerInstallationID,
+                        context: profileContext
+                    )
                 }
                 guard self.isCurrentProfileLifecycle(generation), !Task.isCancelled else { return }
                 try self.audio.play(fileURL: fileURL)
             } catch where Task.isCancelled {
                 return
             } catch {
+                guard self.isCurrentProfileLifecycle(generation),
+                      self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
                 self.showMessage("Не удалось воспроизвести", "Проверьте интернет и попробуйте ещё раз.")
             }
         }
     }
 
     private func report() {
+        guard !profileDeleted else { return }
+        let generation = lifecycleGeneration
         let alert = UIAlertController(title: "Пожаловаться", message: "Выберите категорию. Комментарий необязателен.", preferredStyle: .actionSheet)
         [("Нежелательная реклама", "spam"), ("Оскорбительный контент", "abusive_content"), ("Выдаёт себя за другого", "impersonation")].forEach { title, identifier in
-            alert.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in self?.submitSafety(.report, category: identifier) })
+            alert.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
+                guard let self, self.isCurrentProfileLifecycle(generation) else { return }
+                self.submitSafety(.report, category: identifier)
+            })
         }
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel)); present(alert, animated: true)
     }
 
     private func block() {
+        guard !profileDeleted else { return }
+        let generation = lifecycleGeneration
         let alert = UIAlertController(title: "Заблокировать «\(card.name)»?", message: "Карточка и будущие обновления будут скрыты сразу. Системный контакт не изменится.", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "Заблокировать", style: .destructive) { [weak self] _ in self?.submitSafety(.block, category: nil); self?.card.isBlocked = true; self?.navigationController?.popViewController(animated: true) })
+        alert.addAction(UIAlertAction(title: "Заблокировать", style: .destructive) { [weak self] _ in
+            guard let self, self.isCurrentProfileLifecycle(generation) else { return }
+            self.submitSafety(.block, category: nil)
+            self.card.isBlocked = true
+            self.navigationController?.popViewController(animated: true)
+        })
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel)); present(alert, animated: true)
     }
 
     private func deleteConnection() {
+        guard !profileDeleted else { return }
+        let generation = lifecycleGeneration
         let alert = UIAlertController(title: "Удалить связь?", message: "Локальная заметка удалится, а обновления прекратятся. Системный контакт останется.", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "Удалить", style: .destructive) { [weak self] _ in self?.navigationController?.popViewController(animated: true) })
+        alert.addAction(UIAlertAction(title: "Удалить", style: .destructive) { [weak self] _ in
+            guard let self, self.isCurrentProfileLifecycle(generation) else { return }
+            self.navigationController?.popViewController(animated: true)
+        })
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel)); present(alert, animated: true)
     }
 
     private func submitSafety(_ operation: SyncOperation, category: String?) {
+        guard !profileDeleted,
+              let profileContext = syncCoordinator.captureProfileOperationContext() else { return }
         guard let peerInstallationID = card.sourceInstallationID else {
             showMessage("Сохранено только локально", "Удалённое действие недоступно, пока обмен не подтверждён сервером.")
             return
         }
-        Task { [weak self] in
-            guard let self else { return }
-            let generation = self.lifecycleGeneration
+        let generation = lifecycleGeneration
+        let taskID = UUID()
+        moderationTasks[taskID] = Task { [weak self] in
+            guard !Task.isCancelled,
+                  let self,
+                  self.isCurrentProfileLifecycle(generation),
+                  self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
+            defer { self.moderationTasks.removeValue(forKey: taskID) }
             do {
-                try await self.syncCoordinator.submitModeration(operation: operation, peerInstallationID: peerInstallationID, category: category)
+                try await self.syncCoordinator.submitModeration(
+                    operation: operation,
+                    peerInstallationID: peerInstallationID,
+                    category: category,
+                    context: profileContext
+                )
                 guard self.isCurrentProfileLifecycle(generation) else { return }
                 if operation == .block { self.mediaTransfer.removeAllCachedAudio() }
                 self.showMessage("Отправлено", operation == .report ? "Жалоба принята. Карточку можно сразу заблокировать." : "Человек заблокирован.")
@@ -175,10 +225,13 @@ final class PersonViewController: YPBaseViewController {
     }
 
     func applyProfileDeletion() {
+        contactReconciliation.invalidate()
         profileDeleted = true
         lifecycleGeneration = UUID()
         audioTask?.cancel()
         audioTask = nil
+        moderationTasks.values.forEach { $0.cancel() }
+        moderationTasks.removeAll()
         audio.stopPlayback()
         audioButton?.isEnabled = false
         navigationController?.popToRootViewController(animated: false)
@@ -188,5 +241,8 @@ final class PersonViewController: YPBaseViewController {
         !profileDeleted && lifecycleGeneration == generation
     }
 
-    deinit { audioTask?.cancel() }
+    deinit {
+        audioTask?.cancel()
+        moderationTasks.values.forEach { $0.cancel() }
+    }
 }

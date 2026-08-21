@@ -1,6 +1,6 @@
 import Foundation
 
-private let harnessVersion = 4
+private let harnessVersion = 5
 
 private func require(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() { fatalError(message) }
@@ -134,7 +134,7 @@ require(
 require(!consent.isAuthorized, "failed private-field projection left authorization reusable")
 
 var profileEpoch = ProfileOperationEpoch()
-let firstProfileOperation = profileEpoch.capture()
+let firstProfileOperation: ProfileOperationContext = profileEpoch.capture()
 require(
     profileEpoch.isCurrent(firstProfileOperation),
     "a newly captured profile operation epoch was not current"
@@ -153,6 +153,77 @@ require(
     replacementProfileOperation != firstProfileOperation,
     "profile epoch invalidation reused the stale snapshot"
 )
+profileEpoch.invalidate()
+let recreatedProfileOperation: ProfileOperationContext = profileEpoch.capture()
+require(
+    !profileEpoch.isCurrent(firstProfileOperation),
+    "an old UI context became current after profile recreation"
+)
+require(
+    profileEpoch.isCurrent(recreatedProfileOperation),
+    "a fresh post-recreation context was not usable"
+)
+
+let contactFence = ContactReconciliationSessionFence()
+let staleContactSession = contactFence.begin()
+require(contactFence.isCurrent(staleContactSession), "new contact session was not current")
+let firstInvalidation = contactFence.invalidate()
+var staleCommitRan = false
+requireThrows("an invalidated contact session began a Contacts write") {
+    try contactFence.performCommit(for: staleContactSession) {
+        staleCommitRan = true
+    }
+}
+require(!staleCommitRan, "an invalidated contact session executed its commit body")
+firstInvalidation.waitForInFlightCommits()
+
+let activeContactSession = contactFence.begin()
+let commitStarted = DispatchSemaphore(value: 0)
+let releaseCommit = DispatchSemaphore(value: 0)
+let commitStateLock = NSLock()
+var commitCompleted = false
+DispatchQueue.global(qos: .userInitiated).async {
+    try? contactFence.performCommit(for: activeContactSession) {
+        commitStarted.signal()
+        releaseCommit.wait()
+        commitStateLock.lock()
+        commitCompleted = true
+        commitStateLock.unlock()
+    }
+}
+require(
+    commitStarted.wait(timeout: .now() + 1) == .success,
+    "contact commit did not start"
+)
+let inFlightInvalidation = contactFence.invalidate()
+let replacementContactSession = contactFence.begin()
+require(
+    !contactFence.isCurrent(activeContactSession),
+    "starting a new Contacts run made the old session current"
+)
+require(
+    contactFence.isCurrent(replacementContactSession),
+    "replacement Contacts session was not current"
+)
+DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
+    releaseCommit.signal()
+}
+inFlightInvalidation.waitForInFlightCommits()
+commitStateLock.lock()
+let waitedForCommit = commitCompleted
+commitStateLock.unlock()
+require(waitedForCommit, "contact invalidation returned before an in-flight write completed")
+
+var scannerGate = QRScannerLaunchGate()
+require(scannerGate.begin(alreadyPresenting: false), "widget scanner launch did not begin")
+require(scannerGate.isPending, "widget scanner launch was not marked pending")
+scannerGate.reset()
+require(!scannerGate.isPending, "profile deletion left the widget launch gate pending")
+require(
+    scannerGate.begin(alreadyPresenting: false),
+    "widget scanner could not launch after profile recreation"
+)
+scannerGate.complete()
 
 let deletionRecord = ProfileDeletionRecord(operationID: "stable-delete-operation")
 require(!deletionRecord.serverAcknowledged, "new deletion record started acknowledged")

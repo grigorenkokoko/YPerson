@@ -68,6 +68,79 @@ struct ProfileOperationEpoch {
     }
 }
 
+typealias ProfileOperationContext = ProfileOperationEpoch.Snapshot
+
+final class ContactReconciliationSessionFence: @unchecked Sendable {
+    struct Session: Equatable, Sendable {
+        fileprivate let id: UUID
+    }
+
+    struct Invalidation: Sendable {
+        fileprivate let fence: ContactReconciliationSessionFence
+
+        func waitForInFlightCommits() {
+            fence.waitForInFlightCommits()
+        }
+    }
+
+    enum FenceError: Error {
+        case invalidated
+    }
+
+    private let condition = NSCondition()
+    private var currentSessionID: UUID?
+    private var inFlightCommits = 0
+
+    func begin() -> Session {
+        condition.lock()
+        defer { condition.unlock() }
+        let session = Session(id: UUID())
+        currentSessionID = session.id
+        return session
+    }
+
+    func isCurrent(_ session: Session) -> Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        return currentSessionID == session.id
+    }
+
+    func invalidate() -> Invalidation {
+        condition.lock()
+        currentSessionID = nil
+        condition.unlock()
+        return Invalidation(fence: self)
+    }
+
+    func performCommit<T>(
+        for session: Session,
+        _ operation: () throws -> T
+    ) throws -> T {
+        condition.lock()
+        guard currentSessionID == session.id else {
+            condition.unlock()
+            throw FenceError.invalidated
+        }
+        inFlightCommits += 1
+        condition.unlock()
+        defer { finishCommit() }
+        return try operation()
+    }
+
+    private func finishCommit() {
+        condition.lock()
+        inFlightCommits -= 1
+        if inFlightCommits == 0 { condition.broadcast() }
+        condition.unlock()
+    }
+
+    private func waitForInFlightCommits() {
+        condition.lock()
+        while inFlightCommits > 0 { condition.wait() }
+        condition.unlock()
+    }
+}
+
 struct ProfileDeletionRecord: Codable, Equatable {
     let operationID: String
     private(set) var serverAcknowledged: Bool

@@ -11,6 +11,7 @@ xcrun swiftc \
     -module-cache-path "$BUILD_DIR/module-cache" \
     YPerson/Domain/Models.swift \
     YPerson/Domain/ExchangeContract.swift \
+    YPerson/Experience/QRScannerLaunchGate.swift \
     YPerson/Storage/AppGroupSnapshotStore.swift \
     Verification/HonestExchangeContract/main.swift \
     -o "$BUILD_DIR/check"

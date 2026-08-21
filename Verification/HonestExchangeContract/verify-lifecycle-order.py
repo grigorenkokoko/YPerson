@@ -5,9 +5,15 @@ These checks intentionally bind an await to a later guard/commit. Moving a guard
 above the await, or moving a mutation above its guard, must fail this harness.
 """
 
+import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
 
 
 def source(path: str) -> str:
@@ -16,9 +22,9 @@ def source(path: str) -> str:
 
 def function_body(text: str, signature: str) -> str:
     start = text.find(signature)
-    assert start >= 0, f"missing function: {signature}"
+    require(start >= 0, f"missing function: {signature}")
     opening = text.find("{", start)
-    assert opening >= 0, f"missing function body: {signature}"
+    require(opening >= 0, f"missing function body: {signature}")
     depth = 0
     for index in range(opening, len(text)):
         if text[index] == "{":
@@ -50,12 +56,13 @@ def require_each_await_guarded(body: str, guards: tuple[str, ...], label: str) -
             break
         awaits.append(position)
         cursor = position + len("await ")
-    assert awaits, f"{label}: expected at least one await"
+    require(bool(awaits), f"{label}: expected at least one await")
     for index, position in enumerate(awaits):
         boundary = awaits[index + 1] if index + 1 < len(awaits) else len(body)
         guarded_region = body[position:boundary]
-        assert any(guard in guarded_region for guard in guards), (
-            f"{label}: await #{index + 1} lacks a post-await lifecycle/epoch guard"
+        require(
+            any(guard in guarded_region for guard in guards),
+            f"{label}: await #{index + 1} lacks a post-await lifecycle/epoch guard",
         )
 
 
@@ -63,16 +70,62 @@ def ordered(body: str, *needles: str) -> None:
     cursor = -1
     for needle in needles:
         position = body.find(needle, cursor + 1)
-        assert position >= 0, f"missing ordered marker {needle!r}"
-        assert position > cursor, f"marker out of order {needle!r}"
+        require(position >= 0, f"missing ordered marker {needle!r}")
+        require(position > cursor, f"marker out of order {needle!r}")
         cursor = position
 
 
+def task_body(body: str, marker: str) -> str:
+    return function_body(body, marker)
+
+
+def require_originating_task_context(
+    body: str,
+    task_marker: str,
+    generation_marker: str,
+    coordinator_call: str,
+    label: str,
+    context_capture_marker: str = "captureProfileOperationContext()",
+) -> None:
+    ordered(
+        body,
+        context_capture_marker,
+        task_marker,
+    )
+    task = task_body(body, task_marker)
+    ordered(
+        task,
+        "guard !Task.isCancelled",
+        generation_marker,
+        "isCurrentProfileOperationContext(profileContext)",
+        coordinator_call,
+        "context: profileContext",
+    )
+    first_coordinator_access = task.find("syncCoordinator")
+    entry_generation_guard = task.find(generation_marker)
+    require(
+        entry_generation_guard >= 0
+        and first_coordinator_access >= 0
+        and entry_generation_guard < first_coordinator_access,
+        f"{label}: coordinator is accessed before the Task entry generation guard",
+    )
+
+
+script_tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+require(
+    not any(isinstance(node, ast.Assert) for node in ast.walk(script_tree)),
+    "Python assert statements make lifecycle checks disappear under optimization",
+)
+
+
 sync = source("YPerson/Networking/SyncCoordinator.swift")
-bootstrap = function_body(sync, "func bootstrap()")
+bootstrap = function_body(sync, "func bootstrap(context:")
 ordered(bootstrap, "profileLifecycle.state == .deleting", "await resumeDeletionIfNeeded()", "return")
-assert "hasPendingDeletion" not in bootstrap, "bootstrap still infers acknowledgement from queue absence"
-deletion = function_body(sync, "func deleteProfile() async -> Bool")
+require(
+    "hasPendingDeletion" not in bootstrap,
+    "bootstrap still infers acknowledgement from queue absence",
+)
+deletion = function_body(sync, "func deleteProfile(context:")
 ordered(
     deletion,
     "persistDeletionRecord(record)",
@@ -97,21 +150,26 @@ ordered(
 
 explicit = function_body(sync, "func explicitProfileClient()")
 ordered(explicit, "guard !syncSuppressed", "credentialStore.createCredential()")
-assert "profileLifecycle.suppressesSync" in sync, "sync suppression is not in-memory lifecycle based"
+require(
+    "profileLifecycle.suppressesSync" in sync,
+    "sync suppression is not in-memory lifecycle based",
+)
 
 resume = function_body(sync, "func resumeDeletionIfNeeded()")
 ordered(resume, "guard let record = deletionRecord", "record.serverAcknowledged", "finishDeletion")
 ordered(resume, "operationID: record.operationID", "await apiClient.sync(request)", "markDeletionServerAcknowledged", "finishDeletion")
 
+bootstrap_active = bootstrap[bootstrap.find("guard let context"):]
+require(bootstrap_active, "bootstrap active-profile branch is missing")
 for label, body in [
-    ("bootstrap", bootstrap[bootstrap.find("guard !syncSuppressed"):]),
+    ("bootstrap", bootstrap_active),
     ("publish", function_body(sync, "func publish(")),
     ("submitModeration", function_body(sync, "func submitModeration(")),
     ("audioAsset", function_body(sync, "func audioAsset(")),
     ("updatePushToken", function_body(sync, "func updatePushToken(")),
     ("deleteProfile", deletion),
-    ("retryPendingOperations", function_body(sync, "func retryPendingOperations()")),
-    ("retryPushToken", function_body(sync, "func retryPushToken()")),
+    ("retryPendingOperations", function_body(sync, "func retryPendingOperations(context:")),
+    ("retryPushToken", function_body(sync, "func retryPushToken(context:")),
     ("resumeDeletionIfNeeded", resume),
 ]:
     require_each_await_guarded(
@@ -126,12 +184,12 @@ for label, body in [
     )
 
 prepare_bodies = function_bodies(sync, "func prepareExchange(")
-assert len(prepare_bodies) == 2, "expected both prepareExchange overloads"
+require(len(prepare_bodies) == 2, "expected both prepareExchange overloads")
 for index, body in enumerate(prepare_bodies):
     require_each_await_guarded(body, ("requireCurrentProfileOperation",), f"prepareExchange[{index}]")
 
 claim_bodies = function_bodies(sync, "func claimExchange(")
-assert len(claim_bodies) == 2, "expected both claimExchange overloads"
+require(len(claim_bodies) == 2, "expected both claimExchange overloads")
 for index, body in enumerate(claim_bodies):
     require_each_await_guarded(body, ("requireCurrentProfileOperation",), f"claimExchange[{index}]")
 
@@ -175,12 +233,195 @@ ordered(save, "let isNew", "reactivateAndStoreUserCreatedCard", "self.card = upd
 exchange = source("YPerson/UI/ExchangeViewController.swift")
 manual_place = function_body(exchange, "func requestManualMeetingPlace(")
 ordered(manual_place, "lifecycleGeneration == generation", "UIAlertController", "lifecycleGeneration == generation", "setPendingMeetingPlace")
+for signature, minimum_generation_guards in (
+    ("func toggleMeetingPlace(", 2),
+    ("func requestManualMeetingPlace(", 3),
+    ("func showNearbySearch(", 2),
+    ("func confirmNearby(", 3),
+    ("func confirmImportedCard(", 3),
+    ("func presentPhotoFallback(", 3),
+    ("func enterCode(", 2),
+):
+    body = function_body(exchange, signature)
+    require(
+        body.count("lifecycleGeneration == generation") >= minimum_generation_guards,
+        f"{signature}: a stale alert action can mutate the recreated profile",
+    )
+photo_fallback = function_body(exchange, "func presentPhotoFallback(")
+ordered(
+    photo_fallback,
+    "Изменить выбранные фото",
+    "lifecycleGeneration == generation",
+    "presentLimitedPhotoManager",
+)
 for signature in ("func startNearby()", "func scanPhotos()", "func enterCode()", "func showShortCode()"):
     body = function_body(exchange, signature)
     ordered(body, "syncCoordinator.isProfileActive", "lifecycleGeneration")
 
 store = source("YPerson/Storage/AppGroupSnapshotStore.swift")
 clear_user_data = function_body(store, "func clearUserData()")
-assert "profileDeletionRecord" not in clear_user_data, "clearUserData removes the deletion record"
+require(
+    "profileDeletionRecord" not in clear_user_data,
+    "clearUserData removes the deletion record",
+)
+
+for signature in (
+    "func publish(",
+    "func prepareExchange(\n",
+    "func claimExchange(\n",
+    "func submitModeration(",
+    "func audioAsset(",
+    "func cancelExchange(\n",
+):
+    body = function_body(sync, signature)
+    ordered(body, "isCurrentProfileOperationContext(context)", "await")
+    require(
+        "profileOperationEpoch.capture()" not in body,
+        f"{signature}: recaptures a later profile epoch instead of using its originating context",
+    )
+
+for signature in ("func retryPendingOperations(context:", "func retryPushToken(context:"):
+    body = function_body(sync, signature)
+    ordered(body, "isCurrentProfileOperationContext(context)", "await")
+    require(
+        "profileOperationEpoch.capture()" not in body,
+        f"{signature}: recaptures a later profile epoch instead of using its originating context",
+    )
+
+ordered(
+    bootstrap_active,
+    "await retryPendingOperations(context: context)",
+    "isCurrentProfileOperationContext(context)",
+    "await retryPushToken(context: context)",
+)
+ordered(
+    function_body(sync, "func updatePushToken("),
+    "await retryPushToken(context: context)",
+    "isCurrentProfileOperationContext(context)",
+)
+
+card_source = source("YPerson/UI/CardViewController.swift")
+require_originating_task_context(
+    function_body(card_source, "func showQR()"),
+    "prepareQRTask = Task",
+    "lifecycleGeneration == profileGeneration",
+    "prepareExchange(",
+    "Card QR prepare",
+)
+require_originating_task_context(
+    function_body(card_source, "func editCard()"),
+    "publishTask = Task",
+    "lifecycleGeneration == profileGeneration",
+    "publish(",
+    "Card publish",
+)
+card_deletion = function_body(card_source, "func applyProfileDeletion()")
+ordered(card_deletion, "prepareQRTask?.cancel()", "publishTask?.cancel()")
+
+exchange_source = source("YPerson/UI/ExchangeViewController.swift")
+for signature, task_marker, coordinator_call, label, context_marker in (
+    ("func startNearby()", "nearbyPrepareTask = Task", "prepareExchange(", "BLE prepare", "captureProfileOperationContext()"),
+    ("func showShortCode()", "shortCodePrepareTask = Task", "prepareExchange(", "manual prepare", "captureProfileOperationContext()"),
+    ("func claimNearby(", "claimTasks[taskID] = Task", "claimExchange(", "BLE claim", "let profileContext = ownedCredential.context"),
+    ("func saveImportedCard(", "claimTasks[taskID] = Task", "claimExchange(", "QR cloud claim", "captureProfileOperationContext()"),
+    ("func claimManualCode(", "claimTasks[taskID] = Task", "claimExchange(", "manual claim", "captureProfileOperationContext()"),
+):
+    require_originating_task_context(
+        function_body(exchange_source, signature),
+        task_marker,
+        "lifecycleGeneration == generation",
+        coordinator_call,
+        label,
+        context_marker,
+    )
+exchange_deletion = function_body(exchange_source, "func applyProfileDeletion()")
+ordered(
+    exchange_deletion,
+    "nearbyPrepareTask?.cancel()",
+    "shortCodePrepareTask?.cancel()",
+    "claimTasks.values.forEach",
+    "cancellationTasks.values.forEach",
+    "scannerLaunchGate.reset()",
+)
+
+person_source = source("YPerson/UI/PersonViewController.swift")
+require_originating_task_context(
+    function_body(person_source, "func playAudioGreeting()"),
+    "audioTask = Task",
+    "isCurrentProfileLifecycle(generation)",
+    "audioAsset(",
+    "Person audio",
+)
+require_originating_task_context(
+    function_body(person_source, "func submitSafety("),
+    "moderationTasks[taskID] = Task",
+    "isCurrentProfileLifecycle(generation)",
+    "submitModeration(",
+    "Person moderation",
+)
+person_deletion = function_body(person_source, "func applyProfileDeletion()")
+ordered(person_deletion, "contactReconciliation.invalidate()", "audioTask?.cancel()", "moderationTasks.values.forEach")
+
+privacy_source = source("YPerson/UI/PrivacyViewController.swift")
+require_originating_task_context(
+    function_body(privacy_source, "func performDeletion("),
+    "deletionTask = Task",
+    "lifecycleGeneration == generation",
+    "deleteProfile(",
+    "Profile deletion",
+)
+privacy_deletion = function_body(privacy_source, "func applyProfileDeletion()")
+require("lifecycleGeneration = UUID()" in privacy_deletion, "Profile deletion does not invalidate its originating UI generation")
+
+contacts = source("YPerson/UI/ContactReconciliationPresenter.swift")
+contact_start = function_body(contacts, "func start(")
+ordered(contact_start, "invalidate()", "sessionFence.begin()", "isCurrent(session)", "explainPermission")
+contact_apply = function_body(contacts, "func apply(")
+ordered(contact_apply, "isCurrent(session)", "permissions.apply(", "session: session", "sessionFence: sessionFence")
+contact_invalidate = function_body(contacts, "func invalidate()")
+ordered(
+    contact_invalidate,
+    "sessionFence.invalidate()",
+    "dismiss",
+    "waitForInFlightCommits()",
+)
+for signature, minimum_guards in (
+    ("func start(", 2),
+    ("func continueAfterPermission(", 2),
+    ("func handleRequestedState(", 1),
+    ("func loadPlan(", 4),
+    ("func chooseContact(", 2),
+    ("func present(\n", 3),
+    ("func apply(\n", 2),
+    ("func offerPlanRefresh(", 2),
+    ("func offerLimitedAccess(", 3),
+    ("func offerReadUnavailableFallback(", 3),
+    ("func presentSystemContactForm(", 2),
+    ("func contactViewController(", 1),
+    ("func presentLimitedAccessManager(", 4),
+    ("func presentOwned(", 2),
+):
+    body = function_body(contacts, signature)
+    require(
+        body.count("isCurrent(session)") >= minimum_guards,
+        f"{signature}: missing a session guard at a permission/plan/alert/form callback or action",
+    )
+
+permission_center = source("YPerson/Permissions/PermissionCenter.swift")
+permission_apply = function_body(permission_center, "func apply(\n")
+ordered(
+    permission_apply,
+    "sessionFence.performCommit(for: session)",
+    "contactStore.execute(request)",
+)
+contact_commit = function_body(permission_apply, "sessionFence.performCommit(for: session)")
+require(
+    contact_commit.count("contactStore.execute(request)") == 1,
+    "CNContactStore.execute is not enclosed exactly once by the session commit fence",
+)
+
+people_source = source("YPerson/UI/PeopleViewController.swift")
+people_deletion = function_body(people_source, "func applyProfileDeletion()")
+ordered(people_deletion, "contactReconciliation.invalidate()", "lifecycleGeneration = UUID()")
 
 print("honest-exchange-lifecycle-order-pass")

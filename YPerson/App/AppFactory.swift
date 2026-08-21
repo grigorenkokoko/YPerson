@@ -20,6 +20,8 @@ final class YPersonExperienceBuilder {
     private weak var output: (any YPersonExperienceOutput)?
     private weak var rootViewController: MainTabBarController?
     private let personControllers = NSHashTable<PersonViewController>.weakObjects()
+    private var bootstrapTask: Task<Void, Never>?
+    private var pushTokenTask: Task<Void, Never>?
 
     init(configuration: AppConfiguration) throws {
         self.configuration = configuration
@@ -155,6 +157,10 @@ final class YPersonExperienceBuilder {
         self.rootViewController = root
         root.route(to: context.entryPoint)
         syncCoordinator.onProfileDeleted = { [weak self, weak card, weak exchange, weak people, weak privacy, audio, analytics] in
+            self?.bootstrapTask?.cancel()
+            self?.bootstrapTask = nil
+            self?.pushTokenTask?.cancel()
+            self?.pushTokenTask = nil
             audio.delete()
             analytics.setConsent(false)
             card?.applyProfileDeletion()
@@ -234,11 +240,27 @@ final class YPersonExperienceBuilder {
 #endif
 
     private func updatePushToken(_ token: String?) {
-        Task { [syncCoordinator] in await syncCoordinator.updatePushToken(token) }
+        guard let profileContext = syncCoordinator.captureProfileOperationContext() else { return }
+        pushTokenTask?.cancel()
+        pushTokenTask = Task { [syncCoordinator] in
+            guard !Task.isCancelled,
+                  syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
+            await syncCoordinator.updatePushToken(token, context: profileContext)
+        }
     }
 
     private func refreshPeople() {
-        Task { [syncCoordinator] in await syncCoordinator.bootstrap() }
+        let profileContext = syncCoordinator.captureProfileOperationContext()
+        bootstrapTask?.cancel()
+        bootstrapTask = Task { [syncCoordinator] in
+            guard !Task.isCancelled else { return }
+            if let profileContext {
+                guard syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
+            } else {
+                guard !syncCoordinator.isProfileActive else { return }
+            }
+            await syncCoordinator.bootstrap(context: profileContext)
+        }
     }
 }
 

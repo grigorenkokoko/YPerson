@@ -55,7 +55,7 @@ claim_enqueue_status=$?
 set -e
 test "$claim_enqueue_status" -eq 1
 
-cancel_block=$(sed -n '/func cancelExchange(credential:/,/func cancelExchange(token:/p' YPerson/Networking/SyncCoordinator.swift)
+cancel_block=$(sed -n '/^    func cancelExchange($/,/^    func cancelExchange(token:/p' YPerson/Networking/SyncCoordinator.swift)
 test -n "$cancel_block"
 set +e
 printf '%s\n' "$cancel_block" | rg -F -q 'snapshotStore?.enqueue'

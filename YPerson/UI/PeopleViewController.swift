@@ -123,7 +123,9 @@ final class PeopleViewController: YPBaseViewController, CNContactPickerDelegate 
 
     @objc private func syncContacts() {
         guard isProfileActive(), !people.isEmpty else { return }
+        let generation = lifecycleGeneration
         guard people.count > 1 else {
+            guard lifecycleGeneration == generation, isProfileActive() else { return }
             contactReconciliation.start(for: people[0])
             return
         }
@@ -137,7 +139,10 @@ final class PeopleViewController: YPBaseViewController, CNContactPickerDelegate 
                 email: person.email
             )
             alert.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
-                self?.contactReconciliation.start(for: person)
+                guard let self,
+                      self.lifecycleGeneration == generation,
+                      self.isProfileActive() else { return }
+                self.contactReconciliation.start(for: person)
             })
         }
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
@@ -145,6 +150,7 @@ final class PeopleViewController: YPBaseViewController, CNContactPickerDelegate 
     }
 
     func applyProfileDeletion() {
+        contactReconciliation.invalidate()
         lifecycleGeneration = UUID()
         contactPickerGeneration = nil
         people = []

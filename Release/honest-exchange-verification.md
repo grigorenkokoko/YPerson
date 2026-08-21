@@ -48,7 +48,7 @@ Toolchain observed for this run: Python `3.12.14`; Ruff `0.16.3`.
 
 ### Swift contract harness
 
-The reproducible harness now lives in the repository at `Verification/HonestExchangeContract/`. Version 4 compiles real Foundation production sources and covers public/private projection, manual-code normalization, typed credential exclusivity/routing, public QR, public-only Bluetooth policy, single-use manual consent, App Group persistence policy, crash-safe deletion-record survival, lifecycle transitions, transfer-generation invalidation, legacy sensitive-queue cleanup, and ordered async commit fences in UIKit/coordinator/media sources.
+The reproducible harness now lives in the repository at `Verification/HonestExchangeContract/`. Version 5 compiles real Foundation production sources and covers public/private projection, manual-code normalization, typed credential exclusivity/routing, public QR, public-only Bluetooth policy, single-use manual consent, App Group persistence policy, crash-safe deletion-record survival, profile-operation contexts across deletion/recreation, Contacts session/commit fencing, scanner-launch reset, lifecycle transitions, transfer-generation invalidation, legacy sensitive-queue cleanup, and ordered async commit fences in UIKit/coordinator/media sources.
 
 ```bash
 Verification/HonestExchangeContract/run.sh

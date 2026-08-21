@@ -21,7 +21,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         style: .footnote
     )
     private var privatePhoneConsent = PrivatePhoneShareConsent()
-    private var nearbyCredential: ExchangeCredential?
+    private var nearbyCredential: OwnedExchangeCredential?
     private var scannerLaunchGate = QRScannerLaunchGate()
     private var pendingMeetingPlace: String?
     private var nearbySearchAlert: UIAlertController?
@@ -30,6 +30,8 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private var shortCodePrepareTask: Task<Void, Never>?
     private var shortCodePreparationID: UUID?
     private var shortCodePreparationSharesPrivatePhone = false
+    private var claimTasks: [UUID: Task<Void, Never>] = [:]
+    private var cancellationTasks: [UUID: Task<Void, Never>] = [:]
     private var lifecycleGeneration = UUID()
     private var photoPickerGeneration: UUID?
 
@@ -129,7 +131,9 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             self.requestMeetingPlace(generation: generation)
         })
         alert.addAction(UIAlertAction(title: "Не сейчас", style: .cancel) { [weak self] _ in
-            self?.clearPendingMeetingPlace()
+            guard let self, self.lifecycleGeneration == generation,
+                  self.syncCoordinator.isProfileActive else { return }
+            self.clearPendingMeetingPlace()
         })
         present(alert, animated: true)
     }
@@ -164,7 +168,9 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             else { self.setPendingMeetingPlace(place, generation: generation) }
         })
         alert.addAction(UIAlertAction(title: "Пропустить", style: .cancel) { [weak self] _ in
-            self?.clearPendingMeetingPlace()
+            guard let self, self.lifecycleGeneration == generation,
+                  self.syncCoordinator.isProfileActive else { return }
+            self.clearPendingMeetingPlace()
         })
         present(alert, animated: true)
     }
@@ -277,22 +283,28 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             analytics.report(.exchangeStarted("bluetooth"))
             nearbyPrepareTask?.cancel()
             cancelNearbyExchange()
+            guard let profileContext = syncCoordinator.captureProfileOperationContext() else { return }
+            let greeting = audio.savedGreeting()
             let preparationID = UUID()
-            let profileGeneration = lifecycleGeneration
+            let generation = lifecycleGeneration
             nearbyPreparationID = preparationID
             nearbyPrepareTask = Task { [weak self] in
-                guard let self else { return }
+                guard !Task.isCancelled,
+                      let self,
+                      self.lifecycleGeneration == generation,
+                      self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
                 var preparedCredential: ExchangeCredential?
                 do {
                     let prepared = try await syncCoordinator.prepareExchange(
                         card: card,
                         method: "bluetooth",
                         privateFields: nil,
-                        greeting: audio.savedGreeting()
+                        greeting: greeting,
+                        context: profileContext
                     )
                     preparedCredential = prepared.credential
                     try Task.checkCancellation()
-                    guard lifecycleGeneration == profileGeneration else { throw CancellationError() }
+                    guard lifecycleGeneration == generation else { throw CancellationError() }
                     guard nearbyPreparationID == preparationID else { throw CancellationError() }
                     guard viewIfLoaded?.window != nil else { throw CancellationError() }
                     guard case .token(let token) = prepared.credential else {
@@ -300,15 +312,24 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                     }
                     nearbyPrepareTask = nil
                     nearbyPreparationID = nil
-                    nearbyCredential = prepared.credential
+                    nearbyCredential = OwnedExchangeCredential(
+                        credential: prepared.credential,
+                        context: profileContext,
+                        generation: generation
+                    )
                     nearby.start(exchangeToken: token, onState: { [weak self] state in
-                        self?.handleNearbyState(state, generation: profileGeneration)
+                        self?.handleNearbyState(state, generation: generation)
                     }, onToken: { [weak self] token in
-                        self?.finishNearbySearch(token: token, generation: profileGeneration)
+                        self?.finishNearbySearch(token: token, generation: generation)
                     })
                 } catch {
-                    if let preparedCredential, nearbyCredential != preparedCredential {
-                        cancelPreparedCredential(preparedCredential)
+                    if let preparedCredential,
+                       nearbyCredential?.credential != preparedCredential {
+                        cancelPreparedCredential(
+                            preparedCredential,
+                            context: profileContext,
+                            generation: generation
+                        )
                     }
                     let isCurrent = nearbyPreparationID == preparationID
                     guard isCurrent else { return }
@@ -327,19 +348,20 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         guard lifecycleGeneration == generation, syncCoordinator.isProfileActive else { return }
         switch state {
         case .authorized:
-            showNearbySearch()
+            showNearbySearch(generation: generation)
         case .denied:
-            finishNearbySearch(title: "Bluetooth выключен", message: "QR и короткий код остаются доступны.", settingsAction: permissions.openSystemSettings)
+            finishNearbySearch(title: "Bluetooth выключен", message: "QR и короткий код остаются доступны.", generation: generation, settingsAction: permissions.openSystemSettings)
         case .restricted:
-            finishNearbySearch(title: "Bluetooth ограничен", message: "Используйте QR или короткий код.")
+            finishNearbySearch(title: "Bluetooth ограничен", message: "Используйте QR или короткий код.", generation: generation)
         case .unavailable(let message):
-            finishNearbySearch(title: "Bluetooth недоступен", message: "\(message). Используйте QR или короткий код.")
+            finishNearbySearch(title: "Bluetooth недоступен", message: "\(message). Используйте QR или короткий код.", generation: generation)
         case .notDetermined, .limited:
             break
         }
     }
 
-    private func showNearbySearch() {
+    private func showNearbySearch(generation: UUID) {
+        guard lifecycleGeneration == generation, syncCoordinator.isProfileActive else { return }
         guard nearbySearchAlert == nil else { return }
         let alert = UIAlertController(
             title: "Ищем человека рядом…",
@@ -347,10 +369,12 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(title: "Отменить поиск", style: .cancel) { [weak self] _ in
-            self?.cancelNearbyExchange()
-            self?.nearby.stop()
-            self?.nearbySearchAlert = nil
-            self?.clearPendingMeetingPlace()
+            guard let self, self.lifecycleGeneration == generation,
+                  self.syncCoordinator.isProfileActive else { return }
+            self.cancelNearbyExchange()
+            self.nearby.stop()
+            self.nearbySearchAlert = nil
+            self.clearPendingMeetingPlace()
         })
         nearbySearchAlert = alert
         present(alert, animated: true)
@@ -370,13 +394,20 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         }
     }
 
-    private func finishNearbySearch(title: String, message: String, settingsAction: (() -> Void)? = nil) {
+    private func finishNearbySearch(
+        title: String,
+        message: String,
+        generation: UUID,
+        settingsAction: (() -> Void)? = nil
+    ) {
+        guard lifecycleGeneration == generation, syncCoordinator.isProfileActive else { return }
         nearby.stop()
         cancelNearbyExchange()
         let alert = nearbySearchAlert
         nearbySearchAlert = nil
         let showFallback: () -> Void = { [weak self] in
-            guard let self else { return }
+            guard let self, self.lifecycleGeneration == generation,
+                  self.syncCoordinator.isProfileActive else { return }
             self.showMessage(title, message, settingsAction: settingsAction)
         }
         guard let alert else { showFallback(); return }
@@ -410,20 +441,41 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             self.claimNearby(token: token, generation: generation)
         })
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel) { [weak self] _ in
-            self?.cancelNearbyExchange()
-            self?.clearPendingMeetingPlace()
+            guard let self, self.lifecycleGeneration == generation,
+                  self.syncCoordinator.isProfileActive else { return }
+            self.cancelNearbyExchange()
+            self.clearPendingMeetingPlace()
         })
         present(alert, animated: true)
     }
 
     private func claimNearby(token: String, generation: UUID) {
-        guard lifecycleGeneration == generation, syncCoordinator.isProfileActive else { return }
-        Task { [weak self] in
-            guard let self else { return }
+        guard lifecycleGeneration == generation,
+              let ownedCredential = nearbyCredential,
+              ownedCredential.credential == .token(token),
+              ownedCredential.generation == generation,
+              syncCoordinator.isCurrentProfileOperationContext(ownedCredential.context),
+              let originatingOwnCard = ownCard() else { return }
+        let profileContext = ownedCredential.context
+        let greeting = audio.savedGreeting()
+        let taskID = UUID()
+        claimTasks[taskID] = Task { [weak self] in
+            guard !Task.isCancelled,
+                  let self,
+                  self.lifecycleGeneration == generation,
+                  self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
+            defer { self.claimTasks.removeValue(forKey: taskID) }
             do {
-                let response = try await claimExchange(credential: .token(token), expiresAt: nil, localCardID: nil)
+                let response = try await claimExchange(
+                    credential: .token(token),
+                    expiresAt: nil,
+                    localCardID: nil,
+                    ownCard: originatingOwnCard,
+                    greeting: greeting,
+                    context: profileContext
+                )
                 guard lifecycleGeneration == generation,
-                      syncCoordinator.isProfileActive else { return }
+                      syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
                 let saved = try persist(response: response, meetingPlace: pendingMeetingPlace)
                 guard !saved.isEmpty else { throw ExchangeError.missingPeerCard }
                 nearbyCredential = nil
@@ -432,7 +484,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                 showMessage("Человек добавлен", "Карточка сохранена в YPerson и связана с подтверждённым Bluetooth-обменом.")
             } catch {
                 guard lifecycleGeneration == generation,
-                      syncCoordinator.isProfileActive else { return }
+                      syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
                 cancelNearbyExchange()
                 clearPendingMeetingPlace()
                 showMessage("Обмен не подтверждён", "Не удалось связаться с сервером. Токен не сохранён; повторите обмен после восстановления сети.")
@@ -490,7 +542,9 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             self.saveImportedCard(payload, allowsCloudClaim: hasCloudClaim, generation: generation)
         })
         alert.addAction(UIAlertAction(title: "Не добавлять", style: .cancel) { [weak self] _ in
-            self?.clearPendingMeetingPlace()
+            guard let self, self.lifecycleGeneration == generation,
+                  self.syncCoordinator.isProfileActive else { return }
+            self.clearPendingMeetingPlace()
         })
         present(alert, animated: true)
     }
@@ -522,17 +576,29 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             return
         }
 
+        guard let profileContext = syncCoordinator.captureProfileOperationContext(),
+              let originatingOwnCard = ownCard() else { return }
+        let greeting = audio.savedGreeting()
+
         showMessage("Человек добавлен", "Карточка уже сохранена на этом iPhone. Подключаем облачные обновления; при отсутствии сети это можно повторить новым кодом.")
-        Task { [weak self] in
-            guard let self else { return }
+        let taskID = UUID()
+        claimTasks[taskID] = Task { [weak self] in
+            guard !Task.isCancelled,
+                  let self,
+                  self.lifecycleGeneration == generation,
+                  self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
+            defer { self.claimTasks.removeValue(forKey: taskID) }
             do {
                 let response = try await claimExchange(
                     credential: .token(token),
                     expiresAt: payload.expiresAt,
-                    localCardID: payload.card.id
+                    localCardID: payload.card.id,
+                    ownCard: originatingOwnCard,
+                    greeting: greeting,
+                    context: profileContext
                 )
                 guard lifecycleGeneration == generation,
-                      syncCoordinator.isProfileActive else { return }
+                      syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
                 _ = try persist(response: response)
             } catch {
                 // The confirmed local card stays visible. A new short-lived code can reconnect updates.
@@ -596,7 +662,11 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             self.presentSinglePhotoPicker(generation: generation)
         })
         if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited {
-            alert.addAction(UIAlertAction(title: "Изменить выбранные фото", style: .default) { [weak self] _ in guard let self else { return }; self.permissions.presentLimitedPhotoManager(from: self) })
+            alert.addAction(UIAlertAction(title: "Изменить выбранные фото", style: .default) { [weak self] _ in
+                guard let self, self.lifecycleGeneration == generation,
+                      self.syncCoordinator.isProfileActive else { return }
+                self.permissions.presentLimitedPhotoManager(from: self)
+            })
         }
         alert.addAction(UIAlertAction(title: "Закрыть", style: .cancel))
         present(alert, animated: true)
@@ -652,18 +722,35 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             self.claimManualCode(canonicalCode, generation: generation)
         })
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel) { [weak self] _ in
-            self?.clearPendingMeetingPlace()
+            guard let self, self.lifecycleGeneration == generation,
+                  self.syncCoordinator.isProfileActive else { return }
+            self.clearPendingMeetingPlace()
         }); present(alert, animated: true)
     }
 
     private func claimManualCode(_ code: String, generation: UUID) {
-        guard lifecycleGeneration == generation, syncCoordinator.isProfileActive else { return }
-        Task { [weak self] in
-            guard let self else { return }
+        guard lifecycleGeneration == generation,
+              let profileContext = syncCoordinator.captureProfileOperationContext(),
+              let originatingOwnCard = ownCard() else { return }
+        let greeting = audio.savedGreeting()
+        let taskID = UUID()
+        claimTasks[taskID] = Task { [weak self] in
+            guard !Task.isCancelled,
+                  let self,
+                  self.lifecycleGeneration == generation,
+                  self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
+            defer { self.claimTasks.removeValue(forKey: taskID) }
             do {
-                let response = try await claimExchange(credential: .code(code), expiresAt: nil, localCardID: nil)
+                let response = try await claimExchange(
+                    credential: .code(code),
+                    expiresAt: nil,
+                    localCardID: nil,
+                    ownCard: originatingOwnCard,
+                    greeting: greeting,
+                    context: profileContext
+                )
                 guard lifecycleGeneration == generation,
-                      syncCoordinator.isProfileActive else { return }
+                      syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
                 let saved = try persist(response: response, meetingPlace: pendingMeetingPlace)
                 guard !saved.isEmpty else { throw ExchangeError.missingPeerCard }
                 clearPendingMeetingPlace()
@@ -671,7 +758,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                 showMessage("Человек добавлен", "Карточка сохранена после подтверждения кода сервером.")
             } catch {
                 guard lifecycleGeneration == generation,
-                      syncCoordinator.isProfileActive else { return }
+                      syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
                 clearPendingMeetingPlace()
                 showMessage("Код не подтверждён", "Проверьте код и подключение к интернету.")
             }
@@ -681,15 +768,18 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private func claimExchange(
         credential: ExchangeCredential,
         expiresAt: Date?,
-        localCardID: String?
+        localCardID: String?,
+        ownCard: PersonCard,
+        greeting: RecordedGreeting?,
+        context: ProfileOperationContext
     ) async throws -> SyncResponse {
-        guard let ownCard = ownCard() else { throw SyncCoordinator.CoordinatorError.noProfile }
         return try await syncCoordinator.claimExchange(
             credential: credential,
             expiresAt: expiresAt,
             localCardID: localCardID,
             ownCard: ownCard,
-            greeting: audio.savedGreeting()
+            greeting: greeting,
+            context: context
         )
     }
 
@@ -745,23 +835,29 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             return
         }
         analytics.report(.exchangeStarted("manual"))
+        guard let profileContext = syncCoordinator.captureProfileOperationContext() else { return }
+        let greeting = audio.savedGreeting()
         let preparationID = UUID()
-        let profileGeneration = lifecycleGeneration
+        let generation = lifecycleGeneration
         shortCodePreparationID = preparationID
         shortCodePreparationSharesPrivatePhone = privateFields != nil
         shortCodePrepareTask = Task { [weak self] in
-            guard let self else { return }
+            guard !Task.isCancelled,
+                  let self,
+                  self.lifecycleGeneration == generation,
+                  self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
             var preparedCredential: ExchangeCredential?
             do {
                 let prepared = try await syncCoordinator.prepareExchange(
                     card: card,
                     method: "manual",
                     privateFields: privateFields,
-                    greeting: audio.savedGreeting()
+                    greeting: greeting,
+                    context: profileContext
                 )
                 preparedCredential = prepared.credential
                 try Task.checkCancellation()
-                guard lifecycleGeneration == profileGeneration else { throw CancellationError() }
+                guard lifecycleGeneration == generation else { throw CancellationError() }
                 guard shortCodePreparationID == preparationID else { throw CancellationError() }
                 guard viewIfLoaded?.window != nil else { throw CancellationError() }
                 guard case .code(let code) = prepared.credential else {
@@ -770,12 +866,15 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                 shortCodePrepareTask = nil
                 shortCodePreparationID = nil
                 shortCodePreparationSharesPrivatePhone = false
-                let coordinator = syncCoordinator
                 let controller = ShortCodeViewController(
                     code: code,
                     expiresAt: prepared.expiresAt
-                ) {
-                    Task { await coordinator.cancelExchange(credential: .code(code)) }
+                ) { [weak self] in
+                    self?.cancelPreparedCredential(
+                        .code(code),
+                        context: profileContext,
+                        generation: generation
+                    )
                 }
                 if let navigationController {
                     navigationController.pushViewController(controller, animated: true)
@@ -784,7 +883,11 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                 }
             } catch {
                 if let preparedCredential {
-                    cancelPreparedCredential(preparedCredential)
+                    cancelPreparedCredential(
+                        preparedCredential,
+                        context: profileContext,
+                        generation: generation
+                    )
                 }
                 let isCurrent = shortCodePreparationID == preparationID
                 guard isCurrent else { return }
@@ -826,15 +929,35 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         return (error as? URLError)?.code == .cancelled
     }
 
-    private func cancelPreparedCredential(_ credential: ExchangeCredential) {
-        let coordinator = syncCoordinator
-        Task { await coordinator.cancelExchange(credential: credential) }
+    private func cancelPreparedCredential(
+        _ credential: ExchangeCredential,
+        context profileContext: ProfileOperationContext,
+        generation: UUID
+    ) {
+        guard lifecycleGeneration == generation,
+              syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
+        let taskID = UUID()
+        cancellationTasks[taskID] = Task { [weak self] in
+            guard !Task.isCancelled,
+                  let self,
+                  self.lifecycleGeneration == generation,
+                  self.syncCoordinator.isCurrentProfileOperationContext(profileContext) else { return }
+            defer { self.cancellationTasks.removeValue(forKey: taskID) }
+            await self.syncCoordinator.cancelExchange(
+                credential: credential,
+                context: profileContext
+            )
+        }
     }
 
     private func cancelNearbyExchange() {
-        guard let credential = nearbyCredential else { return }
+        guard let ownedCredential = nearbyCredential else { return }
         nearbyCredential = nil
-        cancelPreparedCredential(credential)
+        cancelPreparedCredential(
+            ownedCredential.credential,
+            context: ownedCredential.context,
+            generation: ownedCredential.generation
+        )
     }
 
     func applyProfileDeletion() {
@@ -846,7 +969,12 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         shortCodePrepareTask = nil
         shortCodePreparationID = nil
         shortCodePreparationSharesPrivatePhone = false
+        claimTasks.values.forEach { $0.cancel() }
+        claimTasks.removeAll()
+        cancellationTasks.values.forEach { $0.cancel() }
+        cancellationTasks.removeAll()
         nearbyCredential = nil
+        scannerLaunchGate.reset()
         nearby.stop()
         photoScanner.cancel()
         photoPickerGeneration = nil
@@ -868,6 +996,8 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     deinit {
         nearbyPrepareTask?.cancel()
         shortCodePrepareTask?.cancel()
+        claimTasks.values.forEach { $0.cancel() }
+        cancellationTasks.values.forEach { $0.cancel() }
         nearby.stop()
         photoScanner.cancel()
     }
@@ -876,5 +1006,11 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         case localStorageUnavailable
         case invalidPreparedCredential
         case missingPeerCard
+    }
+
+    private struct OwnedExchangeCredential {
+        let credential: ExchangeCredential
+        let context: ProfileOperationContext
+        let generation: UUID
     }
 }
