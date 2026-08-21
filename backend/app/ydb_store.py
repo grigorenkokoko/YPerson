@@ -569,6 +569,14 @@ class YDBSyncStore:
                 previous_hash = _stored_digest(previous, "tokenHash")
                 if not compare_digest(previous_hash, token_hash):
                     raise StorageConflict("operation identifier already used")
+                if set(previous) == {"tokenHash"}:
+                    return self._legacy_prepared_exchange_result(
+                        tx,
+                        installation_id,
+                        operation_id,
+                        method,
+                        token_hash,
+                    )
                 return PreparedExchangeResult(
                     card_version=_stored_positive_int(previous, "version"),
                     expires_at=_stored_iso_datetime(previous, "expiresAt"),
@@ -686,7 +694,19 @@ class YDBSyncStore:
                 previous_hash = _stored_digest(previous, "tokenHash")
                 if not compare_digest(previous_hash, token_hash):
                     raise StorageConflict("operation identifier already used")
-                issuer_id = _stored_text(previous, "issuerInstallationID")
+                if "issuerInstallationID" in previous:
+                    issuer_id = _stored_text(previous, "issuerInstallationID")
+                elif set(previous) == {"person", "tokenHash"}:
+                    try:
+                        legacy_person = SyncedPerson.model_validate(
+                            _stored_value(previous, "person"),
+                            strict=True,
+                        )
+                    except ValidationError as error:
+                        raise StorageIntegrityError from error
+                    issuer_id = legacy_person.installationID
+                else:
+                    raise StorageIntegrityError
                 return self._claimed_person(tx, installation_id, issuer_id)
             claim_rows = self._tx_rows(
                 tx,
@@ -801,6 +821,56 @@ class YDBSyncStore:
             return person
 
         return self._transaction(claim)
+
+    def _legacy_prepared_exchange_result(
+        self,
+        tx: ydb.QueryTxContext,
+        installation_id: str,
+        operation_id: str,
+        method: str,
+        token_hash: bytes,
+    ) -> PreparedExchangeResult:
+        card_operation_id = sha256(
+            f"yperson.operation.v1\0prepareExchange.card\0{operation_id}".encode()
+        ).hexdigest()
+        try:
+            publish_result = self._operation_result(
+                tx,
+                installation_id,
+                card_operation_id,
+                "publishCard",
+            )
+        except StorageConflict as error:
+            raise StorageIntegrityError from error
+        if publish_result is None:
+            raise StorageIntegrityError
+        claim_rows = self._tx_rows(
+            tx,
+            """
+            DECLARE $token_hash AS String;
+            SELECT token_hash, issuer_installation_id, method, expires_at
+            FROM exchange_claims
+            WHERE token_hash = $token_hash;
+            """,
+            {"$token_hash": _string(token_hash)},
+        )[0]
+        if len(claim_rows) != 1:
+            raise StorageIntegrityError
+        claim_row = claim_rows[0]
+        expected_legacy_method = "manual" if method == "legacy" else method
+        if (
+            not compare_digest(
+                _stored_bytes(claim_row, "token_hash", expected_length=sha256().digest_size),
+                token_hash,
+            )
+            or _stored_text(claim_row, "issuer_installation_id") != installation_id
+            or _stored_exchange_method(claim_row) != expected_legacy_method
+        ):
+            raise StorageIntegrityError
+        return PreparedExchangeResult(
+            card_version=_stored_positive_int(publish_result, "version"),
+            expires_at=_stored_datetime(claim_row, "expires_at"),
+        )
 
     def _claimed_person(
         self,

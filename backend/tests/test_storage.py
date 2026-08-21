@@ -635,6 +635,161 @@ def test_prepare_exchange_replay_returns_original_version_and_expiry() -> None:
         )
 
 
+def test_prepare_exchange_replays_exact_pre_upgrade_operation_shape(
+    card: PersonCard,
+) -> None:
+    operation_id = "op-prepare-pre-upgrade"
+    legacy_card_operation_id = "bc0b18c013556bad4a5c38c7b2382ae8689dd30c888636d4cdd3c04f41564fdc"
+    raw_token = "pre-upgrade-token"
+    token_hash = sha256(raw_token.encode()).digest()
+    original_expiry = datetime(2026, 8, 21, 12, 30, tzinfo=UTC)
+    previous_result = json.dumps({"tokenHash": token_hash.hex()})
+
+    def transaction_handler(query: str, parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            stored_operation_id = _parameter(parameters, "$operation_id")
+            if stored_operation_id == operation_id:
+                return [
+                    ResultSet(
+                        [
+                            {
+                                "operation_type": "prepareExchange",
+                                "result_json": previous_result,
+                            }
+                        ]
+                    )
+                ]
+            if stored_operation_id == legacy_card_operation_id:
+                return [
+                    ResultSet(
+                        [
+                            {
+                                "operation_type": "publishCard",
+                                "result_json": json.dumps({"version": 4}),
+                            }
+                        ]
+                    )
+                ]
+        if "FROM exchange_claims" in query and _parameter(parameters, "$token_hash") == token_hash:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "token_hash": token_hash,
+                            "issuer_installation_id": "installation-owner",
+                            "method": "manual",
+                            "expires_at": original_expiry,
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    result = store.prepare_exchange(
+        "installation-owner",
+        operation_id,
+        "legacy",
+        card.model_copy(update={"phone": ""}),
+        None,
+        raw_token,
+        original_expiry + timedelta(hours=1),
+    )
+
+    assert result == PreparedExchangeResult(card_version=4, expires_at=original_expiry)
+    assert not any("SELECT version FROM cards" in query for query, _ in pool.transaction_calls)
+    assert not any("UPSERT INTO cards" in query for query, _ in pool.transaction_calls)
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "missing-publish-operation",
+        "duplicate-publish-operation",
+        "wrong-publish-operation-type",
+        "invalid-publish-result",
+        "missing-claim",
+        "duplicate-claim",
+        "claim-token-mismatch",
+        "claim-issuer-mismatch",
+        "claim-method-mismatch",
+        "invalid-claim-expiry",
+    ],
+)
+def test_pre_upgrade_prepare_replay_fails_closed_when_recovery_rows_are_invalid(
+    corruption: str,
+    card: PersonCard,
+) -> None:
+    operation_id = "op-prepare-legacy-corrupt"
+    legacy_card_operation_id = "f433d9c34f92dc9f76b7788e7f30b4cd20289a43c59d51eb64ffa9bc50728432"
+    raw_token = "legacy-corruption-token"
+    token_hash = sha256(raw_token.encode()).digest()
+    expires_at = datetime(2026, 8, 21, 12, 30, tzinfo=UTC)
+    publish_row = {
+        "operation_type": (
+            "prepareExchange" if corruption == "wrong-publish-operation-type" else "publishCard"
+        ),
+        "result_json": json.dumps({"version": 0 if corruption == "invalid-publish-result" else 4}),
+    }
+    claim_row = {
+        "token_hash": (
+            sha256(b"different-token").digest()
+            if corruption == "claim-token-mismatch"
+            else token_hash
+        ),
+        "issuer_installation_id": (
+            "installation-other" if corruption == "claim-issuer-mismatch" else "installation-owner"
+        ),
+        "method": "qr" if corruption == "claim-method-mismatch" else "manual",
+        "expires_at": "not-a-timestamp" if corruption == "invalid-claim-expiry" else expires_at,
+    }
+
+    def transaction_handler(query: str, parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            stored_operation_id = _parameter(parameters, "$operation_id")
+            if stored_operation_id == operation_id:
+                return [
+                    ResultSet(
+                        [
+                            {
+                                "operation_type": "prepareExchange",
+                                "result_json": json.dumps({"tokenHash": token_hash.hex()}),
+                            }
+                        ]
+                    )
+                ]
+            if stored_operation_id == legacy_card_operation_id:
+                if corruption == "missing-publish-operation":
+                    return [ResultSet([])]
+                rows = (
+                    [publish_row, publish_row]
+                    if corruption == "duplicate-publish-operation"
+                    else [publish_row]
+                )
+                return [ResultSet(rows)]
+        if "FROM exchange_claims" in query:
+            if corruption == "missing-claim":
+                return [ResultSet([])]
+            rows = [claim_row, claim_row] if corruption == "duplicate-claim" else [claim_row]
+            return [ResultSet(rows)]
+        return []
+
+    store = YDBSyncStore(ScriptedPool(transaction_handler=transaction_handler))  # type: ignore[arg-type]
+
+    with pytest.raises(StorageIntegrityError):
+        store.prepare_exchange(
+            "installation-owner",
+            operation_id,
+            "legacy",
+            card.model_copy(update={"phone": ""}),
+            None,
+            raw_token,
+            expires_at + timedelta(hours=1),
+        )
+
+
 @pytest.mark.parametrize("method", ["qr", "bluetooth", "photo", "legacy"])
 def test_prepare_exchange_rejects_private_fields_for_nondisclosing_methods(
     card: PersonCard,
@@ -1351,6 +1506,116 @@ def test_claim_exchange_replay_loads_current_public_card_and_directional_grant(
     assert not any("FROM exchange_claims AS claim" in query for query, _ in pool.transaction_calls)
 
 
+def test_claim_exchange_replays_exact_pre_upgrade_operation_through_current_grants(
+    card: PersonCard,
+) -> None:
+    raw_token = "pre-upgrade-claim-token"
+    stale_person = {
+        "installationID": "installation-owner",
+        "card": card.model_copy(
+            update={
+                "name": "Stale Owner",
+                "phone": "+70000000000",
+                "meetingPlace": "Stale private room",
+            }
+        ).model_dump(mode="json"),
+        "version": 3,
+        "audio": None,
+    }
+    previous_result = json.dumps(
+        {
+            "person": stale_person,
+            "tokenHash": sha256(raw_token.encode()).hexdigest(),
+        }
+    )
+    current_public_card = card.model_copy(update={"name": "Current Owner", "phone": ""})
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "operation_type": "claimExchange",
+                            "result_json": previous_result,
+                        }
+                    ]
+                )
+            ]
+        if "FROM cards AS card" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "version": 8,
+                            "card_json": current_public_card.model_dump(mode="json"),
+                            "fields_json": {"phone": card.phone},
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    person = store.claim_exchange(
+        "installation-peer",
+        "op-claim-pre-upgrade",
+        raw_token,
+    )
+
+    assert person.installationID == "installation-owner"
+    assert person.version == 8
+    assert person.card.name == "Current Owner"
+    assert person.card.phone == card.phone
+    assert person.card.meetingPlace is None
+
+
+@pytest.mark.parametrize("corruption", ["unexpected-result-field", "missing-current-state"])
+def test_pre_upgrade_claim_replay_fails_closed_for_corrupt_legacy_state(
+    corruption: str,
+    card: PersonCard,
+) -> None:
+    raw_token = "pre-upgrade-corrupt-claim-token"
+    previous_result: dict[str, object] = {
+        "person": {
+            "installationID": "installation-owner",
+            "card": card.model_dump(mode="json"),
+            "version": 3,
+            "audio": None,
+        },
+        "tokenHash": sha256(raw_token.encode()).hexdigest(),
+    }
+    if corruption == "unexpected-result-field":
+        previous_result["unexpected"] = True
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "operation_type": "claimExchange",
+                            "result_json": json.dumps(previous_result),
+                        }
+                    ]
+                )
+            ]
+        if "FROM cards AS card" in query:
+            return [ResultSet([])]
+        return []
+
+    store = YDBSyncStore(ScriptedPool(transaction_handler=transaction_handler))  # type: ignore[arg-type]
+
+    with pytest.raises(StorageIntegrityError):
+        store.claim_exchange(
+            "installation-peer",
+            "op-claim-pre-upgrade-corrupt",
+            raw_token,
+        )
+
+
 @pytest.mark.parametrize(
     ("issuer_state", "forward_state", "reverse_state"),
     [
@@ -1968,7 +2233,12 @@ def test_replayed_claim_uses_strict_nested_card_validation(card: PersonCard) -> 
     card_json["isBlocked"] = 0
     raw_token = "original-token"
     previous_result = {
-        "person": {"card": card_json, "version": 1},
+        "person": {
+            "installationID": "installation-owner",
+            "card": card_json,
+            "version": 1,
+            "audio": None,
+        },
         "tokenHash": sha256(raw_token.encode()).hexdigest(),
     }
 
