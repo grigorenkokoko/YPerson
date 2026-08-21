@@ -153,10 +153,10 @@ class SyncRequest(BaseModel):
         if (
             self.operation is SyncOperation.prepare_exchange
             and self.privateFields is not None
-            and self.exchangeMethod in {"qr", "photo"}
+            and self.exchangeMethod != "manual"
         ):
             raise ValueError(
-                "prepareExchange does not accept privateFields with public-only exchange methods"
+                "prepareExchange accepts privateFields only with explicit manual exchange method"
             )
 
         if self.operation in {SyncOperation.claim_exchange, SyncOperation.cancel_exchange}:

@@ -389,6 +389,36 @@ def test_qr_exchange_returns_only_token_and_claims_peer_card() -> None:
     assert claimed.json()["people"][0]["installationID"] == OWNER[0]
 
 
+def test_omitted_method_replays_legacy_opaque_token_without_code() -> None:
+    store = MemoryStore()
+    with make_client(store) as client:
+        post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-legacy-token")
+        payload = {"card": card("card-owner", "Owner").model_dump(mode="json")}
+        first = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-op-0001",
+            **payload,
+        )
+        replay = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-op-0001",
+            **payload,
+        )
+
+    assert first.status_code == replay.status_code == 200
+    assert first.json() == replay.json()
+    assert first.json()["exchangeToken"] == "eWQup1GlqgOm0k5ncRitNgHsikQEtrXKV9uM01_Y-W8"
+    assert re.fullmatch(r"[A-Za-z0-9_-]{43}", first.json()["exchangeToken"])
+    assert first.json()["exchangeCode"] is None
+    assert first.json()["exchangeExpiresAt"] == "2026-08-20T12:10:00Z"
+    assert store.operation_results[(OWNER[0], "prepare-op-0001")]["method"] == "legacy"
+    assert len(store.claims) == 1
+
+
 def test_manual_private_phone_is_directional_and_survives_refresh() -> None:
     store = MemoryStore()
     with make_client(store) as client:
@@ -508,7 +538,14 @@ def test_prepare_replay_returns_original_expiry_after_clock_advances() -> None:
     assert store.claims[first.json()["exchangeCode"]][1] == NOW + timedelta(minutes=10)
 
 
-def test_legacy_code_in_exchange_token_can_claim_manual_exchange() -> None:
+@pytest.mark.parametrize(
+    ("operation", "credentials"),
+    [("claimExchange", PEER), ("cancelExchange", OWNER)],
+)
+def test_legacy_code_in_exchange_token_can_claim_or_cancel_manual_exchange(
+    operation: str,
+    credentials: tuple[str, str],
+) -> None:
     store = MemoryStore()
     with make_client(store) as client:
         post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-legacy")
@@ -521,16 +558,19 @@ def test_legacy_code_in_exchange_token_can_claim_manual_exchange() -> None:
             card=card("card-owner", "Owner").model_dump(mode="json"),
             exchangeMethod="manual",
         )
-        claimed = post_sync(
+        response = post_sync(
             client,
-            PEER,
-            "claimExchange",
-            operation_id="claim-legacy-code-01",
+            credentials,
+            operation,
+            operation_id=f"legacy-code-{operation}",
             exchangeToken=prepared.json()["exchangeCode"],
         )
 
-    assert claimed.status_code == 200
-    assert claimed.json()["people"][0]["installationID"] == OWNER[0]
+    assert response.status_code == 200
+    if operation == "claimExchange":
+        assert response.json()["people"][0]["installationID"] == OWNER[0]
+    else:
+        assert prepared.json()["exchangeCode"] not in store.claims
 
 
 def test_manual_exchange_code_accepts_tolerant_human_formatting() -> None:

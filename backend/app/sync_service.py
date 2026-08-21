@@ -14,6 +14,7 @@ from .storage import StorageConflict, SyncSnapshot, SyncStore
 
 EXCHANGE_TOKEN_LIFETIME = timedelta(minutes=10)
 EXCHANGE_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+LEGACY_EXCHANGE_METHOD = "legacy"
 
 
 class SyncUnavailable(Exception):
@@ -123,7 +124,7 @@ class SyncService:
         if request.card is None:  # Pydantic enforces this before dispatch.
             raise ValueError("missing card")
         _require_public_card(request.card)
-        method = request.exchangeMethod or "manual"
+        method = request.exchangeMethod or LEGACY_EXCHANGE_METHOD
         raw_credential = (
             derive_exchange_code(bearer, request.installationID, request.operationID)
             if method == "manual"

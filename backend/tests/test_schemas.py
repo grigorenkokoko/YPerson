@@ -147,11 +147,25 @@ def test_prepare_exchange_accepts_strict_private_phone() -> None:
     assert request.privateFields == PrivateCardFields(phone="+7 900 555-10-20")
 
 
-@pytest.mark.parametrize("exchange_method", ["manual", "bluetooth", None])
-def test_private_fields_accept_manual_bluetooth_and_legacy_exchange_methods(
+def test_private_fields_require_explicit_manual_exchange_method() -> None:
+    request = SyncRequest.model_validate(
+        valid_request()
+        | {
+            "operation": "prepareExchange",
+            "card": public_card(),
+            "exchangeMethod": "manual",
+            "privateFields": {"phone": "+79005550102"},
+        }
+    )
+
+    assert request.privateFields == PrivateCardFields(phone="+79005550102")
+
+
+@pytest.mark.parametrize("exchange_method", ["bluetooth", "qr", "photo", None])
+def test_private_fields_reject_non_manual_and_omitted_exchange_methods(
     exchange_method: str | None,
 ) -> None:
-    payload = valid_request() | {
+    payload: dict[str, object] = valid_request() | {
         "operation": "prepareExchange",
         "card": public_card(),
         "privateFields": {"phone": "+79005550102"},
@@ -159,23 +173,8 @@ def test_private_fields_accept_manual_bluetooth_and_legacy_exchange_methods(
     if exchange_method is not None:
         payload["exchangeMethod"] = exchange_method
 
-    request = SyncRequest.model_validate(payload)
-
-    assert request.privateFields == PrivateCardFields(phone="+79005550102")
-
-
-@pytest.mark.parametrize("exchange_method", ["qr", "photo"])
-def test_private_fields_reject_public_only_exchange_methods(exchange_method: str) -> None:
     with pytest.raises(ValidationError, match="privateFields"):
-        SyncRequest.model_validate(
-            valid_request()
-            | {
-                "operation": "prepareExchange",
-                "card": public_card(),
-                "exchangeMethod": exchange_method,
-                "privateFields": {"phone": "+79005550102"},
-            }
-        )
+        SyncRequest.model_validate(payload)
 
 
 @pytest.mark.parametrize("phone", ["", "   ", "1" * 65])
