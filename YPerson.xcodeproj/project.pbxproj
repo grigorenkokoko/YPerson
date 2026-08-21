@@ -12,6 +12,7 @@
 		0BBDBC3B2095B4CFB56BD1A6 /* ContactReconciliationPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09E8A9CA24609DFA4CB57EDE /* ContactReconciliationPresenter.swift */; };
 		13CCCAFA15AD9B93B570C5A2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F5EFCA26B0528FD85942ED0E /* PrivacyInfo.xcprivacy */; };
 		1616764F166B74ACAEAB5862 /* AppMetricaAnalyticsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A82460406C63E9A3C7FA221 /* AppMetricaAnalyticsClient.swift */; };
+		1BDCE5770E601925D21EFF5F /* ShortCodeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5F6B08113A23E2F0394C2F4 /* ShortCodeViewController.swift */; };
 		1CC276E33DE38045887039FF /* ContactMatchPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1940142612C79090191B943B /* ContactMatchPolicy.swift */; };
 		232809C4B65AC451691AC6B6 /* MediaTransferClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0A9390AFFB941DA8CB57AB /* MediaTransferClient.swift */; };
 		245F6C0FB5C326CC2DEB3B73 /* PersonViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAC46C8858C0D992879AF1C4 /* PersonViewController.swift */; };
@@ -165,6 +166,7 @@
 		F05D8628028E8CA968A66818 /* WidgetRelease.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = WidgetRelease.xcconfig; sourceTree = "<group>"; };
 		F3E533DAB9E006DADF68EA10 /* ExchangeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExchangeViewController.swift; sourceTree = "<group>"; };
 		F5EFCA26B0528FD85942ED0E /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		F5F6B08113A23E2F0394C2F4 /* ShortCodeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortCodeViewController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -374,6 +376,7 @@
 				3337EAFEF3B0198BB5BA9D44 /* PeopleViewController.swift */,
 				CAC46C8858C0D992879AF1C4 /* PersonViewController.swift */,
 				301DC0A1CD1DC7CEAA7DA940 /* PrivacyViewController.swift */,
+				F5F6B08113A23E2F0394C2F4 /* ShortCodeViewController.swift */,
 				28094E2B2A847979C3FC21FB /* YPStyle.swift */,
 			);
 			path = UI;
@@ -661,6 +664,7 @@
 				48B8935AECD4A25733526E34 /* QRCodeScannerViewController.swift in Sources */,
 				6FE43A64E27A1AED3AED4626 /* QRScannerLaunchGate.swift in Sources */,
 				5F90883E088EE1F658318A61 /* ScannerWidgetRoute.swift in Sources */,
+				1BDCE5770E601925D21EFF5F /* ShortCodeViewController.swift in Sources */,
 				AF51485D3E619498E9AA5262 /* SyncCoordinator.swift in Sources */,
 				D91A4ED9BE788718888C6405 /* YPStyle.swift in Sources */,
 				98290ADBE47289C2AB496557 /* YPersonIntegrationContract.swift in Sources */,

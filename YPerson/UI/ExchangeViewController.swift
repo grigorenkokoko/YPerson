@@ -15,12 +15,20 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private let onPersonSaved: (PersonCard) -> Void
     private let meetingPlaceSwitch = UISwitch()
     private let meetingPlaceStatus = YPStyle.label("Место не выбрано · координаты не передаются другому человеку или на сервер.", style: .footnote)
-    private var includePrivate = false
+    private let privateSwitch = UISwitch()
+    private let privateStatus = YPStyle.label(
+        "Телефон передаётся только через Bluetooth или ваш короткий код. QR остаётся публичным.",
+        style: .footnote
+    )
+    private var includePrivatePhone = false
+    private var nearbyCredential: ExchangeCredential?
     private var scannerLaunchGate = QRScannerLaunchGate()
     private var pendingMeetingPlace: String?
     private var nearbySearchAlert: UIAlertController?
-    private var prepareTask: Task<Void, Never>?
-    private var preparedToken: String?
+    private var nearbyPrepareTask: Task<Void, Never>?
+    private var nearbyPreparationID: UUID?
+    private var shortCodePrepareTask: Task<Void, Never>?
+    private var shortCodePreparationID: UUID?
 
     init(nearby: NearbyExchangeController, photoScanner: PhotoCardScanner, permissions: PermissionCenter, audio: AudioGreetingController, syncCoordinator: SyncCoordinator, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, ownCard: @escaping () -> PersonCard?, onPersonSaved: @escaping (PersonCard) -> Void) {
         self.nearby = nearby
@@ -48,23 +56,37 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         meetingPlaceRow.distribution = .equalSpacing
         contentStack.addArrangedSubview(meetingPlaceRow)
         contentStack.addArrangedSubview(meetingPlaceStatus)
+        privateSwitch.accessibilityLabel = "Поделиться телефоном · Face ID"
+        privateSwitch.accessibilityHint = "Телефон будет передан только в следующем Bluetooth-обмене или по короткому коду"
+        privateSwitch.addTarget(self, action: #selector(togglePrivate(_:)), for: .valueChanged)
+        let privateRow = UIStackView(arrangedSubviews: [
+            YPStyle.label("Поделиться телефоном · Face ID", style: .headline),
+            privateSwitch
+        ])
+        privateRow.alignment = .center
+        privateRow.distribution = .equalSpacing
+        contentStack.addArrangedSubview(privateRow)
+        contentStack.addArrangedSubview(privateStatus)
         addButton("Показать мой QR", "qrcode", #selector(showOwnQR), primary: true)
+        addButton("Показать короткий код", "number.square", #selector(showShortCode))
         addButton("Сканировать QR", "camera.viewfinder", #selector(scanQR))
         addButton("Рядом по Bluetooth", "wave.3.right", #selector(startNearby))
         addButton("Найти визитки в Фото", "photo.on.rectangle.angled", #selector(scanPhotos))
         addButton("Ввести короткий код", "number", #selector(enterCode))
-        let privateSwitch = UISwitch(); privateSwitch.addTarget(self, action: #selector(togglePrivate(_:)), for: .valueChanged)
-        let row = UIStackView(arrangedSubviews: [YPStyle.label("Закрытые поля · Face ID", style: .headline), privateSwitch]); row.alignment = .center; row.distribution = .equalSpacing
-        contentStack.addArrangedSubview(row)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        prepareTask?.cancel()
-        prepareTask = nil
-        cancelPreparedExchange()
+        nearbyPrepareTask?.cancel()
+        nearbyPrepareTask = nil
+        nearbyPreparationID = nil
+        shortCodePrepareTask?.cancel()
+        shortCodePrepareTask = nil
+        shortCodePreparationID = nil
+        cancelNearbyExchange()
         nearby.stop()
         nearbySearchAlert = nil
+        resetPrivatePhoneSharing()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -207,24 +229,44 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                 self?.showMessage("Сначала создайте визитку", "Для обмена по Bluetooth нужна ваша сохранённая карточка.")
                 return
             }
+            guard let privateSelection = selectedPrivateFields(for: card) else { return }
             analytics.report(.exchangeStarted("bluetooth"))
-            prepareTask?.cancel()
-            prepareTask = Task { [weak self] in
+            nearbyPrepareTask?.cancel()
+            cancelNearbyExchange()
+            let preparationID = UUID()
+            nearbyPreparationID = preparationID
+            nearbyPrepareTask = Task { [weak self] in
                 guard let self else { return }
+                var preparedCredential: ExchangeCredential?
                 do {
-                    let token = try await syncCoordinator.prepareExchange(
+                    let prepared = try await syncCoordinator.prepareExchange(
                         card: card,
                         method: "bluetooth",
+                        privateFields: privateSelection.fields,
                         greeting: audio.savedGreeting()
                     )
+                    preparedCredential = prepared.credential
                     try Task.checkCancellation()
+                    guard nearbyPreparationID == preparationID else { throw CancellationError() }
                     guard viewIfLoaded?.window != nil else { throw CancellationError() }
-                    preparedToken = token
+                    guard case .token(let token) = prepared.credential else {
+                        throw ExchangeError.invalidPreparedCredential
+                    }
+                    nearbyPrepareTask = nil
+                    nearbyPreparationID = nil
+                    nearbyCredential = prepared.credential
                     nearby.start(exchangeToken: token, onState: { [weak self] state in
                         self?.handleNearbyState(state)
                     }, onToken: { [weak self] token in self?.finishNearbySearch(token: token) })
                 } catch {
+                    if let preparedCredential, nearbyCredential != preparedCredential {
+                        await syncCoordinator.cancelExchange(credential: preparedCredential)
+                    }
                     if error is CancellationError { return }
+                    if nearbyPreparationID == preparationID {
+                        nearbyPrepareTask = nil
+                        nearbyPreparationID = nil
+                    }
                     nearby.stop()
                     showMessage("Не удалось начать поиск", "Для Bluetooth-обмена сейчас нужен интернет, чтобы получить короткоживущий защищённый токен. Используйте офлайн QR.")
                 }
@@ -255,7 +297,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(title: "Отменить поиск", style: .cancel) { [weak self] _ in
-            self?.cancelPreparedExchange()
+            self?.cancelNearbyExchange()
             self?.nearby.stop()
             self?.nearbySearchAlert = nil
             self?.clearPendingMeetingPlace()
@@ -275,6 +317,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
 
     private func finishNearbySearch(title: String, message: String, settingsAction: (() -> Void)? = nil) {
         nearby.stop()
+        cancelNearbyExchange()
         let alert = nearbySearchAlert
         nearbySearchAlert = nil
         let showFallback: () -> Void = { [weak self] in
@@ -301,7 +344,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         let alert = UIAlertController(title: "Человек найден", message: "Подтвердите обмен на обоих iPhone. До подтверждения карточка и токен не отправляются на сервер.", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Подтвердить обмен", style: .default) { [weak self] _ in self?.claimNearby(token: token) })
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel) { [weak self] _ in
-            self?.cancelPreparedExchange()
+            self?.cancelNearbyExchange()
             self?.clearPendingMeetingPlace()
         })
         present(alert, animated: true)
@@ -311,15 +354,15 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         Task { [weak self] in
             guard let self else { return }
             do {
-                let response = try await claimExchange(token: token, expiresAt: nil, localCardID: nil)
+                let response = try await claimExchange(credential: .token(token), expiresAt: nil, localCardID: nil)
                 let saved = try persist(response: response, meetingPlace: pendingMeetingPlace)
                 guard !saved.isEmpty else { throw ExchangeError.missingPeerCard }
-                preparedToken = nil
+                nearbyCredential = nil
                 clearPendingMeetingPlace()
                 analytics.report(.cardReceived("bluetooth"))
                 showMessage("Человек добавлен", "Карточка сохранена в YPerson и связана с подтверждённым Bluetooth-обменом.")
             } catch {
-                cancelPreparedExchange()
+                cancelNearbyExchange()
                 clearPendingMeetingPlace()
                 showMessage("Обмен не подтверждён", "Не удалось связаться с сервером. Токен не сохранён; повторите обмен после восстановления сети.")
             }
@@ -403,7 +446,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             guard let self else { return }
             do {
                 let response = try await claimExchange(
-                    token: token,
+                    credential: .token(token),
                     expiresAt: payload.expiresAt,
                     localCardID: payload.card.id
                 )
@@ -493,14 +536,18 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
 
     @objc private func enterCode() {
         let alert = UIAlertController(title: "Короткий код", message: "Введите код обмена", preferredStyle: .alert)
-        alert.addTextField { $0.placeholder = "YP-1234"; $0.autocapitalizationType = .allCharacters }
+        alert.addTextField {
+            $0.placeholder = "YP-XXXX-XXXX-XXXX"
+            $0.autocapitalizationType = .allCharacters
+            $0.autocorrectionType = .no
+        }
         alert.addAction(UIAlertAction(title: "Проверить", style: .default) { [weak self, weak alert] _ in
-            let code = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !code.isEmpty else {
-                self?.showMessage("Код не введён", "Введите код или выберите другой способ.")
+            let value = alert?.textFields?.first?.text ?? ""
+            guard let canonicalCode = ManualExchangeCode.normalize(value) else {
+                self?.showMessage("Код не подтверждён", "Введите код в формате YP-XXXX-XXXX-XXXX.")
                 return
             }
-            self?.claimManualCode(code)
+            self?.claimManualCode(canonicalCode)
         })
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel) { [weak self] _ in
             self?.clearPendingMeetingPlace()
@@ -511,7 +558,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         Task { [weak self] in
             guard let self else { return }
             do {
-                let response = try await claimExchange(token: code, expiresAt: nil, localCardID: nil)
+                let response = try await claimExchange(credential: .code(code), expiresAt: nil, localCardID: nil)
                 let saved = try persist(response: response, meetingPlace: pendingMeetingPlace)
                 guard !saved.isEmpty else { throw ExchangeError.missingPeerCard }
                 clearPendingMeetingPlace()
@@ -525,13 +572,13 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     }
 
     private func claimExchange(
-        token: String,
+        credential: ExchangeCredential,
         expiresAt: Date?,
         localCardID: String?
     ) async throws -> SyncResponse {
         guard let ownCard = ownCard() else { throw SyncCoordinator.CoordinatorError.noProfile }
         return try await syncCoordinator.claimExchange(
-            token: token,
+            credential: credential,
             expiresAt: expiresAt,
             localCardID: localCardID,
             ownCard: ownCard,
@@ -540,26 +587,131 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     }
 
     @objc private func togglePrivate(_ sender: UISwitch) {
-        guard sender.isOn else { includePrivate = false; return }
-        explainPermission(title: "Передача закрытых полей", message: "Face ID защищает закрытые поля вашей визитки и подтверждает их передачу выбранному человеку.") { [weak self, weak sender] in
-            self?.permissions.authenticatePrivateFields { result in
-                let allowed = (try? result.get()) != nil; self?.includePrivate = allowed; sender?.setOn(allowed, animated: true)
-                if !allowed { self?.showMessage("Оставили публичные поля", "Обмен продолжает работать без закрытых полей.") }
+        guard sender.isOn else {
+            resetPrivatePhoneSharing()
+            return
+        }
+        resetPrivatePhoneSharing()
+        guard let card = ownCard(), PrivateCardFields(card: card) != nil else {
+            showMessage("Телефон недоступен", "В визитке пока нет телефона для передачи.")
+            return
+        }
+        explainPermission(title: "Передача телефона", message: "Face ID или код-пароль подтверждает передачу телефона выбранному человеку через Bluetooth или короткий код. QR остаётся публичным.") { [weak self] in
+            guard let self else { return }
+            permissions.authenticatePrivateFields { [weak self] result in
+                guard let self else { return }
+                let allowed = (try? result.get()) != nil && viewIfLoaded?.window != nil
+                includePrivatePhone = allowed
+                privateSwitch.setOn(allowed, animated: true)
+                privateStatus.text = allowed
+                    ? "Телефон включён для следующего Bluetooth-обмена или короткого кода. QR остаётся публичным."
+                    : "Телефон передаётся только через Bluetooth или ваш короткий код. QR остаётся публичным."
+                if allowed {
+                    UIAccessibility.post(notification: .announcement, argument: "Передача телефона включена")
+                } else {
+                    showMessage("Оставили публичные поля", "Обмен продолжает работать без телефона.")
+                }
             }
         }
     }
 
-    private func cancelPreparedExchange() {
-        guard let token = preparedToken else { return }
-        preparedToken = nil
-        Task { await syncCoordinator.cancelExchange(token: token) }
+    @objc private func showShortCode() {
+        guard let card = ownCard() else {
+            showMessage("Сначала создайте визитку", "Для короткого кода нужна ваша сохранённая карточка.")
+            return
+        }
+        guard let privateSelection = selectedPrivateFields(for: card) else { return }
+        analytics.report(.exchangeStarted("manual"))
+        shortCodePrepareTask?.cancel()
+        let preparationID = UUID()
+        shortCodePreparationID = preparationID
+        shortCodePrepareTask = Task { [weak self] in
+            guard let self else { return }
+            var preparedCredential: ExchangeCredential?
+            do {
+                let prepared = try await syncCoordinator.prepareExchange(
+                    card: card,
+                    method: "manual",
+                    privateFields: privateSelection.fields,
+                    greeting: audio.savedGreeting()
+                )
+                preparedCredential = prepared.credential
+                try Task.checkCancellation()
+                guard shortCodePreparationID == preparationID else { throw CancellationError() }
+                guard viewIfLoaded?.window != nil else { throw CancellationError() }
+                guard case .code(let code) = prepared.credential else {
+                    throw ExchangeError.invalidPreparedCredential
+                }
+                shortCodePrepareTask = nil
+                shortCodePreparationID = nil
+                let coordinator = syncCoordinator
+                let controller = ShortCodeViewController(
+                    code: code,
+                    expiresAt: prepared.expiresAt
+                ) {
+                    Task { await coordinator.cancelExchange(credential: .code(code)) }
+                }
+                if let navigationController {
+                    navigationController.pushViewController(controller, animated: true)
+                } else {
+                    present(UINavigationController(rootViewController: controller), animated: true)
+                }
+            } catch {
+                if let preparedCredential {
+                    await syncCoordinator.cancelExchange(credential: preparedCredential)
+                }
+                if error is CancellationError { return }
+                if shortCodePreparationID == preparationID {
+                    shortCodePrepareTask = nil
+                    shortCodePreparationID = nil
+                }
+                showMessage("Не удалось показать код", "Для короткого кода сейчас нужен интернет. Публичный QR остаётся доступен.")
+            }
+        }
     }
 
-    deinit { prepareTask?.cancel(); nearby.stop(); photoScanner.cancel() }
+    private func selectedPrivateFields(for card: PersonCard) -> PrivateFieldsSelection? {
+        guard includePrivatePhone else { return .publicOnly }
+        guard let fields = PrivateCardFields(card: card) else {
+            resetPrivatePhoneSharing()
+            showMessage("Телефон недоступен", "В визитке пока нет телефона для передачи.")
+            return nil
+        }
+        return .phone(fields)
+    }
+
+    private func resetPrivatePhoneSharing() {
+        includePrivatePhone = false
+        privateSwitch.setOn(false, animated: true)
+        privateStatus.text = "Телефон передаётся только через Bluetooth или ваш короткий код. QR остаётся публичным."
+    }
+
+    private func cancelNearbyExchange() {
+        guard let credential = nearbyCredential else { return }
+        nearbyCredential = nil
+        Task { await syncCoordinator.cancelExchange(credential: credential) }
+    }
+
+    deinit {
+        nearbyPrepareTask?.cancel()
+        shortCodePrepareTask?.cancel()
+        nearby.stop()
+        photoScanner.cancel()
+    }
 
     private enum ExchangeError: Error {
         case localStorageUnavailable
-        case missingExchangeToken
+        case invalidPreparedCredential
         case missingPeerCard
+    }
+
+    private enum PrivateFieldsSelection {
+        case publicOnly
+        case phone(PrivateCardFields)
+
+        var fields: PrivateCardFields? {
+            if case .phone(let fields) = self { return fields }
+            return nil
+        }
     }
 }
