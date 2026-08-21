@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
-from .schemas import PersonCard, SyncedPerson
+from .schemas import PersonCard, PrivateCardFields, SyncedPerson
 
 
 class InvalidCredential(Exception):
@@ -70,10 +70,12 @@ class SyncStore(Protocol):
         installation_id: str,
         operation_id: str,
         method: str,
-        raw_token: str,
+        public_card: PersonCard,
+        private_fields: PrivateCardFields | None,
+        raw_credential: str,
         expires_at: datetime,
-    ) -> None:
-        """Persist a one-time exchange-token digest."""
+    ) -> int:
+        """Atomically publish a public card and prepare a one-time exchange."""
 
     def claim_exchange(
         self,
