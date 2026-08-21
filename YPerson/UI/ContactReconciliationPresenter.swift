@@ -6,25 +6,32 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
     private weak var host: YPBaseViewController?
     private let permissions: PermissionCenter
     private let analytics: AppMetricaAnalyticsClient
-    private let sessionFence = ContactReconciliationSessionFence()
-    private var activeSession: ContactReconciliationSessionFence.Session?
+    private let commitBarrier: ContactReconciliationCommitBarrier
+    private var activeSession: ContactReconciliationCommitBarrier.Session?
     private weak var ownedAlert: UIAlertController?
     private var accessManagerController: UIViewController?
     private var accessManagerCompleted = false
     private weak var systemContactController: CNContactViewController?
-    private var systemContactSession: ContactReconciliationSessionFence.Session?
+    private var systemContactSession: ContactReconciliationCommitBarrier.Session?
     private var profileLifecycle = ContactReconciliationProfileLifecycle()
 
-    init(host: YPBaseViewController, permissions: PermissionCenter, analytics: AppMetricaAnalyticsClient) {
+    init(
+        host: YPBaseViewController,
+        permissions: PermissionCenter,
+        analytics: AppMetricaAnalyticsClient,
+        commitBarrier: ContactReconciliationCommitBarrier
+    ) {
         self.host = host
         self.permissions = permissions
         self.analytics = analytics
+        self.commitBarrier = commitBarrier
         super.init()
     }
 
     func start(for card: PersonCard) {
         guard profileLifecycle.isActive else { return }
-        let session = sessionFence.begin()
+        if let activeSession { commitBarrier.invalidateSession(activeSession) }
+        guard let session = commitBarrier.beginSession() else { return }
         activeSession = session
         dismissOwnedUI()
         guard isCurrent(session), let host else { return }
@@ -37,12 +44,11 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
         }
     }
 
-    func beginProfileDeletion() -> ContactReconciliationSessionFence.Invalidation {
-        let invalidation = sessionFence.beginInvalidation()
+    func beginProfileDeletion() {
         profileLifecycle.beginDeletion()
+        if let activeSession { commitBarrier.invalidateSession(activeSession) }
         activeSession = nil
         dismissOwnedUI()
-        return invalidation
     }
 
     func applyProfileReactivation() {
@@ -60,7 +66,7 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
 
     private func continueAfterPermission(
         for card: PersonCard,
-        session: ContactReconciliationSessionFence.Session
+        session: ContactReconciliationCommitBarrier.Session
     ) {
         guard isCurrent(session) else { return }
         switch permissions.contactsState() {
@@ -81,7 +87,7 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
     private func handleRequestedState(
         _ state: AuthorizationState,
         for card: PersonCard,
-        session: ContactReconciliationSessionFence.Session
+        session: ContactReconciliationCommitBarrier.Session
     ) {
         guard isCurrent(session) else { return }
         switch state {
@@ -98,7 +104,7 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
         for card: PersonCard,
         scope: ContactReconciliationScope,
         choosing candidateIdentifier: String? = nil,
-        session: ContactReconciliationSessionFence.Session
+        session: ContactReconciliationCommitBarrier.Session
     ) {
         guard isCurrent(session) else { return }
         permissions.reconciliation(for: card, scope: scope, choosing: candidateIdentifier) { [weak self] result in
@@ -124,7 +130,7 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
         _ candidates: [ContactReconciliationCandidate],
         for card: PersonCard,
         scope: ContactReconciliationScope,
-        session: ContactReconciliationSessionFence.Session
+        session: ContactReconciliationCommitBarrier.Session
     ) {
         guard isCurrent(session) else { return }
         let alert = UIAlertController(
@@ -146,7 +152,7 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
     private func present(
         _ plan: ContactReconciliationPlan,
         for card: PersonCard,
-        session: ContactReconciliationSessionFence.Session
+        session: ContactReconciliationCommitBarrier.Session
     ) {
         guard isCurrent(session), let host else { return }
         let changedFields = plan.changedFields.isEmpty
@@ -184,14 +190,14 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
     private func apply(
         _ plan: ContactReconciliationPlan,
         for card: PersonCard,
-        session: ContactReconciliationSessionFence.Session
+        session: ContactReconciliationCommitBarrier.Session
     ) {
         guard isCurrent(session) else { return }
         permissions.apply(
             plan,
             for: card,
             session: session,
-            sessionFence: sessionFence
+            commitBarrier: commitBarrier
         ) { [weak self] result in
             guard let self, self.isCurrent(session), let host = self.host else { return }
             switch result {
@@ -214,7 +220,7 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
     private func offerPlanRefresh(
         for card: PersonCard,
         message: String,
-        session: ContactReconciliationSessionFence.Session
+        session: ContactReconciliationCommitBarrier.Session
     ) {
         guard isCurrent(session) else { return }
         let alert = UIAlertController(title: "План изменился", message: message, preferredStyle: .alert)
@@ -228,7 +234,7 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
 
     private func offerLimitedAccess(
         for card: PersonCard,
-        session: ContactReconciliationSessionFence.Session
+        session: ContactReconciliationCommitBarrier.Session
     ) {
         guard isCurrent(session) else { return }
         let alert = UIAlertController(
@@ -252,7 +258,7 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
 
     private func offerReadUnavailableFallback(
         for card: PersonCard,
-        session: ContactReconciliationSessionFence.Session
+        session: ContactReconciliationCommitBarrier.Session
     ) {
         guard isCurrent(session) else { return }
         let alert = UIAlertController(
@@ -274,7 +280,7 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
 
     private func presentSystemContactForm(
         for card: PersonCard,
-        session: ContactReconciliationSessionFence.Session
+        session: ContactReconciliationCommitBarrier.Session
     ) {
         guard isCurrent(session), let host else { return }
         let controller = CNContactViewController(forNewContact: permissions.makeContact(card))
@@ -302,7 +308,7 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
     @available(iOS 18.0, *)
     private func presentLimitedAccessManager(
         for card: PersonCard,
-        session: ContactReconciliationSessionFence.Session
+        session: ContactReconciliationCommitBarrier.Session
     ) {
         guard isCurrent(session), let host else { return }
         accessManagerCompleted = false
@@ -325,7 +331,7 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
 
     private func presentOwned(
         _ alert: UIAlertController,
-        session: ContactReconciliationSessionFence.Session
+        session: ContactReconciliationCommitBarrier.Session
     ) {
         guard isCurrent(session), let host else { return }
         ownedAlert?.dismiss(animated: false)
@@ -353,12 +359,12 @@ final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDel
         systemContactSession = nil
     }
 
-    private func isCurrent(_ session: ContactReconciliationSessionFence.Session) -> Bool {
-        activeSession == session && sessionFence.isCurrent(session)
+    private func isCurrent(_ session: ContactReconciliationCommitBarrier.Session) -> Bool {
+        activeSession == session && commitBarrier.isCurrent(session)
     }
 
     deinit {
-        _ = sessionFence.beginInvalidation()
+        if let activeSession { commitBarrier.invalidateSession(activeSession) }
     }
 }
 

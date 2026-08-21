@@ -16,6 +16,7 @@ final class YPersonExperienceBuilder {
     private let nearby = NearbyExchangeController()
     private let photoScanner = PhotoCardScanner()
     private let audio = AudioGreetingController()
+    private let contactCommitBarrier = ContactReconciliationCommitBarrier()
     private let imageSaver = CardImageSaver()
     private weak var output: (any YPersonExperienceOutput)?
     private weak var rootViewController: MainTabBarController?
@@ -102,6 +103,12 @@ final class YPersonExperienceBuilder {
             savedPeople = [.reviewAlexey, .reviewMaria]
         }
 #endif
+        audio.restoreSavedPublicGreetingIfAvailable(
+            expected: ownCard?.hasAudioGreeting == true
+        )
+        syncCoordinator.publicationGreetingProvider = { [weak audio] in
+            audio?.savedGreeting()
+        }
         let makeAppearance = { [permissions, analytics]
             (card: PersonCard, selectedTemplateID: String, onSelect: @escaping (String) -> Void) in
             AppearanceViewController(
@@ -116,8 +123,8 @@ final class YPersonExperienceBuilder {
             CardEditorViewController(card: card, permissions: permissions, audio: audio, makeAppearance: makeAppearance, onSave: onSave)
         }
         let card = CardViewController(card: ownCard, persistsChanges: persistsUserChanges, permissions: permissions, audio: audio, imageSaver: imageSaver, syncCoordinator: syncCoordinator, analytics: analytics, snapshotStore: snapshotStore, makeEditor: makeEditor)
-        let person = { [weak self, permissions, imageSaver, syncCoordinator, analytics, snapshotStore, mediaTransfer, audio] card in
-            let controller = PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, syncCoordinator: syncCoordinator, mediaTransfer: mediaTransfer, audio: audio, analytics: analytics, snapshotStore: snapshotStore)
+        let person = { [weak self, permissions, imageSaver, syncCoordinator, analytics, snapshotStore, mediaTransfer, audio, contactCommitBarrier] card in
+            let controller = PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, syncCoordinator: syncCoordinator, mediaTransfer: mediaTransfer, audio: audio, analytics: analytics, snapshotStore: snapshotStore, contactCommitBarrier: contactCommitBarrier)
             self?.personControllers.add(controller)
             return controller
         }
@@ -125,6 +132,7 @@ final class YPersonExperienceBuilder {
             people: savedPeople,
             permissions: permissions,
             analytics: analytics,
+            contactCommitBarrier: contactCommitBarrier,
             makePerson: person,
             isProfileActive: { [syncCoordinator] in syncCoordinator.isProfileActive },
             onContactsImported: { [snapshotStore, syncCoordinator] cards in
@@ -158,27 +166,23 @@ final class YPersonExperienceBuilder {
         self.rootViewController = root
         root.route(to: context.entryPoint)
         syncCoordinator.onProfileDeletionPreparation = { [weak self, weak card, weak exchange, weak people, weak privacy, audio, analytics] in
-            let personControllers = self?.personControllers.allObjects ?? []
-            var contactInvalidations: [ContactReconciliationSessionFence.Invalidation] = []
-            if let invalidation = people?.beginProfileDeletion() {
-                contactInvalidations.append(invalidation)
-            }
-            contactInvalidations.append(contentsOf: personControllers.map {
-                $0.beginProfileDeletion()
-            })
-            self?.cancelActiveBootstrapTask()
-            self?.pushTokenTask?.cancel()
-            self?.pushTokenTask = nil
+            guard let self else { return }
+            let contactInvalidation = self.contactCommitBarrier.beginDeletion()
+            let personControllers = self.personControllers.allObjects
+            people?.beginProfileDeletion()
+            personControllers.forEach { $0.beginProfileDeletion() }
+            self.cancelActiveBootstrapTask()
+            self.pushTokenTask?.cancel()
+            self.pushTokenTask = nil
             audio.delete()
             analytics.setConsent(false)
             card?.applyProfileDeletion()
             exchange?.applyProfileDeletion()
             privacy?.applyProfileDeletion()
-            for invalidation in contactInvalidations {
-                await invalidation.waitForInFlightCommits()
-            }
+            await contactInvalidation.waitForInFlightCommits()
         }
-        syncCoordinator.onProfileReactivated = { [weak people, weak privacy] in
+        syncCoordinator.onProfileReactivated = { [weak self, weak people, weak privacy] in
+            self?.contactCommitBarrier.reactivateForUserCreation()
             people?.applyProfileReactivation()
             privacy?.applyProfileReactivation()
         }

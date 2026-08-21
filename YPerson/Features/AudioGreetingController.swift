@@ -23,6 +23,28 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
     private var stateBeforeExternalPlayback: State?
     private(set) var state: State = .empty { didSet { onStateChange?(state) } }
     var onStateChange: ((State) -> Void)?
+    private let recordingURL: URL
+    private let legacyRecordingURL: URL
+
+    override init() {
+        let fileManager = FileManager.default
+        let supportDirectory = fileManager.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        )[0].appendingPathComponent("YPerson", isDirectory: true)
+        try? fileManager.createDirectory(
+            at: supportDirectory,
+            withIntermediateDirectories: true
+        )
+        recordingURL = supportDirectory.appendingPathComponent("greeting.m4a")
+        legacyRecordingURL = fileManager.urls(
+            for: .cachesDirectory,
+            in: .userDomainMask
+        )[0].appendingPathComponent("yperson-greeting.m4a")
+        super.init()
+        excludeFromBackup(supportDirectory)
+        migrateLegacyRecordingIfNeeded()
+    }
 
     var cardAudioDraftStatus: CardAudioDraftStatus {
         switch state {
@@ -37,8 +59,36 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
         }
     }
 
-    private var recordingURL: URL {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("yperson-greeting.m4a")
+    private func migrateLegacyRecordingIfNeeded() {
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: recordingURL.path) {
+            excludeFromBackup(recordingURL)
+            return
+        }
+        guard fileManager.fileExists(atPath: legacyRecordingURL.path) else { return }
+        do {
+            try fileManager.moveItem(at: legacyRecordingURL, to: recordingURL)
+        } catch {
+            if (try? fileManager.copyItem(at: legacyRecordingURL, to: recordingURL)) != nil {
+                try? fileManager.removeItem(at: legacyRecordingURL)
+            }
+        }
+        if fileManager.fileExists(atPath: recordingURL.path) {
+            excludeFromBackup(recordingURL)
+        }
+    }
+
+    private func excludeFromBackup(_ url: URL) {
+        var resourceURL = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? resourceURL.setResourceValues(values)
+    }
+
+    private var readableRecordingURL: URL {
+        FileManager.default.fileExists(atPath: recordingURL.path)
+            ? recordingURL
+            : legacyRecordingURL
     }
 
     func requestAndRecord() {
@@ -89,6 +139,7 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
         recorder.stop()
         self.recorder = nil
         try? audioSession.setActive(false)
+        excludeFromBackup(recordingURL)
         let duration = (try? AVAudioPlayer(contentsOf: recordingURL).duration) ?? elapsedTime
         state = duration > 0 ? .preview(duration: duration) : .empty
     }
@@ -98,7 +149,7 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
             stateBeforeExternalPlayback = nil
             try audioSession.setCategory(.playback, mode: .spokenAudio)
             try audioSession.setActive(true)
-            let player = try AVAudioPlayer(contentsOf: recordingURL)
+            let player = try AVAudioPlayer(contentsOf: readableRecordingURL)
             player.delegate = self
             guard player.play() else {
                 try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
@@ -114,15 +165,25 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
     }
 
     func savedGreeting() -> RecordedGreeting? {
-        guard case .saved(isPublic: true, _) = state,
-              let attributes = try? FileManager.default.attributesOfItem(atPath: recordingURL.path),
+        guard case .saved(isPublic: true, _) = state else { return nil }
+        return validatedGreeting()
+    }
+
+    func restoreSavedPublicGreetingIfAvailable(expected: Bool) {
+        guard expected, let greeting = validatedGreeting() else { return }
+        state = .saved(isPublic: true, duration: greeting.duration)
+    }
+
+    private func validatedGreeting() -> RecordedGreeting? {
+        let readableURL = readableRecordingURL
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: readableURL.path),
               let size = (attributes[.size] as? NSNumber)?.intValue,
               size > 0,
               size <= 1_048_576,
-              let player = try? AVAudioPlayer(contentsOf: recordingURL),
+              let player = try? AVAudioPlayer(contentsOf: readableURL),
               player.duration > 0,
               player.duration <= 10 else { return nil }
-        return RecordedGreeting(url: recordingURL, duration: player.duration, sizeBytes: size)
+        return RecordedGreeting(url: readableURL, duration: player.duration, sizeBytes: size)
     }
 
     func play(fileURL: URL) throws {
@@ -157,7 +218,7 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
     }
 
     func save(isPublic: Bool) {
-        let duration = (try? AVAudioPlayer(contentsOf: recordingURL).duration) ?? 0
+        let duration = (try? AVAudioPlayer(contentsOf: readableRecordingURL).duration) ?? 0
         state = .saved(isPublic: isPublic, duration: duration)
     }
 
@@ -166,6 +227,7 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
         recorder?.stop()
         player?.stop()
         try? FileManager.default.removeItem(at: recordingURL)
+        try? FileManager.default.removeItem(at: legacyRecordingURL)
         state = .empty
     }
 

@@ -9,14 +9,21 @@ final class PeopleViewController: YPBaseViewController, CNContactPickerDelegate 
     private let makePerson: (PersonCard) -> UIViewController
     private let onContactsImported: ([PersonCard]) throws -> [PersonCard]
     private let isProfileActive: () -> Bool
+    private let contactCommitBarrier: ContactReconciliationCommitBarrier
     private var lifecycleGeneration = UUID()
     private var contactPickerGeneration: UUID?
-    private lazy var contactReconciliation = ContactReconciliationPresenter(host: self, permissions: permissions, analytics: analytics)
+    private lazy var contactReconciliation = ContactReconciliationPresenter(
+        host: self,
+        permissions: permissions,
+        analytics: analytics,
+        commitBarrier: contactCommitBarrier
+    )
 
-    init(people: [PersonCard], permissions: PermissionCenter, analytics: AppMetricaAnalyticsClient, makePerson: @escaping (PersonCard) -> UIViewController, isProfileActive: @escaping () -> Bool, onContactsImported: @escaping ([PersonCard]) throws -> [PersonCard]) {
+    init(people: [PersonCard], permissions: PermissionCenter, analytics: AppMetricaAnalyticsClient, contactCommitBarrier: ContactReconciliationCommitBarrier, makePerson: @escaping (PersonCard) -> UIViewController, isProfileActive: @escaping () -> Bool, onContactsImported: @escaping ([PersonCard]) throws -> [PersonCard]) {
         self.people = people
         self.permissions = permissions
         self.analytics = analytics
+        self.contactCommitBarrier = contactCommitBarrier
         self.makePerson = makePerson
         self.isProfileActive = isProfileActive
         self.onContactsImported = onContactsImported
@@ -149,15 +156,14 @@ final class PeopleViewController: YPBaseViewController, CNContactPickerDelegate 
         present(alert, animated: true)
     }
 
-    func beginProfileDeletion() -> ContactReconciliationSessionFence.Invalidation {
-        let invalidation = contactReconciliation.beginProfileDeletion()
+    func beginProfileDeletion() {
+        contactReconciliation.beginProfileDeletion()
         lifecycleGeneration = UUID()
         contactPickerGeneration = nil
         people = []
         dismiss(animated: false)
         navigationController?.popToRootViewController(animated: false)
         if isViewLoaded { render() }
-        return invalidation
     }
 
     func applyProfileReactivation() {

@@ -285,14 +285,10 @@ final class CardViewController: YPBaseViewController {
                 throw CardSaveError.profileLifecycleChanged
             }
             if self.persistsChanges {
-                guard let snapshotStore = self.snapshotStore else {
-                    throw CardSaveError.localStorageUnavailable
-                }
-                if isNew {
-                    try self.syncCoordinator.reactivateAndStoreUserCreatedCard(updatedCard)
-                } else {
-                    try snapshotStore.writeOwnCard(updatedCard)
-                }
+                try self.syncCoordinator.saveUserCardForPublication(
+                    updatedCard,
+                    allowsProfileReactivation: isNew
+                )
             }
             self.lifecycleGeneration = UUID()
             let profileGeneration = self.lifecycleGeneration

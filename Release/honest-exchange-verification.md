@@ -48,13 +48,13 @@ Toolchain observed for this run: Python `3.12.14`; Ruff `0.16.3`.
 
 ### Swift contract harness
 
-The reproducible harness now lives in the repository at `Verification/HonestExchangeContract/`. Version 6 compiles real Foundation production sources and covers public/private projection, manual-code normalization, typed credential exclusivity/routing, public QR, public-only Bluetooth policy, single-use manual consent, App Group persistence policy, crash-safe deletion-record survival, profile-operation contexts across deletion/recreation, non-self-cancelling deletion-bootstrap ownership, two-phase asynchronous Contacts invalidation, Contacts reactivation after explicit card creation, FIFO publication/APNs ordering with exact durable ownership, late-publication local-card fencing, exact deletion-attempt cleanup, scanner-launch reset, lifecycle transitions, transfer-generation invalidation, legacy sensitive-queue cleanup, and ordered async commit fences in UIKit/coordinator/media sources.
+The reproducible harness now lives in the repository at `Verification/HonestExchangeContract/`. Version 7 compiles real Foundation production sources and covers public/private projection, manual-code normalization, typed credential exclusivity/routing, public QR, public-only Bluetooth policy, single-use manual consent, App Group persistence policy, crash-safe deletion-record survival, profile-operation contexts across deletion/recreation, non-self-cancelling deletion-bootstrap ownership, a builder-lifetime asynchronous Contacts commit barrier that includes orphaned presenters, Contacts reactivation after explicit card creation, a crash-recoverable own-card/publication journal, audio-placeholder recovery without a false/no-asset downgrade, the recovered true-card/asset backend invariant, one-record APNs update/removal ownership, late-publication local-card fencing, exact deletion-attempt cleanup, scanner-launch reset, lifecycle transitions, transfer-generation invalidation, legacy sensitive-queue cleanup, and ordered async commit fences in UIKit/coordinator/media sources.
 
 ```bash
 Verification/HonestExchangeContract/run.sh
 ```
 
-The earlier Task 8 PASS below was produced by the historical `/tmp` harness and remains historical evidence. The repository v6 command and its `PYTHONOPTIMIZE=1` lifecycle variant passed for iOS review round 4, but the broad parallel fix wave still requires a final integrated rerun; no aggregate count or release-readiness claim is added here.
+The earlier Task 8 PASS below was produced by the historical `/tmp` harness and remains historical evidence. The repository v7 command, its `PYTHONOPTIMIZE=1` lifecycle variant, and a fresh unsigned generic-Simulator Debug build passed for iOS review round 5. The broad parallel fix wave still requires a final integrated rerun; no aggregate count or release-readiness claim is added here. Physical crash termination, Contacts system UI timing, and real APNs ordering remain `PENDING`.
 
 ### Fresh unsigned simulator builds
 

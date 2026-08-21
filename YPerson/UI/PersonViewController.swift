@@ -8,6 +8,7 @@ final class PersonViewController: YPBaseViewController {
     private let audio: AudioGreetingController
     private let analytics: AppMetricaAnalyticsClient
     private let snapshotStore: AppGroupSnapshotStore?
+    private let contactCommitBarrier: ContactReconciliationCommitBarrier
     private var card: PersonCard
     private var summary: CardSummaryView
     private let placeLabel = YPStyle.label("Место знакомства не добавлено", style: .footnote)
@@ -16,12 +17,17 @@ final class PersonViewController: YPBaseViewController {
     private var moderationTasks: [UUID: Task<Void, Never>] = [:]
     private var lifecycleGeneration = UUID()
     private var profileDeleted = false
-    private lazy var contactReconciliation = ContactReconciliationPresenter(host: self, permissions: permissions, analytics: analytics)
+    private lazy var contactReconciliation = ContactReconciliationPresenter(
+        host: self,
+        permissions: permissions,
+        analytics: analytics,
+        commitBarrier: contactCommitBarrier
+    )
 
-    init(card: PersonCard, permissions: PermissionCenter, imageSaver: CardImageSaver, syncCoordinator: SyncCoordinator, mediaTransfer: MediaTransferClient, audio: AudioGreetingController, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?) {
+    init(card: PersonCard, permissions: PermissionCenter, imageSaver: CardImageSaver, syncCoordinator: SyncCoordinator, mediaTransfer: MediaTransferClient, audio: AudioGreetingController, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, contactCommitBarrier: ContactReconciliationCommitBarrier) {
         self.card = card
         self.summary = CardSummaryView(card: card, showPrivate: true)
-        self.permissions = permissions; self.imageSaver = imageSaver; self.syncCoordinator = syncCoordinator; self.mediaTransfer = mediaTransfer; self.audio = audio; self.analytics = analytics; self.snapshotStore = snapshotStore
+        self.permissions = permissions; self.imageSaver = imageSaver; self.syncCoordinator = syncCoordinator; self.mediaTransfer = mediaTransfer; self.audio = audio; self.analytics = analytics; self.snapshotStore = snapshotStore; self.contactCommitBarrier = contactCommitBarrier
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -224,8 +230,8 @@ final class PersonViewController: YPBaseViewController {
         try? snapshotStore?.upsertPerson(card)
     }
 
-    func beginProfileDeletion() -> ContactReconciliationSessionFence.Invalidation {
-        let invalidation = contactReconciliation.beginProfileDeletion()
+    func beginProfileDeletion() {
+        contactReconciliation.beginProfileDeletion()
         profileDeleted = true
         lifecycleGeneration = UUID()
         audioTask?.cancel()
@@ -235,7 +241,6 @@ final class PersonViewController: YPBaseViewController {
         audio.stopPlayback()
         audioButton?.isEnabled = false
         navigationController?.popToRootViewController(animated: false)
-        return invalidation
     }
 
     private func isCurrentProfileLifecycle(_ generation: UUID) -> Bool {

@@ -198,18 +198,6 @@ final class AsyncFIFOOperationGate: @unchecked Sendable {
     }
 }
 
-struct PushTokenSyncOwnership: Equatable, Sendable {
-    let token: String?
-    let isRemoval: Bool
-    let operationID: String
-
-    func matches(token: String?, isRemoval: Bool, operationID: String?) -> Bool {
-        self.token == token
-            && self.isRemoval == isRemoval
-            && self.operationID == operationID
-    }
-}
-
 struct PublicationCardOwnership: Equatable {
     private let id: String
     private let name: String
@@ -256,6 +244,104 @@ struct PublicationCardOwnership: Equatable {
     }
 }
 
+struct CardPublicationJournal: Codable, Equatable {
+    let card: PersonCard
+    let operation: PendingSyncOperation
+}
+
+enum PendingPublicationAudioRecoveryPolicy {
+    enum Action: Equatable {
+        case send
+        case uploadSavedGreeting
+        case waitForSavedGreeting
+    }
+
+    static func action(
+        for operation: PendingSyncOperation,
+        savedGreetingAvailable: Bool
+    ) -> Action {
+        let request = operation.request
+        guard request.operation == .publishCard,
+              request.card?.hasAudioGreeting == true else { return .send }
+        if request.audioAssetID != nil { return .send }
+        return savedGreetingAvailable ? .uploadSavedGreeting : .waitForSavedGreeting
+    }
+
+    static func uploadedGreetingRequest(
+        for operation: PendingSyncOperation,
+        audioAssetID: String
+    ) -> SyncRequest? {
+        guard operation.request.operation == .publishCard,
+              let card = operation.request.card,
+              card.hasAudioGreeting == true,
+              !audioAssetID.isEmpty else { return nil }
+        return SyncRequest(
+            operation: .publishCard,
+            operationID: operation.id,
+            card: card.exchangeCopy,
+            audioAssetID: audioAssetID
+        )
+    }
+}
+
+struct PendingPushTokenSyncRecord: Codable, Equatable, Sendable {
+    enum Kind: String, Codable, Sendable {
+        case update
+        case removal
+    }
+
+    let kind: Kind
+    let token: String?
+    let operationID: String
+
+    static func update(token: String, operationID: String) -> Self {
+        Self(kind: .update, token: token, operationID: operationID)
+    }
+
+    static func removal(operationID: String) -> Self {
+        Self(kind: .removal, token: nil, operationID: operationID)
+    }
+
+    private init(kind: Kind, token: String?, operationID: String) {
+        self.kind = kind
+        self.token = token
+        self.operationID = operationID
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = try container.decode(Kind.self, forKey: .kind)
+        let token = try container.decodeIfPresent(String.self, forKey: .token)
+        let operationID = try container.decode(String.self, forKey: .operationID)
+        guard !operationID.isEmpty else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .operationID,
+                in: container,
+                debugDescription: "Pending APNs operation ID is empty"
+            )
+        }
+        switch kind {
+        case .update:
+            guard token != nil else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .token,
+                    in: container,
+                    debugDescription: "Pending APNs update is missing its token"
+                )
+            }
+        case .removal:
+            guard token == nil else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .token,
+                    in: container,
+                    debugDescription: "Pending APNs removal unexpectedly contains a token"
+                )
+            }
+        }
+        self.init(kind: kind, token: token, operationID: operationID)
+    }
+}
+
 struct ProfileDeletionAttemptOwnership {
     struct Attempt: Equatable, Sendable {
         fileprivate let id: UUID
@@ -297,7 +383,7 @@ struct ContactReconciliationProfileLifecycle: Equatable {
     }
 }
 
-final class ContactReconciliationSessionFence: @unchecked Sendable {
+final class ContactReconciliationCommitBarrier: @unchecked Sendable {
     struct Session: Equatable, Sendable {
         fileprivate let id: UUID
         fileprivate let completion: CommitCompletion
@@ -323,13 +409,27 @@ final class ContactReconciliationSessionFence: @unchecked Sendable {
 
     fileprivate final class CommitCompletion: @unchecked Sendable {
         private let group = DispatchGroup()
+        private let lock = NSLock()
+        private var commitCount = 0
 
         func enter() {
+            lock.lock()
+            commitCount += 1
+            lock.unlock()
             group.enter()
         }
 
         func leave() {
+            lock.lock()
+            commitCount -= 1
+            lock.unlock()
             group.leave()
+        }
+
+        var isIdle: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return commitCount == 0
         }
 
         func wait() async {
@@ -342,14 +442,16 @@ final class ContactReconciliationSessionFence: @unchecked Sendable {
     }
 
     private let lock = NSLock()
-    private var currentSession: Session?
+    private var acceptsSessions = true
+    private var activeSessionIDs: Set<UUID> = []
     private var sessionCompletions: [UUID: CommitCompletion] = [:]
 
-    func begin() -> Session {
+    func beginSession() -> Session? {
         lock.lock()
         defer { lock.unlock() }
+        guard acceptsSessions else { return nil }
         let session = Session(id: UUID(), completion: CommitCompletion())
-        currentSession = session
+        activeSessionIDs.insert(session.id)
         sessionCompletions[session.id] = session.completion
         return session
     }
@@ -357,16 +459,32 @@ final class ContactReconciliationSessionFence: @unchecked Sendable {
     func isCurrent(_ session: Session) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return currentSession?.id == session.id
+        return acceptsSessions && activeSessionIDs.contains(session.id)
     }
 
-    func beginInvalidation() -> Invalidation {
+    func invalidateSession(_ session: Session) {
         lock.lock()
+        activeSessionIDs.remove(session.id)
+        if session.completion.isIdle {
+            sessionCompletions.removeValue(forKey: session.id)
+        }
+        lock.unlock()
+    }
+
+    func beginDeletion() -> Invalidation {
+        lock.lock()
+        acceptsSessions = false
         let completions = Array(sessionCompletions.values)
-        currentSession = nil
+        activeSessionIDs.removeAll()
         sessionCompletions.removeAll()
         lock.unlock()
         return Invalidation(completions: completions)
+    }
+
+    func reactivateForUserCreation() {
+        lock.lock()
+        acceptsSessions = true
+        lock.unlock()
     }
 
     func performCommit<T>(
@@ -374,14 +492,28 @@ final class ContactReconciliationSessionFence: @unchecked Sendable {
         _ operation: () throws -> T
     ) throws -> T {
         lock.lock()
-        guard currentSession?.id == session.id else {
+        guard acceptsSessions,
+              activeSessionIDs.contains(session.id),
+              sessionCompletions[session.id] === session.completion else {
             lock.unlock()
             throw FenceError.invalidated
         }
         session.completion.enter()
         lock.unlock()
-        defer { session.completion.leave() }
+        defer {
+            session.completion.leave()
+            removeCompletedInvalidatedSession(session)
+        }
         return try operation()
+    }
+
+    private func removeCompletedInvalidatedSession(_ session: Session) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !activeSessionIDs.contains(session.id),
+              session.completion.isIdle,
+              sessionCompletions[session.id] === session.completion else { return }
+        sessionCompletions.removeValue(forKey: session.id)
     }
 }
 

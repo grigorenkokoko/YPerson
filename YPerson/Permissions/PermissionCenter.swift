@@ -88,8 +88,8 @@ final class PermissionCenter: NSObject, CLLocationManagerDelegate {
     func apply(
         _ plan: ContactReconciliationPlan,
         for card: PersonCard,
-        session: ContactReconciliationSessionFence.Session,
-        sessionFence: ContactReconciliationSessionFence,
+        session: ContactReconciliationCommitBarrier.Session,
+        commitBarrier: ContactReconciliationCommitBarrier,
         completion: @escaping (Result<ContactReconciliationAction, Error>) -> Void
     ) {
         let cardProjection = projection(from: card)
@@ -125,7 +125,7 @@ final class PermissionCenter: NSObject, CLLocationManagerDelegate {
                 case .noChange:
                     return .noChange
                 }
-                try sessionFence.performCommit(for: session) {
+                try commitBarrier.performCommit(for: session) {
                     try self.contactStore.execute(request)
                 }
                 return plan.action

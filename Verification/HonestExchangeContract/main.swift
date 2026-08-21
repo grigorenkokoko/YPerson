@@ -1,6 +1,6 @@
 import Foundation
 
-private let harnessVersion = 6
+private let harnessVersion = 7
 
 private func require(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() { fatalError(message) }
@@ -216,21 +216,22 @@ require(!contactProfileLifecycle.isActive, "Contacts stayed active during profil
 contactProfileLifecycle.reactivateForUserCreation()
 require(contactProfileLifecycle.isActive, "Contacts did not reactivate after explicit card creation")
 
-let firstContactFence = ContactReconciliationSessionFence()
-let secondContactFence = ContactReconciliationSessionFence()
-let firstContactSession = firstContactFence.begin()
-let secondContactSession = secondContactFence.begin()
+let contactCommitBarrier = ContactReconciliationCommitBarrier()
+guard let orphanContactSession = contactCommitBarrier.beginSession(),
+      let liveContactSession = contactCommitBarrier.beginSession() else {
+    fatalError("shared Contacts barrier did not admit active-profile sessions")
+}
 let firstCommitStarted = DispatchSemaphore(value: 0)
 let secondCommitStarted = DispatchSemaphore(value: 0)
 let releaseFirstCommit = DispatchSemaphore(value: 0)
 let releaseSecondCommit = DispatchSemaphore(value: 0)
 let commitsCompleted = DispatchSemaphore(value: 0)
-for (fence, session, started, release) in [
-    (firstContactFence, firstContactSession, firstCommitStarted, releaseFirstCommit),
-    (secondContactFence, secondContactSession, secondCommitStarted, releaseSecondCommit)
+for (session, started, release) in [
+    (orphanContactSession, firstCommitStarted, releaseFirstCommit),
+    (liveContactSession, secondCommitStarted, releaseSecondCommit)
 ] {
     DispatchQueue.global(qos: .userInitiated).async {
-        try? fence.performCommit(for: session) {
+        try? contactCommitBarrier.performCommit(for: session) {
             started.signal()
             release.wait()
         }
@@ -239,32 +240,25 @@ for (fence, session, started, release) in [
 }
 require(firstCommitStarted.wait(timeout: .now() + 1) == .success, "first contact commit did not start")
 require(secondCommitStarted.wait(timeout: .now() + 1) == .success, "second contact commit did not start")
-
-let replacementFirstContactSession = firstContactFence.begin()
+contactCommitBarrier.invalidateSession(orphanContactSession)
 require(
-    firstContactFence.isCurrent(replacementFirstContactSession),
-    "replacement session on the first presenter did not become current"
+    !contactCommitBarrier.isCurrent(orphanContactSession),
+    "a deinitialized presenter left its Contacts session active"
 )
-let firstInvalidation = firstContactFence.beginInvalidation()
-let secondInvalidation = secondContactFence.beginInvalidation()
-require(!firstContactFence.isCurrent(firstContactSession), "first contact session remained current")
-require(!secondContactFence.isCurrent(secondContactSession), "second contact session remained current")
-requireThrows("first invalidated session began another Contacts write") {
-    try firstContactFence.performCommit(for: firstContactSession) {}
-}
-requireThrows("second invalidated session began another Contacts write") {
-    try secondContactFence.performCommit(for: secondContactSession) {}
+let contactInvalidation = contactCommitBarrier.beginDeletion()
+require(
+    contactCommitBarrier.beginSession() == nil,
+    "Contacts admitted a new presenter session after deletion began"
+)
+require(!contactCommitBarrier.isCurrent(liveContactSession), "live contact session remained current")
+requireThrows("orphan invalidated session began another Contacts write") {
+    try contactCommitBarrier.performCommit(for: orphanContactSession) {}
 }
 
-let firstInvalidationFinished = DispatchSemaphore(value: 0)
-let secondInvalidationFinished = DispatchSemaphore(value: 0)
+let contactInvalidationFinished = DispatchSemaphore(value: 0)
 Task.detached {
-    await firstInvalidation.waitForInFlightCommits()
-    firstInvalidationFinished.signal()
-}
-Task.detached {
-    await secondInvalidation.waitForInFlightCommits()
-    secondInvalidationFinished.signal()
+    await contactInvalidation.waitForInFlightCommits()
+    contactInvalidationFinished.signal()
 }
 let independentProgress = DispatchSemaphore(value: 0)
 Task.detached { independentProgress.signal() }
@@ -273,19 +267,23 @@ require(
     "async Contacts invalidation blocked unrelated progress"
 )
 require(
-    firstInvalidationFinished.wait(timeout: .now() + 0.05) == .timedOut,
-    "first invalidation completed before its crossed commit"
-)
-require(
-    secondInvalidationFinished.wait(timeout: .now() + 0.05) == .timedOut,
-    "second invalidation completed before its crossed commit"
+    contactInvalidationFinished.wait(timeout: .now() + 0.05) == .timedOut,
+    "global invalidation completed before orphan and live commits"
 )
 releaseFirstCommit.signal()
 releaseSecondCommit.signal()
 require(commitsCompleted.wait(timeout: .now() + 1) == .success, "first contact commit did not complete")
 require(commitsCompleted.wait(timeout: .now() + 1) == .success, "second contact commit did not complete")
-require(firstInvalidationFinished.wait(timeout: .now() + 1) == .success, "first invalidation did not finish")
-require(secondInvalidationFinished.wait(timeout: .now() + 1) == .success, "second invalidation did not finish")
+require(contactInvalidationFinished.wait(timeout: .now() + 1) == .success, "global invalidation did not finish")
+contactCommitBarrier.reactivateForUserCreation()
+guard let reactivatedContactSession = contactCommitBarrier.beginSession() else {
+    fatalError("Contacts barrier did not reactivate for explicit card creation")
+}
+require(
+    contactCommitBarrier.isCurrent(reactivatedContactSession)
+        && !contactCommitBarrier.isCurrent(orphanContactSession),
+    "Contacts reactivation made an orphan session current"
+)
 
 var bootstrapOwnership = ProfileBootstrapTaskOwnership()
 let firstActiveBootstrap = bootstrapOwnership.beginActive().ticket
@@ -356,14 +354,85 @@ require(gateOperationsFinished.wait(timeout: .now() + 1) == .success, "second FI
 let orderedGateEvents = gateEvents.values()
 require(orderedGateEvents == ["A", "B"], "FIFO operation order was not stable")
 
-let pushA = PushTokenSyncOwnership(token: "token-a", isRemoval: false, operationID: "push-a")
-let pushB = PushTokenSyncOwnership(token: "token-b", isRemoval: false, operationID: "push-b")
-let pushRemoval = PushTokenSyncOwnership(token: nil, isRemoval: true, operationID: "push-remove")
-require(pushA.matches(token: "token-a", isRemoval: false, operationID: "push-a"), "push A lost ownership")
-require(!pushA.matches(token: "token-b", isRemoval: false, operationID: "push-b"), "late push A matched push B")
-require(pushB.matches(token: "token-b", isRemoval: false, operationID: "push-b"), "push B lost ownership")
-require(!pushB.matches(token: nil, isRemoval: true, operationID: "push-remove"), "push B matched removal")
-require(pushRemoval.matches(token: nil, isRemoval: true, operationID: "push-remove"), "removal lost ownership")
+let pendingPushUpdate = PendingPushTokenSyncRecord.update(
+    token: "token-b",
+    operationID: "push-b"
+)
+let pendingPushRemoval = PendingPushTokenSyncRecord.removal(operationID: "push-remove")
+require(pendingPushUpdate.token == "token-b", "single-record APNs update lost its token")
+require(pendingPushRemoval.token == nil, "single-record APNs removal synthesized a token")
+let decodedPendingPushRemoval = try JSONDecoder().decode(
+    PendingPushTokenSyncRecord.self,
+    from: JSONEncoder().encode(pendingPushRemoval)
+)
+require(
+    decodedPendingPushRemoval == pendingPushRemoval,
+    "single-record APNs removal did not round-trip atomically"
+)
+
+let audioPlaceholderOperation = PendingSyncOperation(
+    request: SyncRequest(
+        operation: .publishCard,
+        card: PersonCard(
+            id: "audio-owner",
+            name: "Audio Owner",
+            role: "",
+            company: "",
+            phone: "",
+            email: "",
+            tagline: "",
+            hasAudioGreeting: true,
+            meetingPlace: nil,
+            isBlocked: false
+        ),
+        audioAssetID: nil
+    ),
+    expiresAt: nil,
+    localCardID: nil
+)
+require(
+    PendingPublicationAudioRecoveryPolicy.action(
+        for: audioPlaceholderOperation,
+        savedGreetingAvailable: false
+    ) == .waitForSavedGreeting,
+    "audio placeholder was allowed to erase published audio after a crash"
+)
+require(
+    PendingPublicationAudioRecoveryPolicy.action(
+        for: audioPlaceholderOperation,
+        savedGreetingAvailable: true
+    ) == .uploadSavedGreeting,
+    "recoverable public greeting was not selected for upload"
+)
+let recoveredAudioRequest = PendingPublicationAudioRecoveryPolicy.uploadedGreetingRequest(
+    for: audioPlaceholderOperation,
+    audioAssetID: "asset-recovered"
+)
+require(
+    recoveredAudioRequest?.card?.hasAudioGreeting == true
+        && recoveredAudioRequest?.audioAssetID == "asset-recovered"
+        && recoveredAudioRequest?.operationID == audioPlaceholderOperation.id,
+    "recovered audio request did not preserve the true+asset backend invariant"
+)
+let audioFreeOperation = PendingSyncOperation(
+    request: SyncRequest(
+        operation: .publishCard,
+        card: audioPlaceholderOperation.request.card.map {
+            var card = $0
+            card.hasAudioGreeting = false
+            return card
+        }
+    ),
+    expiresAt: nil,
+    localCardID: nil
+)
+require(
+    PendingPublicationAudioRecoveryPolicy.action(
+        for: audioFreeOperation,
+        savedGreetingAvailable: false
+    ) == .send,
+    "ordinary audio-free publication was blocked"
+)
 
 var deletionAttempts = ProfileDeletionAttemptOwnership()
 let firstDeletionAttempt = deletionAttempts.begin()
@@ -490,6 +559,55 @@ defer { defaults.removePersistentDomain(forName: suiteName) }
 guard let store = AppGroupSnapshotStore(appGroupIdentifier: suiteName) else {
     fatalError("temporary snapshot store unavailable")
 }
+let journalCard = PersonCard(
+    id: card.id,
+    name: "Journal owner",
+    role: card.role,
+    company: card.company,
+    phone: card.phone,
+    email: card.email,
+    tagline: card.tagline,
+    hasAudioGreeting: true,
+    meetingPlace: card.meetingPlace,
+    isBlocked: false
+)
+let journalOperation = PendingSyncOperation(
+    request: SyncRequest(operation: .publishCard, card: journalCard.exchangeCopy),
+    expiresAt: nil,
+    localCardID: nil
+)
+store.pendingCardPublicationJournal = CardPublicationJournal(
+    card: journalCard,
+    operation: journalOperation
+)
+guard let recoveredStore = AppGroupSnapshotStore(appGroupIdentifier: suiteName) else {
+    fatalError("publication journal recovery store unavailable")
+}
+require(recoveredStore.readOwnCard() == journalCard, "bootstrap did not recover journaled own card")
+require(
+    recoveredStore.pendingOperations == [journalOperation],
+    "bootstrap did not recover the matching durable publication intent"
+)
+require(recoveredStore.pendingCardPublicationJournal == nil, "bootstrap did not clear the recovered journal")
+let atomicallySavedCard = PersonCard(
+    id: card.id,
+    name: "Atomically saved owner",
+    role: card.role,
+    company: card.company,
+    phone: card.phone,
+    email: card.email,
+    tagline: card.tagline,
+    hasAudioGreeting: false,
+    meetingPlace: card.meetingPlace,
+    isBlocked: false
+)
+let atomicallyStaged = try recoveredStore.writeOwnCardAndStagePublication(atomicallySavedCard)
+require(recoveredStore.readOwnCard() == atomicallySavedCard, "atomic save did not commit own card")
+require(
+    recoveredStore.pendingOperations == [atomicallyStaged],
+    "atomic save did not compact to the matching publication intent"
+)
+store.pendingOperations = []
 store.profileDeletionRecord = deletionRecord
 store.profileDeletionPending = true
 store.clearUserData()
@@ -504,6 +622,19 @@ require(
     store.profileDeletionRecord?.serverAcknowledged == true,
     "server acknowledgement was not durably recorded"
 )
+store.pendingPushTokenSyncRecord = pendingPushUpdate
+store.pendingPushTokenSyncRecord = pendingPushRemoval
+require(
+    store.pendingPushTokenSyncRecord == pendingPushRemoval,
+    "APNs removal tore across token/removal/operationID storage"
+)
+require(
+    !store.clearPendingPushTokenSyncRecord(ifCurrent: pendingPushUpdate)
+        && store.pendingPushTokenSyncRecord == pendingPushRemoval,
+    "late APNs update cleanup erased a newer removal"
+)
+require(store.clearPendingPushTokenSyncRecord(ifCurrent: pendingPushRemoval), "current APNs removal did not clear")
+require(store.pendingPushTokenSyncRecord == nil, "cleared APNs record remained durable")
 try store.writeOwnCard(card)
 let crashWindowPublish = PendingSyncOperation(
     request: SyncRequest(operation: .publishCard, card: card.exchangeCopy),

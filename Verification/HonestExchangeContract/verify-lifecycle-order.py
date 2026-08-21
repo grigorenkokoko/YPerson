@@ -238,7 +238,7 @@ ordered(place, "guard isCurrentProfileLifecycle", "snapshotStore?.upsertPerson")
 
 card = source("YPerson/UI/CardViewController.swift")
 save = function_body(card, "func editCard()")
-ordered(save, "let isNew", "reactivateAndStoreUserCreatedCard", "self.card = updatedCard")
+ordered(save, "let isNew", "saveUserCardForPublication", "self.card = updatedCard")
 
 exchange = source("YPerson/UI/ExchangeViewController.swift")
 manual_place = function_body(exchange, "func requestManualMeetingPlace(")
@@ -343,23 +343,24 @@ ordered(
     retry_publish,
     "publicationGate.acquire()",
     "revalidatePendingPublication(operation)",
+    "publicationGreetingProvider?()",
+    "PendingPublicationAudioRecoveryPolicy.action(",
+    "retrySafeRequest(operation.request)",
+    "prepareAudioUpload",
+    "mediaTransfer.upload",
+    "revalidatePendingPublication(operation)",
     "await apiClient.sync(request)",
     "revalidatePendingPublication(operation)",
     "removePendingOperation(id: operation.id)",
 )
+retry_safe = function_body(sync, "private func retrySafeRequest(")
+require(
+    "hasAudioGreeting = false" not in retry_safe,
+    "audio placeholder retry still silently downgrades and erases published audio",
+)
 retry_pending = function_body(sync, "func retryPendingOperations(context:")
 ordered(retry_pending, "operation.request.operation == .publishCard", "retryPendingPublish(")
 
-retry_push = function_body(sync, "func retryPushToken(context:")
-ordered(
-    retry_push,
-    "capturePushTokenOwnership()",
-    "pushTokenGate.acquire()",
-    "isCurrentPushTokenOwnership(ownership)",
-    "await apiClient.sync(request)",
-    "isCurrentPushTokenOwnership(ownership)",
-    "clearPendingOperationID",
-)
 ordered(
     function_body(sync, "func updatePushToken("),
     "await retryPushToken(context: context)",
@@ -431,7 +432,6 @@ ordered(
     "contactReconciliation.beginProfileDeletion()",
     "audioTask?.cancel()",
     "moderationTasks.values.forEach",
-    "return invalidation",
 )
 
 privacy_source = source("YPerson/UI/PrivacyViewController.swift")
@@ -474,20 +474,22 @@ ordered(
 
 contacts = source("YPerson/UI/ContactReconciliationPresenter.swift")
 contact_start = function_body(contacts, "func start(")
-ordered(contact_start, "guard profileLifecycle.isActive", "sessionFence.begin()", "dismissOwnedUI()", "isCurrent(session)", "explainPermission")
+ordered(contact_start, "guard profileLifecycle.isActive", "commitBarrier.beginSession()", "dismissOwnedUI()", "isCurrent(session)", "explainPermission")
 contact_apply = function_body(contacts, "func apply(")
-ordered(contact_apply, "isCurrent(session)", "permissions.apply(", "session: session", "sessionFence: sessionFence")
+ordered(contact_apply, "isCurrent(session)", "permissions.apply(", "session: session", "commitBarrier: commitBarrier")
 contact_invalidate = function_body(contacts, "func beginProfileDeletion()")
 ordered(
     contact_invalidate,
-    "sessionFence.beginInvalidation()",
     "profileLifecycle.beginDeletion()",
+    "commitBarrier.invalidateSession",
     "dismissOwnedUI()",
-    "return invalidation",
 )
 contact_reactivation = function_body(contacts, "func applyProfileReactivation()")
 ordered(contact_reactivation, "profileLifecycle.reactivateForUserCreation()")
 require("waitForInFlightCommits" not in contact_invalidate, "Contacts presenter blocks while invalidating UI")
+contact_deinit = function_body(contacts, "deinit")
+ordered(contact_deinit, "commitBarrier.invalidateSession")
+require("beginDeletion" not in contact_deinit, "presenter deinit begins/discards the global deletion wait")
 contract = source("YPerson/Domain/ExchangeContract.swift")
 require("NSCondition" not in contract, "Contacts invalidation still uses a blocking condition wait")
 for signature, minimum_guards in (
@@ -516,10 +518,10 @@ permission_center = source("YPerson/Permissions/PermissionCenter.swift")
 permission_apply = function_body(permission_center, "func apply(\n")
 ordered(
     permission_apply,
-    "sessionFence.performCommit(for: session)",
+    "commitBarrier.performCommit(for: session)",
     "contactStore.execute(request)",
 )
-contact_commit = function_body(permission_apply, "sessionFence.performCommit(for: session)")
+contact_commit = function_body(permission_apply, "commitBarrier.performCommit(for: session)")
 require(
     contact_commit.count("contactStore.execute(request)") == 1,
     "CNContactStore.execute is not enclosed exactly once by the session commit fence",
@@ -527,7 +529,7 @@ require(
 
 people_source = source("YPerson/UI/PeopleViewController.swift")
 people_deletion = function_body(people_source, "func beginProfileDeletion()")
-ordered(people_deletion, "contactReconciliation.beginProfileDeletion()", "lifecycleGeneration = UUID()", "return invalidation")
+ordered(people_deletion, "contactReconciliation.beginProfileDeletion()", "lifecycleGeneration = UUID()")
 people_reactivation = function_body(people_source, "func applyProfileReactivation()")
 ordered(people_reactivation, "lifecycleGeneration = UUID()", "contactReconciliation.applyProfileReactivation()")
 
@@ -550,20 +552,104 @@ require("cancelBootstrapTask" not in recovery_bootstrap, "foreground recovery re
 deletion_preparation = function_body(app_factory, "syncCoordinator.onProfileDeletionPreparation =")
 ordered(
     deletion_preparation,
+    "contactCommitBarrier.beginDeletion()",
     "people?.beginProfileDeletion()",
-    "personControllers.map",
+    "personControllers.forEach",
     "cancelActiveBootstrapTask()",
-    "await invalidation.waitForInFlightCommits()",
+    "await contactInvalidation.waitForInFlightCommits()",
 )
 require(
-    deletion_preparation.find("personControllers.map") < deletion_preparation.find("await "),
+    deletion_preparation.find("personControllers.forEach") < deletion_preparation.find("await "),
     "AppFactory awaits before every Person Contacts session is invalidated",
 )
 reactivation = function_body(app_factory, "syncCoordinator.onProfileReactivated =")
 ordered(
     reactivation,
+    "contactCommitBarrier.reactivateForUserCreation()",
     "people?.applyProfileReactivation()",
     "privacy?.applyProfileReactivation()",
+)
+make_root = function_body(app_factory, "func makeRootViewController(")
+ordered(
+    make_root,
+    "audio.restoreSavedPublicGreetingIfAvailable(",
+    "syncCoordinator.publicationGreetingProvider =",
+    "refreshPeople()",
+)
+
+audio_controller = source("YPerson/Features/AudioGreetingController.swift")
+require(
+    ".applicationSupportDirectory" in audio_controller,
+    "saved public greeting remains in purgeable Caches storage",
+)
+require(
+    "isExcludedFromBackup" in audio_controller,
+    "durable local greeting would be included in device backups",
+)
+ordered(
+    audio_controller,
+    "legacyRecordingURL",
+    "migrateLegacyRecordingIfNeeded",
+    "restoreSavedPublicGreetingIfAvailable",
+)
+
+card_source = source("YPerson/UI/CardViewController.swift")
+card_save = function_body(card_source, "@objc private func editCard()")
+ordered(
+    card_save,
+    "syncCoordinator.saveUserCardForPublication(",
+    "captureProfileOperationContext()",
+    "publishTask = Task",
+)
+require(
+    "snapshotStore.writeOwnCard(updatedCard)" not in card_save,
+    "Card save still writes locally before a durable publication intent exists",
+)
+
+store_source = source("YPerson/Storage/AppGroupSnapshotStore.swift")
+atomic_save = function_body(store_source, "func writeOwnCardAndStagePublication(")
+ordered(
+    atomic_save,
+    "defaults.set(try encoder.encode(journal)",
+    "recoverPendingCardPublication()",
+)
+recover_publication = function_body(store_source, "func recoverPendingCardPublication()")
+ordered(
+    recover_publication,
+    "writeOwnCard(journal.card)",
+    "enqueue(journal.operation)",
+    "pendingCardPublicationJournal = nil",
+)
+
+audio_recovery_request = function_body(
+    source("YPerson/Domain/ExchangeContract.swift"),
+    "static func uploadedGreetingRequest(",
+)
+ordered(
+    audio_recovery_request,
+    "operation.request.card",
+    "hasAudioGreeting == true",
+    "audioAssetID: audioAssetID",
+)
+require(
+    "request.card" not in function_body(sync, "func retryPendingPublish(")[
+        function_body(sync, "func retryPendingPublish(").find("case .uploadSavedGreeting"):
+    ],
+    "audio recovery rebuilds from a lossy rewritten request",
+)
+
+require(
+    "pendingAPNSToken" not in sync and "pendingAPNSRemoval" not in sync,
+    "SyncCoordinator still assembles APNs ownership from tearable keys",
+)
+retry_push = function_body(sync, "func retryPushToken(context:")
+ordered(
+    retry_push,
+    "pendingPushTokenSyncRecord",
+    "pushTokenGate.acquire()",
+    "pendingPushTokenSyncRecord == record",
+    "await apiClient.sync(request)",
+    "clearPendingPushTokenSyncRecord(ifCurrent: record)",
 )
 
 print("honest-exchange-lifecycle-order-pass")
