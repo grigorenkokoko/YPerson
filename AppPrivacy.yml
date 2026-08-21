@@ -31,6 +31,12 @@ approval_log:
     actor: user
     authorized_next_stage: implementation
     evidence_summary: user approved replacing the update-count widget with a QR-scanner shortcut and authorized implementation after the written spec
+  - stage: design
+    decision: approved
+    timestamp_utc: "2026-08-21T07:59:45Z"
+    actor: user
+    authorized_next_stage: implementation
+    evidence_summary: user approved the recipient-specific private-phone and server-issued short-code design after reviewing the written specification
 
 implementation_verification:
   timestamp_utc: "2026-08-17T22:17:46Z"
