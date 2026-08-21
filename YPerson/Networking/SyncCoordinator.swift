@@ -293,15 +293,16 @@ final class SyncCoordinator {
 
     func dismissPublicReply(id: String) async throws {
         guard !syncSuppressed else { throw CoordinatorError.deletionInProgress }
+        guard let snapshotStore else { throw CoordinatorError.localStorageUnavailable }
         guard let apiClient else { throw CoordinatorError.noProfile }
         let request = SyncRequest(operation: .dismissPublicReply, publicReplyID: id)
-        snapshotStore?.enqueue(
+        snapshotStore.enqueue(
             PendingSyncOperation(request: request, expiresAt: nil, localCardID: nil)
         )
         let response = try await apiClient.sync(request)
         guard response.accepted else { throw APIClient.ClientError.invalidResponse }
         try apply(response)
-        snapshotStore?.removePendingOperation(id: request.operationID)
+        snapshotStore.removePendingOperation(id: request.operationID)
     }
 
     func updatePushToken(_ token: String?) async {

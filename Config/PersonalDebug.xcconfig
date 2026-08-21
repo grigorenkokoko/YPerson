@@ -1,0 +1,4 @@
+#include "Debug.xcconfig"
+
+YP_PRODUCT_BUNDLE_IDENTIFIER = com.kategrigorenko.yperson
+APP_GROUP_IDENTIFIER = group.com.kategrigorenko.yperson
