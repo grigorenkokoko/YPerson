@@ -19,7 +19,7 @@ elif [[ $# -ne 0 ]]; then
 fi
 
 if [[ -z "${ZXING_CORE_JAR:-}" ]]; then
-  echo "Set ZXING_CORE_JAR to a local ZXing core 3.5.3 jar for fail-closed PNG decoding" >&2
+  echo "Set ZXING_CORE_JAR to a compatible local ZXing Core jar for fail-closed PNG decoding" >&2
   exit 65
 fi
 [[ -f "$ZXING_CORE_JAR" ]] || {

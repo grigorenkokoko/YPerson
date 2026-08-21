@@ -5,11 +5,11 @@ All identities and contact details below are fictional.
 ## Offline public QR card
 
 - File: `test-qr.png`; its exact deterministic source is `offline-public-qr-payload.txt`.
-- Payload: canonical `yperson:v2:` data accepted by the production decoder for the fictional Alexey Morozov (`Product Lead`, `North Star`). It contains no phone, private fields, meeting place, exchange token, or expiry.
-- Path: Exchange → Scan QR → continue from the camera pre-prompt → scan the PNG displayed on another screen → review Alexey Morozov → Add person.
+- Payload: canonical `yperson:v2:` data accepted by the production decoder for the fictional Dmitry Volkov (`Tech Lead`, `Signal Garden`). This identity is separate from every Debug-only screenshot fixture. The payload contains no phone, private fields, meeting place, exchange token, or expiry.
+- Path: Exchange → Scan QR → continue from the camera pre-prompt → scan the PNG displayed on another screen → review Dmitry Volkov → Add person.
 - Expected: the preview identifies the import as offline. Saving adds the public card only to this iPhone; it does not establish a cloud connection because the payload has no exchange token.
 
-The fixture can be regenerated and checked with `verify-offline-public-qr.sh --write`. Verification compiles the real production models/codec and requires `ZXING_CORE_JAR` pointing to a local ZXing Core 3.5.3 jar, so PNG decoding fails closed when an independent decoder is unavailable.
+The fixture can be regenerated and checked with `verify-offline-public-qr.sh --write`. Verification compiles the real production models/codec and requires `ZXING_CORE_JAR` pointing to a compatible local ZXing Core jar, so PNG decoding fails closed when an independent decoder is unavailable.
 
 ## Runtime manual-code path
 

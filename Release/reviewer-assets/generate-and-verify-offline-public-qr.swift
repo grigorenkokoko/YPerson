@@ -23,13 +23,13 @@ private enum AssetFailure: Error, CustomStringConvertible {
 private enum OfflinePublicQRAssetTool {
     private static let expectedIssuerInstallationID = "11111111-2222-4333-8444-555555555555"
     private static let expectedCard = PersonCard(
-        id: "person-review-alexey",
-        name: "Алексей Морозов",
-        role: "Product Lead",
-        company: "North Star",
+        id: "person-review-dmitry",
+        name: "Дмитрий Волков",
+        role: "Tech Lead",
+        company: "Signal Garden",
         phone: "",
-        email: "alexey@example.com",
-        tagline: "Создаю продукты, которые соединяют людей.",
+        email: "dmitry@example.net",
+        tagline: "Создаю понятные и доступные продукты.",
         hasAudioGreeting: false,
         meetingPlace: nil,
         isBlocked: false,
