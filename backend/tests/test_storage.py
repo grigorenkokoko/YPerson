@@ -914,15 +914,15 @@ def test_delete_private_state_and_profile_replays_without_recreating_installatio
                 ),
             ]
         if 'operation_type = "deleteProfile"' in query and "result_json" in query:
+            row = {
+                "operation_id": "op-delete-1",
+                "operation_type": "deleteProfile",
+                "result_json": json.dumps(deletion_result),
+            }
             return [
-                ResultSet(
-                    [
-                        {
-                            "operation_type": "deleteProfile",
-                            "result_json": json.dumps(deletion_result),
-                        }
-                    ]
-                )
+                ResultSet([]),
+                ResultSet([row]),
+                ResultSet([row]),
             ]
         return [ResultSet([])]
 
@@ -2149,17 +2149,15 @@ def test_noncanonical_persisted_delete_digest_is_storage_integrity_failure(
     stored_digest: str,
 ) -> None:
     def read_handler(_query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        row = {
+            "operation_id": "op-delete-corrupt",
+            "operation_type": "deleteProfile",
+            "result_json": json.dumps({"credentialHash": stored_digest, "objectKeys": []}),
+        }
         return [
-            ResultSet(
-                [
-                    {
-                        "operation_type": "deleteProfile",
-                        "result_json": json.dumps(
-                            {"credentialHash": stored_digest, "objectKeys": []}
-                        ),
-                    }
-                ]
-            )
+            ResultSet([]),
+            ResultSet([row]),
+            ResultSet([row]),
         ]
 
     store = YDBSyncStore(  # type: ignore[arg-type]
@@ -2182,15 +2180,15 @@ def test_replayed_delete_rejects_empty_persisted_object_key(invalid_object_key: 
     }
 
     def read_handler(_query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        row = {
+            "operation_id": "op-delete-corrupt",
+            "operation_type": "deleteProfile",
+            "result_json": json.dumps(result),
+        }
         return [
-            ResultSet(
-                [
-                    {
-                        "operation_type": "deleteProfile",
-                        "result_json": json.dumps(result),
-                    }
-                ]
-            )
+            ResultSet([]),
+            ResultSet([row]),
+            ResultSet([row]),
         ]
 
     store = YDBSyncStore(  # type: ignore[arg-type]
@@ -2201,6 +2199,157 @@ def test_replayed_delete_rejects_empty_persisted_object_key(invalid_object_key: 
         store.replay_deleted_profile(
             "installation-owner",
             "op-delete-corrupt",
+            "owner-secret",
+        )
+
+
+def test_delete_replay_recovers_unique_prior_operation_for_same_credential() -> None:
+    result = {
+        "credentialHash": sha256(b"owner-secret").hexdigest(),
+        "objectKeys": ["private/post-ack-window.m4a"],
+    }
+
+    def read_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "SELECT installation_id FROM installations" not in query:
+            return [ResultSet([])]
+        prior = {
+            "operation_id": "delete-op-lost-after-server-ack",
+            "operation_type": "deleteProfile",
+            "result_json": json.dumps(result),
+        }
+        return [ResultSet([]), ResultSet([]), ResultSet([prior])]
+
+    store = YDBSyncStore(  # type: ignore[arg-type]
+        ScriptedPool(transaction_handler=lambda _query, _parameters: [], read_handler=read_handler)
+    )
+
+    assert store.replay_deleted_profile(
+        "installation-owner",
+        "delete-op-recreated-by-migration",
+        "owner-secret",
+    ) == ["private/post-ack-window.m4a"]
+
+
+def test_delete_recovery_rejects_wrong_bearer_and_wrong_installation() -> None:
+    result = {
+        "credentialHash": sha256(b"owner-secret").hexdigest(),
+        "objectKeys": [],
+    }
+
+    def read_handler(_query: str, parameters: dict[str, Any]) -> list[ResultSet]:
+        if _parameter(parameters, "$installation_id") != "installation-owner":
+            return [ResultSet([]), ResultSet([]), ResultSet([])]
+        prior = {
+            "operation_id": "delete-op-original",
+            "operation_type": "deleteProfile",
+            "result_json": json.dumps(result),
+        }
+        return [ResultSet([]), ResultSet([]), ResultSet([prior])]
+
+    store = YDBSyncStore(  # type: ignore[arg-type]
+        ScriptedPool(transaction_handler=lambda _query, _parameters: [], read_handler=read_handler)
+    )
+
+    with pytest.raises(InvalidCredential):
+        store.replay_deleted_profile(
+            "installation-owner",
+            "delete-op-recreated",
+            "wrong-owner-secret",
+        )
+    assert (
+        store.replay_deleted_profile(
+            "installation-not-owner",
+            "delete-op-recreated",
+            "owner-secret",
+        )
+        is None
+    )
+
+
+def test_delete_recovery_rejects_active_profile_with_a_stale_tombstone() -> None:
+    prior = {
+        "operation_id": "delete-op-original",
+        "operation_type": "deleteProfile",
+        "result_json": json.dumps(
+            {"credentialHash": sha256(b"owner-secret").hexdigest(), "objectKeys": []}
+        ),
+    }
+
+    def read_handler(_query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        return [
+            ResultSet([{"installation_id": "installation-owner"}]),
+            ResultSet([]),
+            ResultSet([prior]),
+        ]
+
+    store = YDBSyncStore(  # type: ignore[arg-type]
+        ScriptedPool(transaction_handler=lambda _query, _parameters: [], read_handler=read_handler)
+    )
+
+    with pytest.raises(StorageIntegrityError):
+        store.replay_deleted_profile(
+            "installation-owner",
+            "delete-op-recreated",
+            "owner-secret",
+        )
+
+
+def test_delete_recovery_rejects_an_operation_id_used_by_another_type() -> None:
+    exact = {
+        "operation_id": "delete-op-recreated",
+        "operation_type": "publishCard",
+        "result_json": json.dumps({"version": 1}),
+    }
+    prior = {
+        "operation_id": "delete-op-original",
+        "operation_type": "deleteProfile",
+        "result_json": json.dumps(
+            {"credentialHash": sha256(b"owner-secret").hexdigest(), "objectKeys": []}
+        ),
+    }
+
+    def read_handler(_query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        return [ResultSet([]), ResultSet([exact]), ResultSet([prior])]
+
+    store = YDBSyncStore(  # type: ignore[arg-type]
+        ScriptedPool(transaction_handler=lambda _query, _parameters: [], read_handler=read_handler)
+    )
+
+    with pytest.raises(StorageConflict):
+        store.replay_deleted_profile(
+            "installation-owner",
+            "delete-op-recreated",
+            "owner-secret",
+        )
+
+
+@pytest.mark.parametrize("failure", ["malformed", "malformed-operation-id", "ambiguous"])
+def test_delete_recovery_rejects_malformed_or_ambiguous_tombstones(failure: str) -> None:
+    valid = {
+        "operation_id": "delete-op-original",
+        "operation_type": "deleteProfile",
+        "result_json": json.dumps(
+            {"credentialHash": sha256(b"owner-secret").hexdigest(), "objectKeys": []}
+        ),
+    }
+    malformed = valid | {"result_json": "not-json"}
+    candidates_by_failure = {
+        "malformed": [malformed],
+        "malformed-operation-id": [valid | {"operation_id": ""}],
+        "ambiguous": [valid, valid | {"operation_id": "delete-op-second"}],
+    }
+
+    def read_handler(_query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        return [ResultSet([]), ResultSet([]), ResultSet(candidates_by_failure[failure])]
+
+    store = YDBSyncStore(  # type: ignore[arg-type]
+        ScriptedPool(transaction_handler=lambda _query, _parameters: [], read_handler=read_handler)
+    )
+
+    with pytest.raises(StorageIntegrityError):
+        store.replay_deleted_profile(
+            "installation-owner",
+            "delete-op-recreated",
             "owner-secret",
         )
 

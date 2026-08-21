@@ -128,4 +128,10 @@ class SyncStore(Protocol):
         operation_id: str,
         bearer: str,
     ) -> list[str] | None:
-        """Authenticate and replay a completed deletion without bootstrapping state."""
+        """Authenticate and replay one unambiguous completed deletion tombstone.
+
+        An adapter may recover a unique prior deletion when a migrated client
+        retains the original installation credential but lost its operation ID.
+        Active installations and ambiguous persisted deletion state must never
+        be treated as completed deletions.
+        """

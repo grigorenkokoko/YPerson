@@ -295,8 +295,23 @@ class MemoryStore:
         bearer: str,
     ) -> list[str] | None:
         deleted = self.deleted.get((installation_id, operation_id))
-        if deleted is None:
+        candidates = [
+            candidate
+            for (candidate_installation_id, _), candidate in self.deleted.items()
+            if candidate_installation_id == installation_id
+        ]
+        if installation_id in self.installations:
+            if candidates:
+                raise StorageIntegrityError
             return None
+        if deleted is None:
+            if (installation_id, operation_id) in self.operation_results:
+                raise StorageConflict("operation identifier already used")
+            if len(candidates) > 1:
+                raise StorageIntegrityError
+            if not candidates:
+                return None
+            deleted = candidates[0]
         if not compare_digest(deleted[0], sha256(bearer.encode()).digest()):
             raise InvalidCredential
         return list(deleted[1])
@@ -890,6 +905,65 @@ def test_delete_profile_replays_cleanup_without_recreating_installation() -> Non
     assert cleaned == [
         ["private/object-key-sentinel"],
         ["private/object-key-sentinel"],
+    ]
+
+
+def test_delete_profile_with_new_operation_deletes_an_active_installation() -> None:
+    store = MemoryStore()
+    cleaned: list[list[str]] = []
+    store.object_keys[OWNER[0]] = ["private/pre-enqueue-window.m4a"]
+    with make_client(store, cleaned=cleaned) as client:
+        bootstrap = post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-delete")
+        response = post_sync(
+            client,
+            OWNER,
+            "deleteProfile",
+            operation_id="delete-op-after-pre-enqueue-crash",
+        )
+
+    assert bootstrap.status_code == 200
+    assert response.status_code == 200
+    assert store.snapshot(OWNER[0]) is None
+    assert cleaned == [["private/pre-enqueue-window.m4a"]]
+
+
+def test_delete_profile_with_new_operation_replays_a_lost_prior_deletion() -> None:
+    store = MemoryStore()
+    cleaned: list[list[str]] = []
+    store.object_keys[OWNER[0]] = ["private/post-ack-window.m4a"]
+    with make_client(store, cleaned=cleaned) as client:
+        bootstrap = post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-replay")
+        original = post_sync(
+            client,
+            OWNER,
+            "deleteProfile",
+            operation_id="delete-op-lost-after-server-ack",
+        )
+        recovered = post_sync(
+            client,
+            OWNER,
+            "deleteProfile",
+            operation_id="delete-op-recreated-by-migration",
+        )
+        wrong_bearer = post_sync(
+            client,
+            (OWNER[0], "wrong-bearer-secret-00000000000000000000000"),
+            "deleteProfile",
+            operation_id="delete-op-recreated-by-migration",
+        )
+        wrong_installation = post_sync(
+            client,
+            ("installation-not-owner", OWNER[1]),
+            "deleteProfile",
+            operation_id="delete-op-recreated-by-migration",
+        )
+
+    assert bootstrap.status_code == original.status_code == recovered.status_code == 200
+    assert wrong_bearer.status_code == wrong_installation.status_code == 401
+    assert store.snapshot(OWNER[0]) is None
+    assert cleaned == [
+        ["private/post-ack-window.m4a"],
+        ["private/post-ack-window.m4a"],
     ]
 
 

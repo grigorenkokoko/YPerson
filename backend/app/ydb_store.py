@@ -1262,26 +1262,55 @@ class YDBSyncStore:
         operation_id: str,
         bearer: str,
     ) -> list[str] | None:
-        rows = self._execute(
+        installation_rows, exact_rows, deletion_rows = self._execute(
             """
             DECLARE $installation_id AS Utf8;
             DECLARE $operation_id AS Utf8;
-            SELECT operation_type, result_json
+
+            SELECT installation_id FROM installations
+            WHERE installation_id = $installation_id;
+
+            SELECT operation_id, operation_type, result_json
             FROM operations
             WHERE installation_id = $installation_id
-              AND operation_id = $operation_id
+              AND operation_id = $operation_id;
+
+            SELECT operation_id, operation_type, result_json
+            FROM operations
+            WHERE installation_id = $installation_id
               AND operation_type = "deleteProfile"u;
             """,
             {
                 "$installation_id": _utf8(installation_id),
                 "$operation_id": _utf8(operation_id),
             },
-        )[0]
-        if not rows:
-            return None
-        if len(rows) != 1:
+        )
+        if len(installation_rows) > 1 or len(exact_rows) > 1 or len(deletion_rows) > 1:
             raise StorageIntegrityError
-        result = _stored_json(rows[0], "result_json")
+        if installation_rows:
+            if deletion_rows:
+                raise StorageIntegrityError
+            return None
+
+        if exact_rows:
+            exact = exact_rows[0]
+            if _stored_text(exact, "operation_type") != "deleteProfile":
+                raise StorageConflict("operation identifier already used")
+            if not deletion_rows:
+                raise StorageIntegrityError
+            deletion = deletion_rows[0]
+            if _stored_text(deletion, "operation_id") != _stored_text(exact, "operation_id"):
+                raise StorageIntegrityError
+        elif deletion_rows:
+            deletion = deletion_rows[0]
+        else:
+            return None
+
+        if not _stored_text(deletion, "operation_id").strip():
+            raise StorageIntegrityError
+        if _stored_text(deletion, "operation_type") != "deleteProfile":
+            raise StorageIntegrityError
+        result = _stored_json(deletion, "result_json")
         stored_hash = _stored_digest(result, "credentialHash")
         if not compare_digest(stored_hash, _digest(bearer)):
             raise InvalidCredential
