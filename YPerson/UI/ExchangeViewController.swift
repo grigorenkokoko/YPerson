@@ -212,7 +212,11 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             prepareTask = Task { [weak self] in
                 guard let self else { return }
                 do {
-                    let token = try await syncCoordinator.prepareExchange(card: card, method: "bluetooth")
+                    let token = try await syncCoordinator.prepareExchange(
+                        card: card,
+                        method: "bluetooth",
+                        greeting: audio.savedGreeting()
+                    )
                     try Task.checkCancellation()
                     guard viewIfLoaded?.window != nil else { throw CancellationError() }
                     preparedToken = token

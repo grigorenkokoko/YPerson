@@ -137,9 +137,17 @@ final class SyncCoordinator {
         }
     }
 
-    func prepareExchange(card: PersonCard, method: String) async throws -> String {
+    func prepareExchange(
+        card: PersonCard,
+        method: String,
+        greeting: RecordedGreeting? = nil
+    ) async throws -> String {
         guard !syncSuppressed else {
             throw CoordinatorError.deletionInProgress
+        }
+        if let greeting,
+           await publish(card, greeting: greeting) == nil {
+            throw CoordinatorError.ownCardNotPublished
         }
         guard let apiClient else { throw CoordinatorError.noProfile }
         let response = try await apiClient.sync(
