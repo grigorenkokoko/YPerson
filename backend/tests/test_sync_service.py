@@ -306,14 +306,15 @@ class MemoryStore:
             if candidates:
                 raise StorageIntegrityError
             return None
+        operation_collision = (installation_id, operation_id) in self.operation_results
         if deleted is None:
-            if (installation_id, operation_id) in self.operation_results:
-                raise StorageConflict("operation identifier already used")
             if not candidates:
                 return None
             deleted = candidates[0]
         if not compare_digest(deleted[0], sha256(bearer.encode()).digest()):
             raise InvalidCredential
+        if operation_collision:
+            raise StorageConflict("operation identifier already used")
         return list(deleted[1])
 
     def snapshot(self, installation_id: str) -> SimpleNamespace | None:
@@ -1016,6 +1017,29 @@ def test_memory_store_rejects_ambiguous_tombstones_even_for_an_exact_replay() ->
 
     with pytest.raises(StorageIntegrityError):
         store.replay_deleted_profile(OWNER[0], "delete-op-exact", OWNER[1])
+
+
+def test_memory_store_authenticates_tombstone_before_revealing_exact_collision() -> None:
+    store = MemoryStore()
+    credential_hash = sha256(OWNER[1].encode()).digest()
+    store.deleted[(OWNER[0], "delete-op-original")] = (credential_hash, [])
+    store.operation_results[(OWNER[0], "delete-op-collision")] = {"operation": "publishCard"}
+    with make_client(store) as client:
+        wrong_bearer = post_sync(
+            client,
+            (OWNER[0], "wrong-bearer-secret-00000000000000000000000"),
+            "deleteProfile",
+            operation_id="delete-op-collision",
+        )
+        matching_bearer = post_sync(
+            client,
+            OWNER,
+            "deleteProfile",
+            operation_id="delete-op-collision",
+        )
+
+    assert wrong_bearer.status_code == 401
+    assert matching_bearer.status_code == 409
 
 
 def test_delete_with_private_objects_fails_closed_without_cleanup_service() -> None:
