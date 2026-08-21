@@ -78,7 +78,7 @@ jobs:
           echo "${RUNNER_TEMP}/yandex-cloud/bin" >> "${GITHUB_PATH}"
           "${RUNNER_TEMP}/yandex-cloud/bin/yc" version
 
-      - name: Apply YDB schema
+      - name: Apply YDB schema v2
         env:
           YDB_ENDPOINT: ${{ vars.YDB_ENDPOINT }}
           YDB_DATABASE: ${{ vars.YDB_DATABASE }}
@@ -96,6 +96,8 @@ jobs:
           YPERSON_CONFIG_VERSION: ${{ vars.YPERSON_CONFIG_VERSION }}
           YPERSON_PRIVACY_URL: ${{ vars.YPERSON_PRIVACY_URL }}
           YPERSON_SUPPORT_URL: ${{ vars.YPERSON_SUPPORT_URL }}
+          YPERSON_APP_STORE_ID: ${{ vars.YPERSON_APP_STORE_ID }}
+          YPERSON_APPLE_APPLICATION_IDENTIFIER: ${{ vars.YPERSON_APPLE_APPLICATION_IDENTIFIER }}
           YDB_ENDPOINT: ${{ vars.YDB_ENDPOINT }}
           YDB_DATABASE: ${{ vars.YDB_DATABASE }}
           YPERSON_OBJECT_BUCKET: ${{ vars.YPERSON_OBJECT_BUCKET }}

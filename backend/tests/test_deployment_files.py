@@ -347,3 +347,68 @@ def test_public_sharing_gateway_and_apple_configuration_are_deployable() -> None
         environment["YPERSON_APPLE_APPLICATION_IDENTIFIER"]
         == "Q7A52Z2TS2.com.yperson.app"
     )
+
+
+def test_apple_configuration_reaches_the_serverless_container_revision() -> None:
+    """Dropping either workflow or runtime wiring silently disables Apple web features."""
+
+    workflow = yaml.load(
+        (ROOT / ".github/workflows/deploy-serverless.yml").read_text(),
+        Loader=yaml.BaseLoader,
+    )
+    deploy_step = next(
+        step
+        for step in workflow["jobs"]["deploy"]["steps"]
+        if step.get("name") == "Deploy HTTP revision"
+    )
+    assert deploy_step["env"]["YPERSON_APP_STORE_ID"] == (
+        "${{ vars.YPERSON_APP_STORE_ID }}"
+    )
+    assert deploy_step["env"]["YPERSON_APPLE_APPLICATION_IDENTIFIER"] == (
+        "${{ vars.YPERSON_APPLE_APPLICATION_IDENTIFIER }}"
+    )
+
+    deploy_script = (ROOT / "deploy/yandex/serverless/deploy.sh").read_text()
+    runtime_environment_match = re.search(
+        r'--environment "(?P<environment>[^"]+)"', deploy_script
+    )
+    assert runtime_environment_match is not None
+    runtime_environment = dict(
+        entry.split("=", maxsplit=1)
+        for entry in runtime_environment_match.group("environment").split(",")
+    )
+    assert runtime_environment["YPERSON_APP_STORE_ID"] == "${YPERSON_APP_STORE_ID}"
+    assert runtime_environment["YPERSON_APPLE_APPLICATION_IDENTIFIER"] == (
+        "${YPERSON_APPLE_APPLICATION_IDENTIFIER}"
+    )
+    assert (
+        'YPERSON_APPLE_APPLICATION_IDENTIFIER="${YPERSON_APPLE_APPLICATION_IDENTIFIER:-'
+        'Q7A52Z2TS2.com.yperson.app}"'
+    ) in deploy_script
+
+    required_block = re.search(
+        r"required=\(\n(?P<values>.*?)\n\)", deploy_script, re.DOTALL
+    )
+    assert required_block is not None
+    assert "YPERSON_APP_STORE_ID" not in required_block.group("values").split()
+
+
+def test_schema_v2_is_documented_and_applied_before_deployment() -> None:
+    """A generic or late schema step can route traffic before v2 is available."""
+
+    required_order = "YDB schema v2 before backend code and API Gateway traffic"
+    for relative_path in (
+        "deploy/yandex/serverless/README.md",
+        "Release/review-notes.md",
+        "Release/manual-device-checks.md",
+    ):
+        assert required_order in (ROOT / relative_path).read_text()
+
+    workflow = yaml.load(
+        (ROOT / ".github/workflows/deploy-serverless.yml").read_text(),
+        Loader=yaml.BaseLoader,
+    )
+    step_names = [step.get("name") for step in workflow["jobs"]["deploy"]["steps"]]
+    assert step_names.index("Apply YDB schema v2") < step_names.index(
+        "Deploy HTTP revision"
+    )
