@@ -1,20 +1,14 @@
 # YPerson Honest Exchange — final local verification
 
-Recorded at `2026-08-21T10:46:01Z` on branch `codex/honest-exchange`.
+Recorded at `2026-08-21T16:26:13Z` on branch `codex/honest-exchange`.
 
-Verification baseline: `b984b554154256c34eac562a79d1287d0cd0a40d` (`style: format honest exchange backend`).
+Verification baseline: `eae256521846bcb1f543d1b16bc21e578d854565` (`fix: harden nearby and audio card commits`).
 
 ## Release status
 
-The Honest Exchange implementation is locally automated-verification complete. The product remains `implementation-verified`, not `archive-validated` and not `release-ready`. `Release/release-manifest.json` remains `releaseReady: false`; no readiness flag or existing blocker was removed.
+The Honest Exchange implementation passed the final integrated local gate on the exact baseline above. The product remains `implementation-verified`, not `archive-validated` and not `release-ready`. `Release/release-manifest.json` remains `releaseReady: false`; no readiness flag or existing external blocker was removed.
 
-This evidence covers local backend tests and linting, a Foundation-only Swift contract harness, unsigned Debug and Release generic-iOS-Simulator builds, exact product inspection, source/privacy scans, branch whitespace validation, and an exact Release binary sentinel scan. It does not constitute live YDB, deployment, device, signing, archive, or App Store evidence.
-
-## Verification history
-
-The first independent Task 8 run started from `d8e873f95e598d00935cd3aad3c10c394cc9850e`. The complete backend suite passed with `207 passed, 1 warning`, and Ruff check passed, but the required Ruff format check failed: exactly `backend/app/schemas.py`, `backend/app/sync_service.py`, `backend/app/ydb_store.py`, and `backend/tests/test_storage.py` required formatting. Task 8 was stopped without PASS checkboxes or an evidence commit.
-
-Formatting was then applied in the separate, formatting-only integration commit `b984b554154256c34eac562a79d1287d0cd0a40d`. Every required command below was rerun from scratch on that baseline; none of the earlier gate results was reused.
+This evidence covers backend tests and formatting, the repository Foundation contract runner, unsigned Debug and Release generic-iOS-Simulator arm64 builds, all four built products, fail-closed privacy/source/manual-code/reviewer-QR/binary scans, privacy manifests, tracked JSON/YAML parsing, and branch/worktree validation. It is not live YDB, deployment, physical-device, signing, archive, or App Store evidence.
 
 ## Automated PASS
 
@@ -24,7 +18,7 @@ Formatting was then applied in the separate, formatting-only integration commit 
 /Users/grigornkokoko/YPerson/backend/.venv/bin/python -m pytest -q backend/tests
 ```
 
-Result: exit `0`; `207 passed, 1 warning in 13.36s`.
+Result: exit `0`; `274 passed, 1 warning in 11.27s`.
 
 The single warning is the existing warning below; there were no test failures:
 
@@ -44,157 +38,106 @@ Result: exit `0`; `All checks passed!`.
 
 Result: exit `0`; `25 files already formatted`.
 
-Toolchain observed for this run: Python `3.12.14`; Ruff `0.16.3`.
+Toolchain: Python `3.12.14`; Ruff `0.16.3`.
 
-### Swift contract harness
-
-The reproducible harness now lives in the repository at `Verification/HonestExchangeContract/`. Version 8 compiles real Foundation production sources and covers public/private projection, manual-code normalization, typed credential exclusivity/routing, public QR, public-only Bluetooth policy, single-use manual consent, App Group persistence policy, crash-safe deletion-record survival, profile-operation contexts across deletion/recreation, non-self-cancelling deletion-bootstrap ownership, a builder-lifetime asynchronous Contacts commit barrier that includes orphaned presenters, Contacts reactivation after explicit card creation, a crash-recoverable own-card/publication journal, credential creation only for a recovered durable publication, audio-placeholder recovery without a false/no-asset downgrade, explicit card-save-gated promotion from a non-public draft to a committed public greeting, committed/draft playback selection, the recovered true-card/asset backend invariant, one-record APNs update/removal ownership, late-publication local-card fencing, exact deletion-attempt cleanup, scanner-launch reset, lifecycle transitions, transfer-generation invalidation, legacy sensitive-queue cleanup, and ordered async commit fences in UIKit/coordinator/media sources.
+### Repository contract runner
 
 ```bash
 Verification/HonestExchangeContract/run.sh
 ```
 
-The earlier Task 8 PASS below was produced by the historical `/tmp` harness and remains historical evidence. The repository v8 command, its `PYTHONOPTIMIZE=1` lifecycle variant, and a fresh unsigned generic-Simulator Debug build passed for the targeted post-round-5 iOS fixes. The broad parallel fix wave still requires a final integrated rerun; no aggregate count or release-readiness claim is added here. Physical crash termination, Contacts system UI timing, and real APNs ordering remain `PENDING`.
+Result: exit `0` with all three repository markers:
 
-### Fresh unsigned simulator builds
-
-The terminal history immediately before the accepted Debug build contains this exact preparation command:
-
-```bash
-rm -rf /tmp/yperson-honest-exchange-final-debug && \
-  test ! -e /tmp/yperson-honest-exchange-final-debug && \
-  test ! -e Config/PersonalDebug.xcconfig
+```text
+honest-exchange-contract-v9-pass
+honest-exchange-source-contracts-pass
+honest-exchange-lifecycle-order-pass
 ```
 
-Result: combined exit `0`; the Debug derived-data path and PersonalDebug placeholder were absent before the accepted build.
+The runner compiles the real Foundation production models and exchange contract. Version 9 covers the public/private exchange boundary, manual-code normalization and single-use flow, credential and operation routing, public QR/Bluetooth policy, persistence and deletion recovery, Contacts and media commit barriers, audio publication recovery, APNs record ownership, scanner launch behavior, lifecycle transitions, transfer-generation invalidation, and ordered async source contracts.
+
+The lifecycle verifier was also run with Python assertions disabled:
 
 ```bash
-xcodebuild -quiet -project YPerson.xcodeproj -scheme YPerson -configuration Debug \
-  -destination 'generic/platform=iOS Simulator' \
-  -derivedDataPath /tmp/yperson-honest-exchange-final-debug \
-  CODE_SIGNING_ALLOWED=NO clean build
+env PYTHONOPTIMIZE=1 python3 Verification/HonestExchangeContract/verify-lifecycle-order.py
 ```
 
-Result: exit `0`; configuration `Debug`; destination `generic/platform=iOS Simulator`; signing disabled; successful quiet invocation emitted no compiler warnings.
+Result: exit `0`; `honest-exchange-lifecycle-order-pass`.
 
-The terminal history immediately before the Release build contains this exact precondition command:
+### Fresh unsigned arm64 simulator builds
+
+The accepted Debug and Release builds used fresh, previously absent DerivedData directories, destination `generic/platform=iOS Simulator`, `ARCHS=arm64`, `ONLY_ACTIVE_ARCH=NO`, and `CODE_SIGNING_ALLOWED=NO`.
 
 ```bash
-test ! -e /tmp/yperson-honest-exchange-final-release && \
-  test ! -e Config/PersonalDebug.xcconfig && \
-  test -d /tmp/yperson-honest-exchange-final-debug/Build/Products/Debug-iphonesimulator/YPerson.app
+xcodebuild -quiet -project YPerson.xcodeproj -scheme YPerson -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/yperson-honest-exchange-eae25652-1621-debug -clonedSourcePackagesDirPath /tmp/yperson-honest-exchange-eae25652-1621-sourcepackages ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO clean build
 ```
 
-Result: combined exit `0`; the Release derived-data path and PersonalDebug placeholder were absent, while the accepted Debug app existed.
+Result: exit `0`; successful quiet Debug build.
 
 ```bash
-xcodebuild -quiet -project YPerson.xcodeproj -scheme YPerson -configuration Release \
-  -destination 'generic/platform=iOS Simulator' \
-  -derivedDataPath /tmp/yperson-honest-exchange-final-release \
-  CODE_SIGNING_ALLOWED=NO clean build
+xcodebuild -quiet -project YPerson.xcodeproj -scheme YPerson -configuration Release -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/yperson-honest-exchange-eae25652-1623-release-final -clonedSourcePackagesDirPath /tmp/yperson-honest-exchange-eae25652-1621-sourcepackages -disableAutomaticPackageResolution ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO clean build
 ```
 
-Result: exit `0`; configuration `Release`; destination `generic/platform=iOS Simulator`; signing disabled; successful quiet invocation emitted no compiler warnings.
+Result: exit `0`; successful quiet Release build.
 
-The initial sandboxed Debug attempt stopped before compilation with exit `74` because CoreSimulator access and DNS/package resolution were unavailable. The partial directory was removed by the exact preparation command above; the unchanged Debug command was then run with required access and reached the final exit `0`. The Release command started after its exact non-existence precondition passed.
+Toolchain: Xcode `26.5` (`17F42`).
 
-Toolchain observed for both builds: Xcode `26.5` (`17F42`).
+Both build products were inspected individually. In Debug and Release the following four executables existed and `file` identified each as `Mach-O 64-bit executable arm64`:
 
-The artifact checks were rerun individually:
+- `YPerson.app/YPerson`
+- `YPerson.app/PlugIns/YPersonWidget.appex/YPersonWidget`
+- `YPerson.app/PlugIns/YPersonNotificationService.appex/YPersonNotificationService`
+- `YPerson.app/PlugIns/YPersonNotificationContent.appex/YPersonNotificationContent`
+
+One earlier Release invocation reached the product directory at the process-yield boundary without returning a reliable final status to the verifier. It was not accepted as evidence. The Release command recorded above used a different fresh directory and returned an explicit exit `0`.
+
+### Fail-closed privacy, source, manual-code, QR, and binary gates
+
+The positive privacy inventory first required all six scopes to exist and be readable: `backend`, `YPerson`, `AppSpec.md`, `AppPrivacy.yml`, `Release`, and `deploy`. Every required term then had a positive match count:
+
+- `exchangeCode=75`
+- `exchangeExpiresAt=37`
+- `privateFields=58`
+- `connection_private_fields=20`
+- `exchange_private_fields=35`
+
+The shipping-source scope enumerated `44` files under `YPerson`. A fail-closed scan across `YPerson` and `Release/reviewer-assets` searched for the obsolete static code `YP-1234` and the obsolete client-generated ten-minute expiry expression. Raw `rg` status was exactly `1`: status `0` would mean a banned match, and status greater than `1` would mean a scan error.
+
+The reviewer QR verifier ran with a readable compatible local ZXing Core jar:
 
 ```bash
-YP_RELEASE_APP=/tmp/yperson-honest-exchange-final-release/Build/Products/Release-iphonesimulator/YPerson.app
-YP_RELEASE_BINARY=/tmp/yperson-honest-exchange-final-release/Build/Products/Release-iphonesimulator/YPerson.app/YPerson
-test -d "$YP_RELEASE_APP"
-test -d "$YP_RELEASE_APP/PlugIns/YPersonWidget.appex"
-test -d "$YP_RELEASE_APP/PlugIns/YPersonNotificationService.appex"
-test -d "$YP_RELEASE_APP/PlugIns/YPersonNotificationContent.appex"
-test -f "$YP_RELEASE_BINARY"
+env ZXING_CORE_JAR=/Users/grigornkokoko/.gradle/caches/modules-2/files-2.1/com.google.zxing/core/3.4.1/1869da97e9b2b60b5ff2fcaf55899174b93ae25d/core-3.4.1.jar Release/reviewer-assets/verify-offline-public-qr.sh
 ```
 
-Individual results:
+Result: exit `0`. Production Swift models decoded the public offline payload; ZXing decoded the exact `578`-byte payload from the `808x808` PNG. `test-qr.png` SHA-256 was `7a5114756228a495ed58d50c28da5ca7150fe86c3ec2d3a4aa7d1c8743690bb7`.
 
-- `YPerson.app` `test -d`: exit `0`.
-- `YPersonWidget.appex` `test -d`: exit `0`.
-- `YPersonNotificationService.appex` `test -d`: exit `0`.
-- `YPersonNotificationContent.appex` `test -d`: exit `0`.
-- `YPerson` executable `test -f`: exit `0`.
+The Release binary sentinel scan required the app plus all three extension executables to exist, then searched the complete Release app bundle with `rg -a`. It checked the screenshot-state marker, fixture policy/credential/URL protocol/store types, fixture identities and UUID, bearer sentinel, old example code, and legacy static code. Raw status was exactly `1`; any match or scan error failed the gate.
 
-### Privacy, source, branch, and binary scans
+The source `PrivacyInfo.xcprivacy` and all `25` privacy manifests in the built Release app bundle passed `plutil -lint`.
 
-Review RED used only harmless markers and non-existent `/tmp` paths:
+### JSON/YAML, diff, and worktree gates
 
-Review-fix baseline: `8f41f9e4e6441f7af588d48ac3fde8d513b8cde1`.
+All tracked configuration documents parsed successfully: `9` JSON files and `5` YAML files. The parser also asserted the unchanged status contract:
 
-```bash
-! rg -n 'review-safe-marker' /tmp/yperson-review-nonexistent-source-dir
-! strings /tmp/yperson-review-nonexistent-binary | rg 'review-safe-marker'
-```
+- `Release/release-manifest.json`: `implementationStatus == implementation-verified`
+- `Release/release-manifest.json`: `releaseReady == false`
+- `AppPrivacy.yml`: implementation and release-preparation `release_ready == false`
 
-Both negated forms misleadingly returned status `0` even though `rg` and `strings` reported missing-path errors. The accepted scans below therefore do not use a negated command or negated pipeline.
-
-The positive privacy scan first verified that every expected scope path existed and was readable: `backend`, `YPerson`, `AppSpec.md`, `AppPrivacy.yml`, `Release`, and `deploy` each produced `test -e` status `0` and `test -r` status `0`. Each required term was then searched separately over that exact scope:
+Before evidence edits, both commands returned exit `0` with no output, and `git status --short` was empty:
 
 ```bash
-rg -n -F 'exchangeCode' backend YPerson AppSpec.md AppPrivacy.yml Release deploy
-rg -n -F 'exchangeExpiresAt' backend YPerson AppSpec.md AppPrivacy.yml Release deploy
-rg -n -F 'privateFields' backend YPerson AppSpec.md AppPrivacy.yml Release deploy
-rg -n -F 'connection_private_fields' backend YPerson AppSpec.md AppPrivacy.yml Release deploy
-rg -n -F 'exchange_private_fields' backend YPerson AppSpec.md AppPrivacy.yml Release deploy
-```
-
-Final per-term results are recorded independently: `exchangeCode` exit `0`, `72` matches; `exchangeExpiresAt` exit `0`, `35` matches; `privateFields` exit `0`, `52` matches; `connection_private_fields` exit `0`, `20` matches; `exchange_private_fields` exit `0`, `27` matches. A zero-match status for any term fails this gate.
-
-The banned source scan used a fail-closed status contract:
-
-```bash
-set -e
-test -d YPerson
-test -r YPerson
-rg --files YPerson >/tmp/yperson-honest-exchange-source-scope-files.txt
-set +e
-rg -n 'YP-1234|Date\(\)\.addingTimeInterval\(10 \* 60\)' YPerson
-BANNED_SOURCE_STATUS=$?
-set -e
-test "$BANNED_SOURCE_STATUS" -eq 1
-```
-
-Results: scope existence status `0`; scope readability status `0`; enumeration status `0` with `44` files; raw banned-pattern `rg` status exactly `1`; final gate exit `0`. Status `0` means a banned match and status greater than `1` means a scan error, so either fails the equality check.
-
-```bash
+git diff --check
 git diff --check origin/main...HEAD
 ```
 
-Result: exit `0`, no output.
-
-The Release executable scan also used a fail-closed two-stage contract and an explicit safe `/tmp` output:
-
-```bash
-YP_RELEASE_BINARY=/tmp/yperson-honest-exchange-final-release/Build/Products/Release-iphonesimulator/YPerson.app/YPerson
-YP_RELEASE_STRINGS=/tmp/yperson-honest-exchange-final-release-binary.strings
-set -e
-test -f "$YP_RELEASE_BINARY"
-set +e
-strings "$YP_RELEASE_BINARY" >"$YP_RELEASE_STRINGS"
-STRINGS_STATUS=$?
-set -e
-test "$STRINGS_STATUS" -eq 0
-test -f "$YP_RELEASE_STRINGS"
-set +e
-rg -n 'person-alexey|\+7 900 555-10-20|bearer-sentinel|YP-0123-4567-89AB' "$YP_RELEASE_STRINGS"
-SENTINEL_RG_STATUS=$?
-set -e
-test "$SENTINEL_RG_STATUS" -eq 1
-```
-
-Results: Release executable `test -f` status `0`; `strings` status exactly `0`; safe strings-output `test -f` status `0`; raw sentinel `rg` status exactly `1`; final gate exit `0`. None of the four exact sentinels was present, while a missing/unreadable executable or failed `strings` extraction would fail before the no-match assertion.
+The evidence-only diff and clean post-commit state are verified again before this gate is reported complete.
 
 ## Device, live-service, and external PENDING
 
-The following remain explicitly unverified and are not implied by any automated PASS above:
+The following remain explicitly unverified and are not implied by the automated PASS above:
 
 - Physical-device Face ID success/cancel/lockout and device-passcode fallback.
-- Two-installation manual-code display, normalized entry, one-time claim, cancellation, and real expiry.
+- Two-installation manual-code display, normalized entry, one-time claim, cancellation, and real server expiry.
 - Two-way public Bluetooth exchange with an independent local claim on each physical iPhone and no peer-confirmation signal; phone absence must be verified even when manual-code consent was authorized. Private Bluetooth remains deferred until recipient-bound mutual pairing exists.
 - App backgrounding, clipboard inspection, VoiceOver traversal/labels/announcements, Dynamic Type, iOS 15 behavior, APNs, widgets, and the wider permission matrix in `Release/manual-device-checks.md`.
 - Live YDB schema application/query compilation, Object Storage/Lockbox/IAM configuration, Serverless Container deployment, API Gateway routing, external `/health`/`/config`/`/sync` smoke, monitoring, backup/restore, and production AppMetrica traffic.
