@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 from app.observability import JsonRequestFormatter, request_logger
+from app.schemas import SyncResponse
 from app.settings import Settings
 from tests.test_contract import EXPECTED_CONFIG
 
@@ -34,6 +35,24 @@ def assert_request_id(response) -> str:
         if "requestID" in body:
             assert body["requestID"] == request_id
     return request_id
+
+
+def test_legacy_refresh_response_remains_accepted_without_public_fields() -> None:
+    response = SyncResponse.model_validate(
+        {
+            "accepted": True,
+            "serverVersion": "2",
+            "updateCount": 0,
+            "message": "refreshed",
+            "nextCursor": None,
+            "ownCardVersion": None,
+            "people": [],
+            "revokedCardIDs": [],
+        }
+    )
+
+    assert response.publicLinkActive is None
+    assert response.publicReplies == []
 
 
 def test_config_bytes_and_etag_are_the_exact_canonical_sha256(client: TestClient) -> None:

@@ -16,7 +16,13 @@ from app.main import create_app
 from app.observability import JsonRequestFormatter, request_logger
 from app.schemas import PersonCard, SyncedPerson
 from app.settings import Settings
-from app.storage import InvalidCredential, StorageConflict, StorageIntegrityError, SyncSnapshot
+from app.storage import (
+    InvalidCredential,
+    PublicContactReplyRecord,
+    StorageConflict,
+    StorageIntegrityError,
+    SyncSnapshot,
+)
 from app.sync_service import SyncService, derive_exchange_token
 
 NOW = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
@@ -51,6 +57,8 @@ class MemoryStore:
         self.auth_calls: list[str] = []
         self.moderation: list[tuple[str, str, str, str | None]] = []
         self.object_keys: dict[str, list[str]] = {}
+        self.public_links: dict[str, tuple[str, PersonCard]] = {}
+        self.public_replies: dict[str, dict[str, PublicContactReplyRecord]] = {}
 
     def authenticate_or_create(self, installation_id: str, bearer: str) -> None:
         self.auth_calls.append(installation_id)
@@ -94,7 +102,37 @@ class MemoryStore:
             own_card_version=own[0] if own else None,
             people=people,
             next_cursor=cursor,
+            public_link_active=installation_id in self.public_links,
+            public_replies=tuple(
+                sorted(
+                    self.public_replies.get(installation_id, {}).values(),
+                    key=lambda reply: (reply.created_at, reply.id),
+                )
+            ),
         )
+
+    def activate_public_link(
+        self,
+        installation_id: str,
+        operation_id: str,
+        raw_token: str,
+        public_card: PersonCard,
+    ) -> None:
+        del operation_id
+        self.public_links[installation_id] = (raw_token, public_card)
+
+    def revoke_public_link(self, installation_id: str, operation_id: str) -> None:
+        del operation_id
+        self.public_links.pop(installation_id, None)
+
+    def dismiss_public_reply(
+        self,
+        installation_id: str,
+        operation_id: str,
+        reply_id: str,
+    ) -> None:
+        del operation_id
+        self.public_replies.get(installation_id, {}).pop(reply_id, None)
 
     def prepare_exchange(
         self,
@@ -171,6 +209,8 @@ class MemoryStore:
         object_keys = self.object_keys.pop(installation_id, [])
         self.cards.pop(installation_id, None)
         self.push_tokens.pop(installation_id, None)
+        self.public_links.pop(installation_id, None)
+        self.public_replies.pop(installation_id, None)
         self.connections = {
             connection for connection in self.connections if installation_id not in connection
         }
@@ -345,6 +385,188 @@ def test_wrong_bearer_returns_generic_401_without_installation_enumeration() -> 
     assert OWNER[0] not in response.text
 
 
+def test_activate_public_link_stores_only_exchange_copy() -> None:
+    store = MemoryStore()
+    private_card = card("card-owner", "Owner").model_copy(
+        update={"meetingPlace": "Private office", "hasAudioGreeting": True}
+    )
+    with make_client(store) as client:
+        bootstrap = post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-link")
+        response = post_sync(
+            client,
+            OWNER,
+            "activatePublicLink",
+            operation_id="activate-link-0001",
+            card=private_card.model_dump(mode="json"),
+            publicLinkToken="A" * 43,
+        )
+
+    assert bootstrap.status_code == response.status_code == 200
+    assert response.json()["publicLinkActive"] is True
+    stored_card = store.public_links[OWNER[0]][1]
+    assert stored_card.phone == ""
+    assert stored_card.meetingPlace is None
+    assert stored_card.hasAudioGreeting is False
+
+
+def test_revoke_public_link_is_idempotent_and_returns_inactive_snapshot() -> None:
+    store = MemoryStore()
+    with make_client(store) as client:
+        post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-revoke")
+        activated = post_sync(
+            client,
+            OWNER,
+            "activatePublicLink",
+            operation_id="activate-link-0002",
+            card=card("card-owner", "Owner").model_dump(mode="json"),
+            publicLinkToken="A" * 43,
+        )
+        first = post_sync(
+            client,
+            OWNER,
+            "revokePublicLink",
+            operation_id="revoke-link-0001",
+        )
+        replay = post_sync(
+            client,
+            OWNER,
+            "revokePublicLink",
+            operation_id="revoke-link-0001",
+        )
+
+    assert activated.json()["publicLinkActive"] is True
+    assert first.status_code == replay.status_code == 200
+    assert first.json()["publicLinkActive"] is False
+    assert replay.json()["publicLinkActive"] is False
+
+
+def test_refresh_returns_ordered_pending_public_replies_without_contacts_in_message() -> None:
+    store = MemoryStore()
+    later = PublicContactReplyRecord(
+        id="123e4567-e89b-12d3-a456-426614174002",
+        name="Later Name Sentinel",
+        email=None,
+        phone="+79990000002",
+        created_at=datetime(2026, 8, 20, 12, 2, tzinfo=UTC),
+    )
+    first_by_id = PublicContactReplyRecord(
+        id="123e4567-e89b-12d3-a456-426614174000",
+        name="First Name Sentinel",
+        email="first-contact@example.invalid",
+        phone=None,
+        created_at=datetime(2026, 8, 20, 12, 1, tzinfo=UTC),
+    )
+    second_by_id = PublicContactReplyRecord(
+        id="123e4567-e89b-12d3-a456-426614174001",
+        name="Second Name Sentinel",
+        email="second-contact@example.invalid",
+        phone=None,
+        created_at=first_by_id.created_at,
+    )
+    store.public_replies[OWNER[0]] = {
+        later.id: later,
+        second_by_id.id: second_by_id,
+        first_by_id.id: first_by_id,
+    }
+    captured: list[str] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(self.format(record))
+
+    logger = request_logger()
+    handler = Capture()
+    handler.setFormatter(JsonRequestFormatter())
+    logger.addHandler(handler)
+    try:
+        with make_client(store) as client:
+            response = post_sync(
+                client,
+                OWNER,
+                "refresh",
+                operation_id="refresh-public-replies",
+            )
+    finally:
+        logger.removeHandler(handler)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [reply["id"] for reply in body["publicReplies"]] == [
+        first_by_id.id,
+        second_by_id.id,
+        later.id,
+    ]
+    assert body["publicReplies"][0]["name"] == first_by_id.name
+    assert body["publicReplies"][0]["email"] == first_by_id.email
+    assert body["message"] == "refreshed"
+    assert all(
+        secret not in body["message"]
+        for secret in (
+            first_by_id.name,
+            first_by_id.email,
+            second_by_id.name,
+            second_by_id.email,
+            later.name,
+            later.phone,
+        )
+    )
+    output = "\n".join(captured)
+    assert all(
+        secret not in output
+        for secret in (
+            first_by_id.name,
+            first_by_id.email,
+            second_by_id.name,
+            second_by_id.email,
+            later.name,
+            later.phone,
+        )
+    )
+
+
+def test_dismiss_public_reply_returns_post_delete_snapshot_and_replays() -> None:
+    store = MemoryStore()
+    dismissed = PublicContactReplyRecord(
+        id="123e4567-e89b-12d3-a456-426614174000",
+        name="Dismissed",
+        email="dismissed@example.invalid",
+        phone=None,
+        created_at=NOW,
+    )
+    remaining = PublicContactReplyRecord(
+        id="123e4567-e89b-12d3-a456-426614174001",
+        name="Remaining",
+        email=None,
+        phone="+79990000001",
+        created_at=NOW,
+    )
+    store.public_replies[OWNER[0]] = {
+        dismissed.id: dismissed,
+        remaining.id: remaining,
+    }
+    with make_client(store) as client:
+        bootstrap = post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-dismiss")
+        first = post_sync(
+            client,
+            OWNER,
+            "dismissPublicReply",
+            operation_id="dismiss-reply-0001",
+            publicReplyID=dismissed.id,
+        )
+        replay = post_sync(
+            client,
+            OWNER,
+            "dismissPublicReply",
+            operation_id="dismiss-reply-0001",
+            publicReplyID=dismissed.id,
+        )
+
+    assert bootstrap.status_code == first.status_code == replay.status_code == 200
+    expected_ids = [remaining.id]
+    assert [reply["id"] for reply in first.json()["publicReplies"]] == expected_ids
+    assert [reply["id"] for reply in replay.json()["publicReplies"]] == expected_ids
+
+
 def test_delete_profile_replays_cleanup_without_recreating_installation() -> None:
     store = MemoryStore()
     cleaned: list[list[str]] = []
@@ -364,6 +586,18 @@ def test_delete_profile_replays_cleanup_without_recreating_installation() -> Non
             operation_id="push-op-0000001",
             apnsToken="apns-token-value",
         )
+        store.public_links[OWNER[0]] = (
+            "A" * 43,
+            card("card-owner", "Owner").model_copy(update={"phone": ""}),
+        )
+        reply = PublicContactReplyRecord(
+            id="123e4567-e89b-12d3-a456-426614174000",
+            name="Pending",
+            email="pending@example.invalid",
+            phone=None,
+            created_at=NOW,
+        )
+        store.public_replies[OWNER[0]] = {reply.id: reply}
         store.auth_calls.clear()
         first = post_sync(client, OWNER, "deleteProfile", operation_id="delete-op-0001")
         retried = post_sync(client, OWNER, "deleteProfile", operation_id="delete-op-0001")
@@ -378,6 +612,8 @@ def test_delete_profile_replays_cleanup_without_recreating_installation() -> Non
     assert wrong.status_code == 401
     assert store.auth_calls == [OWNER[0]]
     assert store.snapshot(OWNER[0]) is None
+    assert OWNER[0] not in store.public_links
+    assert OWNER[0] not in store.public_replies
     assert cleaned == [
         ["private/object-key-sentinel"],
         ["private/object-key-sentinel"],
@@ -499,6 +735,9 @@ def test_unavailable_exchange_returns_sanitized_conflict() -> None:
         "deleteProfile",
         "report",
         "block",
+        "activatePublicLink",
+        "revokePublicLink",
+        "dismissPublicReply",
     ],
 )
 def test_unknown_non_bootstrap_operation_never_creates_installation(operation: str) -> None:
@@ -516,6 +755,13 @@ def test_unknown_non_bootstrap_operation_never_creates_installation(operation: s
         payload.update(subjectInstallationID=OWNER[0], moderationCategory="spam")
     elif operation == "block":
         payload["subjectInstallationID"] = OWNER[0]
+    elif operation == "activatePublicLink":
+        payload.update(
+            card=card("card-owner", "Owner").model_dump(mode="json"),
+            publicLinkToken="A" * 43,
+        )
+    elif operation == "dismissPublicReply":
+        payload["publicReplyID"] = "123e4567-e89b-12d3-a456-426614174000"
     with make_client(store) as client:
         response = post_sync(
             client,
@@ -629,6 +875,9 @@ def test_concurrent_duplicate_delete_replays_tombstone_after_conflict() -> None:
         "deleteProfile",
         "report",
         "block",
+        "activatePublicLink",
+        "revokePublicLink",
+        "dismissPublicReply",
     ],
 )
 def test_every_operation_requires_authentication_before_store_access(operation: str) -> None:
@@ -646,6 +895,13 @@ def test_every_operation_requires_authentication_before_store_access(operation: 
         payload.update(subjectInstallationID=PEER[0], moderationCategory="spam")
     elif operation == "block":
         payload["subjectInstallationID"] = PEER[0]
+    elif operation == "activatePublicLink":
+        payload.update(
+            card=card("card-owner", "Owner").model_dump(mode="json"),
+            publicLinkToken="A" * 43,
+        )
+    elif operation == "dismissPublicReply":
+        payload["publicReplyID"] = "123e4567-e89b-12d3-a456-426614174000"
 
     with make_client(store) as client:
         response = client.post(
