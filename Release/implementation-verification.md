@@ -23,6 +23,15 @@
 - Binding rule rendering: UI resolves both missing and unknown `templateID` to `standard-clean`; this readable-card fallback is distinct from server-side rejection of a syntactically invalid supplied identifier during publish or exchange.
 - Визуальная и device verification шаблонов пока не выполнялась: live preview, все четыре палитры в light/dark, отмена editor draft, VoiceOver/Dynamic Type, save/relaunch, received-card rendering, exported/shared image и ATT-denied availability остаются pending в `Release/manual-device-checks.md`.
 
+## Recipient-specific private exchange
+
+- Sync v2 локально реализует additive-поля запроса `privateFields`/`exchangeCode` и ответа `exchangeCode`/`exchangeExpiresAt`. Публичный `card`, сохранённый `cards.card_json` и QR-проекция всегда исключают телефон и локальный `meetingPlace`.
+- `privateFields` сейчас содержит только непустой обрезанный `phone` длиной до 64 Unicode-символов и принимается только для Bluetooth/manual prepare. Временная запись использует тот же credential digest и тот же авторитетный `exchangeExpiresAt`, что и claim, с максимумом 10 минут.
+- Manual prepare выдаёт `YP-XXXX-XXXX-XXXX` из 12 символов однозначного Crockford Base32 (60 бит). Claim требует аутентифицированную installation, допускает одного получателя, отклоняет self-claim и хранит только SHA-256 нормализованного кода; raw code/token не сохраняется и не логируется.
+- Успешный claim переносит телефон только в directional grant получателя к владельцу. Refresh накладывает этот grant на текущую публичную карточку только для соответствующего получателя; обратная и другие связи остаются публичными. Значение сохраняется до удаления связи/профиля; profile deletion очищает временные поля и grants с обеих сторон.
+- Deployment-contract проверка `/Users/grigornkokoko/YPerson/backend/.venv/bin/python -m pytest -q backend/tests/test_serverless_deployment.py backend/tests/test_deployment_files.py` завершилась `10 passed`. Smoke сохраняет отдельный QR `exchangeToken` path, отдельно готовит/claim-ит manual `exchangeCode`, проверяет `exchangeExpiresAt` в обоих prepare-ответах и очищает credential variables до cleanup/rollback output. Это статическая и локальная contract-проверка deploy artifact, не доказательство внешнего smoke.
+- Private-audio persistence/recipient-specific delivery и connection-level private-grant revoke/update/propagation последующих изменений телефона остаются незавершёнными. Физические Face ID/device-passcode, Bluetooth и two-installation manual-code сценарии остаются `PENDING` в `Release/manual-device-checks.md`.
+
 ## QR scanner widget
 
 - Виджет является stateless-ярлыком сканера: он открывает только строгий маршрут `yperson://scan`, выбирает экран «Обмен» и запускает существующий QR-сканер приложения.
@@ -36,7 +45,9 @@
 - Новая YDB/Object Storage версия ещё не выкачена и не проверена через внешний API Gateway URL.
 - Production APNs credentials, доставка push и notification extensions не проверены на физических iPhone.
 - Bluetooth взаимный обмен, отмена и восстановление после background требуют двух физических iPhone.
+- Recipient-specific телефон через Face ID/device-passcode, Bluetooth и реальный одноразовый код на двух installations не проверен на физических устройствах; локальный deploy smoke не заменяет эту проверку.
 - Не проверены Apple signing/App Groups, production AppMetrica traffic, privacy report подписанного архива и App Store Connect.
 - Политика backup/restore и срок удаления резервных копий до 30 дней требуют подтверждения фактической Yandex Cloud конфигурацией.
+- Сохраняется release blocker по conformance сторонних vCard: требуется backend-контракт владения/retention/deletion/update либо явное повторное утверждение local-only поведения в `AppSpec.md` и `AppPrivacy.yml`.
 
 Полный список ручных проверок находится в `Release/manual-device-checks.md`; `Release/release-manifest.json` сохраняет `releaseReady: false`.

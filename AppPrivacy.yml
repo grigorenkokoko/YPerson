@@ -127,16 +127,16 @@ permissions:
       - published_yperson_contact_info
     storage: system address book, picker-selected local cards, and match keys remain on device
     transmission: the system address book and picker-imported cards are never transmitted; only explicitly published/received YPerson card fields sync
-    app_store_privacy_implication: system Contacts are not collected; published name/email/phone are Contact Info linked to identity for App Functionality
+    app_store_privacy_implication: system Contacts are not collected; public name/email and separately authorized recipient-specific phone are Contact Info linked to identity for App Functionality
 
   face_id:
     required: true
     usage_key: NSFaceIDUsageDescription
-    feature: protect private card fields and authorize sharing them with a selected recipient
-    trigger: "Моя карточка → Закрытые поля → Открыть либо включить закрытые поля перед обменом"
+    feature: protect the private phone and authorize one outgoing Bluetooth or manual-code share to a selected recipient
+    trigger: "Моя карточка → Закрытые поля → Открыть либо Обмен → Поделиться телефоном · Face ID"
     screen_location: "S5 Редактор карточки и S2 Обмен"
     purpose_copy: "Face ID защищает закрытые поля вашей визитки и подтверждает их передачу выбранному человеку."
-    authorized_behavior: unlock private fields for a short session and permit explicit private-card sharing
+    authorized_behavior: permit the private phone only for the next outgoing Bluetooth or manual-code preparation during the current Exchange-screen visit; leaving the screen clears authorization and public QR remains phone-free
     denial_behavior: device passcode fallback is offered; the public card and exchange remain available
     reviewer_path: create a private test field, lock the section, test successful and cancelled authentication
     data_types:
@@ -169,7 +169,7 @@ permissions:
     trigger: "Моя карточка → Аудиоприветствие → Записать"
     screen_location: "S5 Редактор карточки"
     purpose_copy: "Микрофон нужен, чтобы записать короткое аудиоприветствие для вашей визитки YPerson."
-    authorized_behavior: allow preview, replace, delete, and explicit public/private publication selection
+    authorized_behavior: allow preview, replace, delete, and explicit public publication; private-audio persistence and recipient-specific delivery remain unimplemented
     denial_behavior: text tagline remains available and card exchange is not blocked
     reviewer_path: record, preview, publish, then delete a test greeting and verify recipient sync
     data_types:
@@ -254,7 +254,7 @@ permissions:
 
 data_inventory:
   - id: own_card_fields
-    apple_data_types: [name, email_address, phone_number, other_user_contact_info, other_user_content]
+    apple_data_types: [name, email_address, other_user_contact_info, other_user_content]
     source: user entry
     location: [device, yperson_backend, confirmed_recipients]
     purpose: app_functionality
@@ -262,8 +262,24 @@ data_inventory:
     used_for_tracking: false
     retention: active profile lifetime or 24 months of inactivity; backup deletion within 30 days
     deletion: delete field, revoke card, or delete profile
+    public_storage_excludes: [phone_number, meeting_place]
+    public_qr_excludes: [phone_number, meeting_place]
     public_presentation_metadata: templateID is collected only as part of an explicitly published Contact Info card for App Functionality and is delivered to confirmed recipients
     template_payload: only templateID is transmitted; palette values, ATT state, attribution identifiers, analytics consent, and sponsored-template interaction events are not transmitted
+
+  - id: recipient_specific_private_phone
+    apple_data_types: [phone_number]
+    source: user-saved phone after local Face ID or device-passcode authorization
+    location: [device, temporary_digest_keyed_exchange_state, directional_connection_grant]
+    purpose: app_functionality
+    linked_to_identity: true
+    used_for_tracking: false
+    public_card_or_qr_storage: prohibited
+    temporary_retention: same as exchangeExpiresAt, at most 10 minutes
+    grant_direction: claimant_to_issuer_only; reciprocal and unrelated connections remain public
+    grant_retention: shared value at confirmation time until connection or profile deletion
+    deletion: temporary state is deleted on claim/cancel/profile deletion with TTL as backstop; profile deletion removes both grant directions
+    remaining_work: connection-level private-grant revoke/update plus propagation of later private-phone updates are not implemented
 
   - id: published_avatar
     apple_data_types: [photos_or_videos]
@@ -335,8 +351,8 @@ data_inventory:
     purpose: app_functionality
     linked_to_identity: true
     used_for_tracking: false
-    retention: exchange token 10 minutes; connection until deleted
-    deletion: delete connection/profile; backup deletion within 30 days
+    retention: opaque token/manual-code digest and temporary private fields until exchangeExpiresAt at most 10 minutes; connection and any directional grant until connection/profile deletion
+    deletion: claim/cancel/TTL removes temporary fields; profile deletion removes claims and grants; connection-level private-grant revoke/update remains unimplemented; backup deletion within 30 days
 
   - id: moderation_report
     apple_data_types: [user_id, other_user_content, customer_support]
@@ -470,7 +486,7 @@ tracking:
     - advertising_data
 
 backend:
-  storage_model: YDB Serverless stores compact profile snapshots, connections, short-lived exchange claims, moderation state, push token, and audio metadata; private Object Storage stores only audio greeting objects
+  storage_model: YDB Serverless stores phone-free public profile snapshots, connections, digest-keyed short-lived exchange claims/private fields, directional connection grants, moderation state, push token, and audio metadata; private Object Storage stores only audio greeting objects
   durable_storage_target: implemented locally; YDB schema, private bucket, Lockbox configuration, and external runtime verification remain pending deployment evidence
   evidence_state:
     implemented_locally: sync v2 authentication, YDB adapter/schema, private signed audio transfer, idempotent profile deletion, and iOS durable retry
@@ -487,15 +503,47 @@ backend:
       - apnsToken
       - operation
       - card
+      - privateFields
       - exchangeToken
+      - exchangeCode
       - exchangeMethod
       - audioAssetID
       - audioSizeBytes
       - audioDurationMS
       - moderationCategory
       - subjectInstallationID
-    exchange_token_storage: raw exchange tokens are stored only as SHA-256 hashes and expire after 10 minutes
+    sync_response_fields:
+      - accepted
+      - serverVersion
+      - updateCount
+      - message
+      - nextCursor
+      - ownCardVersion
+      - people
+      - revokedCardIDs
+      - exchangeToken
+      - exchangeCode
+      - exchangeExpiresAt
+      - audioUpload
+      - notificationConfiguration
+    public_exchange_boundary: card storage and public QR always exclude phone and local meetingPlace; QR/photo never accept privateFields
+    private_fields_contract: "privateFields currently accepts only a trimmed non-empty phone of at most 64 Unicode characters on Bluetooth/manual prepareExchange; it shares the claim's authoritative exchangeExpiresAt and maximum 10-minute TTL"
+    directional_grant_contract: claimant receives the issuer phone through claimant-to-issuer connection state only; the value survives refresh and remains until connection/profile deletion; unrelated and reciprocal views stay public
+    exchange_credential_storage: opaque tokens and normalized manual codes are stored only as SHA-256 digests; raw credentials are absent from durable storage, logs, analytics, and push payloads
+    manual_exchange_contract:
+      format: YP-XXXX-XXXX-XXXX
+      payload: 12 unambiguous Crockford Base32 characters providing 60 bits
+      issuance: server-issued from authenticated installation and stable operationID
+      claim_authentication: authenticated installation required; self-claim rejected
+      request_exclusivity: claimExchange and cancelExchange accept exactly one of exchangeCode or exchangeToken
+      legacy_compatibility: a correctly formatted manual code in exchangeToken remains accepted for older installed clients; new clients use exchangeCode
+      lifetime: authoritative exchangeExpiresAt, at most 10 minutes
+      use: one successful claim; unknown, expired, cancelled, claimed, and self-claimed values share one sanitized conflict
+      storage: normalized SHA-256 digest only; raw code is never persisted
     audio_storage: private Object Storage only; upload and download use short-lived signed URLs, and persistent object credentials stay in Lockbox rather than the app or repository
+    remaining_work:
+      - private-audio persistence and recipient-specific private-audio delivery
+      - connection-level private-grant revoke/update and propagation of later private-phone updates
     historical_staging_artifacts: Dockerfile, Docker Compose, and PostgreSQL checks remain historical local staging evidence only; they do not demonstrate the approved YDB/Object Storage deployment
   endpoints:
     - method: GET
@@ -529,7 +577,9 @@ backend:
         - cursor
         - apnsToken
         - card
+        - privateFields
         - exchangeToken
+        - exchangeCode
         - exchangeMethod
         - audioAssetID
         - audioSizeBytes
@@ -546,6 +596,8 @@ backend:
         - people
         - revokedCardIDs
         - exchangeToken
+        - exchangeCode
+        - exchangeExpiresAt
         - audioUpload
         - notificationConfiguration
   config_constraints:
@@ -598,10 +650,11 @@ privacy_policy:
   disclosures:
     collection:
       - published card contact fields
+      - recipient-specific private phone only after local authorization and confirmed claim; never in public card or QR storage
       - explicitly published avatar and audio greeting
       - installation and APNs identifiers
       - connection and moderation state
-      - short-lived exchange tokens
+      - short-lived opaque-token/manual-code digests and temporary private fields sharing the claim TTL
       - backend network/security logs
       - AppMetrica usage, device, advertising, and diagnostic data
     local_only:
@@ -625,7 +678,8 @@ privacy_policy:
       - moderation support staff
     retention:
       - profile/card until deletion or 24 months inactivity
-      - exchange token 10 minutes
+      - exchange credential digest and temporary private fields until exchangeExpiresAt, at most 10 minutes
+      - directional private-phone grant until connection/profile deletion; later update and connection-level revoke are not yet implemented
       - backend logs 7 days
       - stale push token and backups at most 30 days
       - closed moderation report 180 days
@@ -696,7 +750,7 @@ policy_modules:
     status: selected
     reason: installation-scoped cloud profile is created
     in_app_path: "Настройки → Данные и конфиденциальность → Удалить профиль"
-    scope: published card/assets, connections, exchange claims, APNs/auth tokens, and local data
+    scope: published card/assets, connections, temporary private exchange fields, directional grants, exchange claims, APNs/auth tokens, and local data
     timing: active storage after server acknowledgement; offline request persists for retry; configured backups must be removed within 30 days
     exception: closed abuse/security report may remain restricted for up to 180 days
     ui_evidence: "S7 Данные и конфиденциальность → Удалить профиль → подтверждение полного scope и сроков"
@@ -730,7 +784,7 @@ policy_modules:
     release_check: current export-compliance answer must be verified at release
   special_hardware_review:
     status: not-applicable
-    reason: standard second iPhone only; QR and manual test code provide full reviewer fallback
+    reason: standard second iPhone only; public QR and an authenticated runtime manual code provide reviewer fallbacks without a static credential
 
 feasibility_gate:
   lasting_utility:
@@ -846,3 +900,5 @@ release_blockers:
     description: derive and verify current App Store privacy, age rating, export compliance, and reviewer-contact answers at release
   - id: third_party_vcard_sync_contract
     description: resolve the mismatch between local-only third-party vCard imports and required confirmed photo/scanned payload synchronization by approving backend ownership, retention, deletion, and update semantics or explicitly re-approving the local-only AppSpec/AppPrivacy behavior
+  - id: private_exchange_remaining_contracts
+    description: implement and verify private-audio persistence plus connection-level private-grant revoke/update and later-phone-update behavior before claiming those capabilities are complete

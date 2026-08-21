@@ -74,9 +74,15 @@ card = {
 if operation in {"prepareExchange", "publishCard"}:
     payload["card"] = card
 if operation == "prepareExchange":
-    payload["exchangeMethod"] = "manual"
+    payload["exchangeMethod"] = os.environ["SMOKE_EXCHANGE_METHOD"]
 elif operation == "claimExchange":
-    payload["exchangeToken"] = os.environ["SMOKE_EXCHANGE_TOKEN"]
+    credential_field = os.environ["SMOKE_EXCHANGE_FIELD"]
+    if credential_field == "exchangeToken":
+        payload["exchangeToken"] = os.environ["SMOKE_EXCHANGE_TOKEN"]
+    elif credential_field == "exchangeCode":
+        payload["exchangeCode"] = os.environ["SMOKE_EXCHANGE_CODE"]
+    else:
+        raise SystemExit("unsupported smoke exchange credential")
 elif operation == "prepareAudioUpload":
     payload["audioSizeBytes"] = int(os.environ["SMOKE_AUDIO_SIZE"])
     payload["audioDurationMS"] = 1000
@@ -142,6 +148,7 @@ finish() {
   local status=$?
   trap - EXIT
   set +e
+  unset SMOKE_EXCHANGE_TOKEN SMOKE_EXCHANGE_CODE
   if [[ "${smoke_owner_ready}" == true ]]; then
     delete_smoke_profile "${temporary_directory}/owner-auth" "${smoke_owner_id}" owner >/dev/null 2>&1
   fi
@@ -152,7 +159,7 @@ finish() {
     rollback_previous_revision
   fi
   rm -rf "${temporary_directory}"
-  unset smoke_owner_secret smoke_peer_secret SMOKE_EXCHANGE_TOKEN SMOKE_AUDIO_ASSET_ID
+  unset smoke_owner_secret smoke_peer_secret SMOKE_AUDIO_ASSET_ID
   exit "${status}"
 }
 trap finish EXIT
@@ -210,16 +217,40 @@ call_sync "${temporary_directory}/peer-auth" \
 smoke_peer_ready=true
 
 SMOKE_CARD_ID="smoke-card-${GITHUB_SHA:0:12}" \
-  write_sync_request "${temporary_directory}/prepare-exchange.json" prepareExchange \
-    smoke-prepare-exchange "${smoke_owner_id}"
+SMOKE_EXCHANGE_METHOD=qr \
+  write_sync_request "${temporary_directory}/prepare-exchange-qr.json" prepareExchange \
+    smoke-prepare-exchange-qr "${smoke_owner_id}"
 call_sync "${temporary_directory}/owner-auth" \
-  "${temporary_directory}/prepare-exchange.json" "${temporary_directory}/prepare-exchange-response.json"
-SMOKE_EXCHANGE_TOKEN="$(json_value "${temporary_directory}/prepare-exchange-response.json" exchangeToken)"
+  "${temporary_directory}/prepare-exchange-qr.json" \
+  "${temporary_directory}/prepare-exchange-qr-response.json"
+SMOKE_EXCHANGE_TOKEN="$(json_value "${temporary_directory}/prepare-exchange-qr-response.json" exchangeToken)"
 export SMOKE_EXCHANGE_TOKEN
-write_sync_request "${temporary_directory}/claim-exchange.json" claimExchange \
-  smoke-claim-exchange "${smoke_peer_id}"
+json_value "${temporary_directory}/prepare-exchange-qr-response.json" exchangeExpiresAt >/dev/null
+SMOKE_EXCHANGE_FIELD=exchangeToken \
+  write_sync_request "${temporary_directory}/claim-exchange-qr.json" claimExchange \
+    smoke-claim-exchange-qr "${smoke_peer_id}"
 call_sync "${temporary_directory}/peer-auth" \
-  "${temporary_directory}/claim-exchange.json" "${temporary_directory}/claim-exchange-response.json"
+  "${temporary_directory}/claim-exchange-qr.json" \
+  "${temporary_directory}/claim-exchange-qr-response.json"
+unset SMOKE_EXCHANGE_TOKEN
+
+SMOKE_CARD_ID="smoke-card-${GITHUB_SHA:0:12}" \
+SMOKE_EXCHANGE_METHOD=manual \
+  write_sync_request "${temporary_directory}/prepare-exchange-manual.json" prepareExchange \
+    smoke-prepare-exchange-manual "${smoke_owner_id}"
+call_sync "${temporary_directory}/owner-auth" \
+  "${temporary_directory}/prepare-exchange-manual.json" \
+  "${temporary_directory}/prepare-exchange-manual-response.json"
+SMOKE_EXCHANGE_CODE="$(json_value "${temporary_directory}/prepare-exchange-manual-response.json" exchangeCode)"
+export SMOKE_EXCHANGE_CODE
+json_value "${temporary_directory}/prepare-exchange-manual-response.json" exchangeExpiresAt >/dev/null
+SMOKE_EXCHANGE_FIELD=exchangeCode \
+  write_sync_request "${temporary_directory}/claim-exchange-manual.json" claimExchange \
+    smoke-claim-exchange-manual "${smoke_peer_id}"
+call_sync "${temporary_directory}/peer-auth" \
+  "${temporary_directory}/claim-exchange-manual.json" \
+  "${temporary_directory}/claim-exchange-manual-response.json"
+unset SMOKE_EXCHANGE_CODE
 
 printf 'YPerson smoke audio' >"${temporary_directory}/audio.m4a"
 SMOKE_AUDIO_SIZE=19

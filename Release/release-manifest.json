@@ -94,6 +94,7 @@
     "extensionsActivateAnalytics": false
   },
   "publicCardPayload": {
+    "privacyBoundary": "The stored public card and every public QR payload exclude phone and local meetingPlace.",
     "templateID": {
       "classification": "public presentation metadata",
       "transmission": "included only with an explicitly published or confirmed-exchange card",
@@ -112,6 +113,66 @@
         "backend/tests/test_sync_service.py"
       ]
     }
+  },
+  "privateExchange": {
+    "implementationStatus": "implemented locally; external deployment and physical-device exchange are not verified",
+    "contractVersion": 2,
+    "requestFields": [
+      "privateFields",
+      "exchangeCode"
+    ],
+    "responseFields": [
+      "exchangeCode",
+      "exchangeExpiresAt"
+    ],
+    "privateFields": {
+      "initialSchema": {
+        "phone": "trimmed non-empty Unicode display string, maximum 64 characters"
+      },
+      "allowedPreparationMethods": [
+        "bluetooth",
+        "manual"
+      ],
+      "publicMethodsExcluded": [
+        "qr",
+        "photo"
+      ],
+      "temporaryRetention": "same authoritative exchangeExpiresAt as the claim, at most 10 minutes",
+      "grantRetention": "the value shared at confirmation remains directional from claimant to issuer until connection/profile deletion"
+    },
+    "credentials": {
+      "qrAndBluetooth": "existing opaque 43-character base64url token path",
+      "manual": "server-issued YP-XXXX-XXXX-XXXX with twelve unambiguous Crockford Base32 characters (60 bits)",
+      "manualClaimAuthentication": "authenticated installation required; issuer self-claim rejected",
+      "requestExclusivity": "claimExchange and cancelExchange accept exactly one of exchangeCode or exchangeToken; new clients use exchangeCode and correctly formatted legacy exchangeToken codes remain compatible",
+      "oneTime": true,
+      "durableStorage": "SHA-256 digest only after normalization; raw token/code is not persisted or logged",
+      "expiry": "exchangeExpiresAt, at most 10 minutes"
+    },
+    "storage": {
+      "temporary": "exchange_private_fields keyed by credential digest with claim-correlated issuer and expiry",
+      "directional": "connection_private_fields keyed by claimant owner_installation_id and issuer peer_installation_id",
+      "profileDeletion": "removes temporary fields and grants where the installation is owner or peer"
+    },
+    "remainingWork": [
+      "private-audio persistence and recipient-specific delivery",
+      "connection-level private-grant revoke/update and propagation of later phone updates"
+    ],
+    "evidence": [
+      "backend/app/schemas.py",
+      "backend/app/sync_service.py",
+      "backend/app/ydb_schema.py",
+      "backend/app/ydb_store.py",
+      "backend/tests/test_schemas.py",
+      "backend/tests/test_sync_service.py",
+      "backend/tests/test_storage.py",
+      "YPerson/Domain/ExchangeContract.swift",
+      "YPerson/Services/SyncCoordinator.swift",
+      "YPerson/UI/ExchangeViewController.swift",
+      "YPerson/UI/ShortCodeViewController.swift",
+      "deploy/yandex/serverless/deploy.sh",
+      "backend/tests/test_serverless_deployment.py"
+    ]
   },
   "releasePreparation": {
     "approvedAtUTC": "2026-08-18T07:13:02Z",
@@ -176,6 +237,7 @@
       "sanitizedInternalError": 500,
       "unavailableDurableStorage": 503
     },
+    "privateExchangeDeploymentContract": "backend/tests/test_serverless_deployment.py plus backend/tests/test_deployment_files.py: 10 passed; smoke preserves QR exchangeToken and independently prepares/claims manual exchangeCode, validates exchangeExpiresAt for both, and clears credential variables before cleanup",
     "backendVerification": {
       "recordedAtUTC": "2026-08-21T06:06:34Z",
       "pytest": "/Users/grigornkokoko/YPerson/backend/.venv/bin/pytest -q backend/tests: 146 passed, 1 existing Starlette TestClient/httpx deprecation warning in 10.97s",
@@ -225,6 +287,7 @@
     "Finalize moderation operations and App Store Connect privacy/ATT/export-compliance/age-rating answers.",
     "Provide final owner metadata: SKU, copyright holder, review contact, content-rights attestation, categories, and availability.",
     "Resolve the mismatch between local-only third-party vCard imports and required confirmed photo/scanned payload synchronization by approving backend ownership, retention, deletion, and update semantics or explicitly re-approving the local-only AppSpec/AppPrivacy behavior.",
+    "Implement and verify private-audio persistence plus connection-level private-grant revoke/update and later-phone-update behavior before claiming those capabilities are complete.",
     "Create, inspect, and validate the signed archive after signing and production configuration become available; obtain new approval immediately before any upload or App Store Connect mutation."
   ]
 }

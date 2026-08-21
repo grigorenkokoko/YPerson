@@ -195,3 +195,34 @@ def test_ios_debug_and_release_use_the_existing_gateway() -> None:
     assert f"API_BASE_URL = https:/$()/{gateway}" in release
     assert f"PRIVACY_POLICY_URL = https:/$()/{gateway}/privacy" in base
     assert f"SUPPORT_URL = https:/$()/{gateway}/support" in base
+
+
+def test_serverless_smoke_keeps_qr_and_manual_exchange_credentials_separate() -> None:
+    """Deployment must exercise both credential shapes without printing either secret."""
+
+    script = DEPLOY_SCRIPT.read_text()
+
+    for operation_id in (
+        "smoke-prepare-exchange-qr",
+        "smoke-claim-exchange-qr",
+        "smoke-prepare-exchange-manual",
+        "smoke-claim-exchange-manual",
+    ):
+        assert script.count(operation_id) == 1
+
+    assert 'payload["exchangeMethod"] = os.environ["SMOKE_EXCHANGE_METHOD"]' in script
+    assert 'payload["exchangeToken"] = os.environ["SMOKE_EXCHANGE_TOKEN"]' in script
+    assert 'payload["exchangeCode"] = os.environ["SMOKE_EXCHANGE_CODE"]' in script
+    assert script.count('json_value "${temporary_directory}/prepare-exchange-') == 4
+    assert script.count("exchangeExpiresAt") == 2
+
+    cleanup = script[script.index("finish() {") : script.index("trap finish EXIT")]
+    credential_unset = cleanup.index("unset SMOKE_EXCHANGE_TOKEN SMOKE_EXCHANGE_CODE")
+    assert credential_unset < cleanup.index("delete_smoke_profile")
+    assert credential_unset < cleanup.index("rollback_previous_revision")
+
+    output_lines = [
+        line for line in script.splitlines() if line.lstrip().startswith(("echo ", "printf "))
+    ]
+    assert all("SMOKE_EXCHANGE_TOKEN" not in line for line in output_lines)
+    assert all("SMOKE_EXCHANGE_CODE" not in line for line in output_lines)
