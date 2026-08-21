@@ -140,8 +140,9 @@ final class SyncCoordinator {
     func prepareExchange(
         card: PersonCard,
         method: String,
+        privateFields: PrivateCardFields?,
         greeting: RecordedGreeting? = nil
-    ) async throws -> String {
+    ) async throws -> PreparedExchange {
         guard !syncSuppressed else {
             throw CoordinatorError.deletionInProgress
         }
@@ -151,17 +152,49 @@ final class SyncCoordinator {
         }
         guard let apiClient else { throw CoordinatorError.noProfile }
         let response = try await apiClient.sync(
-            SyncRequest(operation: .prepareExchange, card: card.exchangeCopy, exchangeMethod: method)
+            SyncRequest(
+                operation: .prepareExchange,
+                card: card.exchangeCopy,
+                privateFields: privateFields,
+                exchangeMethod: method
+            )
         )
-        guard let token = response.exchangeToken, !token.isEmpty else {
+        do {
+            return try PreparedExchange.resolve(
+                method: method,
+                exchangeToken: response.exchangeToken,
+                exchangeCode: response.exchangeCode,
+                expiresAt: response.exchangeExpiresAt
+            )
+        } catch {
+            throw APIClient.ClientError.invalidResponse
+        }
+    }
+
+    func prepareExchange(
+        card: PersonCard,
+        method: String,
+        greeting: RecordedGreeting? = nil
+    ) async throws -> String {
+        let prepared = try await prepareExchange(
+            card: card,
+            method: method,
+            privateFields: nil,
+            greeting: greeting
+        )
+        guard let token = prepared.credential.exchangeToken else {
             throw APIClient.ClientError.invalidResponse
         }
         return token
     }
 
-    func cancelExchange(token: String) async {
+    func cancelExchange(credential: ExchangeCredential) async {
         guard !syncSuppressed, let apiClient else { return }
-        let request = SyncRequest(operation: .cancelExchange, exchangeToken: token)
+        let request = SyncRequest(
+            operation: .cancelExchange,
+            exchangeToken: credential.exchangeToken,
+            exchangeCode: credential.exchangeCode
+        )
         snapshotStore?.enqueue(PendingSyncOperation(request: request, expiresAt: nil, localCardID: nil))
         do {
             _ = try await apiClient.sync(request)
@@ -174,8 +207,12 @@ final class SyncCoordinator {
         }
     }
 
+    func cancelExchange(token: String) async {
+        await cancelExchange(credential: .token(token))
+    }
+
     func claimExchange(
-        token: String,
+        credential: ExchangeCredential,
         expiresAt: Date?,
         localCardID: String?,
         ownCard: PersonCard,
@@ -186,7 +223,11 @@ final class SyncCoordinator {
             throw CoordinatorError.ownCardNotPublished
         }
         guard let apiClient else { throw CoordinatorError.noProfile }
-        let request = SyncRequest(operation: .claimExchange, exchangeToken: token)
+        let request = SyncRequest(
+            operation: .claimExchange,
+            exchangeToken: credential.exchangeToken,
+            exchangeCode: credential.exchangeCode
+        )
         let pending = PendingSyncOperation(
             request: request,
             expiresAt: expiresAt,
@@ -206,6 +247,22 @@ final class SyncCoordinator {
             try markExpired(pending)
             throw CoordinatorError.expiredExchange
         }
+    }
+
+    func claimExchange(
+        token: String,
+        expiresAt: Date?,
+        localCardID: String?,
+        ownCard: PersonCard,
+        greeting: RecordedGreeting?
+    ) async throws -> SyncResponse {
+        try await claimExchange(
+            credential: .token(token),
+            expiresAt: expiresAt,
+            localCardID: localCardID,
+            ownCard: ownCard,
+            greeting: greeting
+        )
     }
 
     func submitModeration(

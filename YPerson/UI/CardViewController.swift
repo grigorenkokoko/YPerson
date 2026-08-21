@@ -151,17 +151,21 @@ final class CardViewController: YPBaseViewController {
                 }
             }
             do {
-                let token = try await self.syncCoordinator.prepareExchange(
+                let prepared = try await self.syncCoordinator.prepareExchange(
                     card: card,
                     method: "qr",
+                    privateFields: nil,
                     greeting: self.audio.savedGreeting()
                 )
+                guard case .token(let token) = prepared.credential else {
+                    throw APIClient.ClientError.invalidResponse
+                }
                 guard !Task.isCancelled, self.viewIfLoaded?.window != nil else {
-                    await self.syncCoordinator.cancelExchange(token: token)
+                    await self.syncCoordinator.cancelExchange(credential: .token(token))
                     return
                 }
                 guard let installationID = self.syncCoordinator.installationID else {
-                    await self.syncCoordinator.cancelExchange(token: token)
+                    await self.syncCoordinator.cancelExchange(credential: .token(token))
                     throw SyncCoordinator.CoordinatorError.noProfile
                 }
                 self.preparedQRToken = token
@@ -170,7 +174,7 @@ final class CardViewController: YPBaseViewController {
                     issuerInstallationID: installationID,
                     card: card.exchangeCopy,
                     exchangeToken: token,
-                    expiresAt: Date().addingTimeInterval(10 * 60)
+                    expiresAt: prepared.expiresAt
                 ), isOffline: false)
             } catch where Task.isCancelled {
                 return
@@ -195,7 +199,7 @@ final class CardViewController: YPBaseViewController {
             controller.onClose = { [weak self] in
                 guard let self, self.preparedQRToken == token else { return }
                 self.preparedQRToken = nil
-                Task { await self.syncCoordinator.cancelExchange(token: token) }
+                Task { await self.syncCoordinator.cancelExchange(credential: .token(token)) }
             }
         }
         controller.title = "Мой QR"
@@ -307,7 +311,7 @@ final class CardViewController: YPBaseViewController {
         prepareQRTask?.cancel()
         guard let token = preparedQRToken else { return }
         let coordinator = syncCoordinator
-        Task { @MainActor in await coordinator.cancelExchange(token: token) }
+        Task { @MainActor in await coordinator.cancelExchange(credential: .token(token)) }
     }
 }
 

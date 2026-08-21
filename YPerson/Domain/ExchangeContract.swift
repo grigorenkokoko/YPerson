@@ -42,4 +42,35 @@ enum ExchangeCredential: Equatable {
 struct PreparedExchange: Equatable {
     let credential: ExchangeCredential
     let expiresAt: Date
+
+    enum ResolutionError: Error {
+        case invalidResponse
+    }
+
+    static func resolve(
+        method: String,
+        exchangeToken: String?,
+        exchangeCode: String?,
+        expiresAt: Date?
+    ) throws -> PreparedExchange {
+        guard let expiresAt else { throw ResolutionError.invalidResponse }
+        switch method {
+        case "manual":
+            guard exchangeToken == nil,
+                  let exchangeCode,
+                  let canonical = ManualExchangeCode.normalize(exchangeCode) else {
+                throw ResolutionError.invalidResponse
+            }
+            return PreparedExchange(credential: .code(canonical), expiresAt: expiresAt)
+        case "qr", "bluetooth", "photo":
+            guard exchangeCode == nil,
+                  let exchangeToken,
+                  !exchangeToken.isEmpty else {
+                throw ResolutionError.invalidResponse
+            }
+            return PreparedExchange(credential: .token(exchangeToken), expiresAt: expiresAt)
+        default:
+            throw ResolutionError.invalidResponse
+        }
+    }
 }
