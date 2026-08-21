@@ -57,7 +57,7 @@ YPerson — портретное iPhone-приложение для создан
 - Pending replies are shown to the owner and are not saved as people before confirmation.
 - Revoke immediately blocks HTML, JSON, vCard, and new replies.
 - Pending replies are deleted after owner dismissal/import or 30 days.
-- The web page has no analytics SDK, advertising, cookies, account, indexing, or install wall.
+- The web page has no analytics SDK, advertising, cookies, account, indexing, product navigation, or install wall.
 
 Существующий внутренний QR с payload `yperson:v2:` остаётся офлайн-fallback для обмена между двумя установленными приложениями YPerson. Доставка встречных контактов через APNs отложена до пакета 4; в пакете 1 получение выполняется через foreground /sync.
 
