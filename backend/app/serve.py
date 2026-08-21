@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 import uvicorn
 import ydb
@@ -10,6 +11,7 @@ from fastapi import FastAPI
 from app.main import create_app
 from app.media_service import MediaService
 from app.object_storage import ObjectStorage
+from app.public_cards import PublicCardService
 from app.settings import Settings
 from app.sync_service import SyncService
 from app.ydb_store import YDBSyncStore
@@ -41,13 +43,14 @@ def build_app(settings: Settings | None = None) -> FastAPI:
         return create_app(app_settings)
 
     resources = RuntimeResources(app_settings)
-    store = YDBSyncStore(resources.pool)
+    clock = lambda: datetime.now(UTC)
+    store = YDBSyncStore(resources.pool, clock=clock)
     object_storage = ObjectStorage(
         app_settings.object_bucket,
         app_settings.s3_access_key_id,
         app_settings.s3_secret_access_key,
     )
-    media_service = MediaService(store, object_storage)
+    media_service = MediaService(store, object_storage, clock=clock)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -60,9 +63,11 @@ def build_app(settings: Settings | None = None) -> FastAPI:
         app_settings,
         sync_service=SyncService(
             store,
+            clock=clock,
             media_service=media_service,
             object_cleanup=media_service.delete_objects,
         ),
+        public_card_service=PublicCardService(store, clock=clock),
         lifespan=lifespan,
     )
     application.state.runtime_resources = resources

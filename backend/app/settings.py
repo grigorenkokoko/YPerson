@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     analytics_kill_switch: bool = Field(
         default=False, validation_alias="YPERSON_ANALYTICS_KILL_SWITCH"
     )
+    app_store_id: str = Field(default="", validation_alias="YPERSON_APP_STORE_ID")
+    apple_application_identifier: str = Field(
+        default="Q7A52Z2TS2.com.yperson.app",
+        validation_alias="YPERSON_APPLE_APPLICATION_IDENTIFIER",
+    )
     graceful_shutdown_seconds: int = Field(default=15, validation_alias="GRACEFUL_SHUTDOWN_SECONDS")
     ydb_endpoint: str = Field(default="", validation_alias="YDB_ENDPOINT")
     ydb_database: str = Field(default="", validation_alias="YDB_DATABASE")
