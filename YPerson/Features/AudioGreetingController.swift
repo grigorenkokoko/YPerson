@@ -8,6 +8,10 @@ struct RecordedGreeting {
 }
 
 final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioPlayerDelegate {
+    private struct PublicDraftSelectionMarker: Codable {
+        let selectionID: String
+    }
+
     private enum CommitError: Error {
         case invalidDraft
     }
@@ -29,10 +33,12 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
     var onStateChange: ((State) -> Void)?
     private let committedPublicGreetingURL: URL
     private let draftRecordingURL: URL
+    private let draftSelectionMarkerURL: URL
     private let legacyRecordingURL: URL
     private var committedPublicGreetingIsEnabled = false
     private var draftSelectionIsPublic: Bool?
     private var hasUncommittedDraft = false
+    private var hasStagedRemoval = false
 
     override init() {
         let fileManager = FileManager.default
@@ -45,6 +51,9 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
             withIntermediateDirectories: true
         )
         committedPublicGreetingURL = supportDirectory.appendingPathComponent("greeting.m4a")
+        draftSelectionMarkerURL = supportDirectory.appendingPathComponent(
+            "public-greeting-draft-selection.json"
+        )
         let cacheDirectory = fileManager.urls(
             for: .cachesDirectory,
             in: .userDomainMask
@@ -53,7 +62,14 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
         legacyRecordingURL = cacheDirectory.appendingPathComponent("yperson-greeting.m4a")
         super.init()
         excludeFromBackup(supportDirectory)
-        try? fileManager.removeItem(at: draftRecordingURL)
+    }
+
+    var pendingCardCommitIntent: AudioCardCommitIntent? {
+        if hasStagedRemoval { return .removeCommitted }
+        guard hasUncommittedDraft,
+              draftSelectionIsPublic == true,
+              let selectionID = readDraftSelectionMarker()?.selectionID else { return nil }
+        return .promotePublicDraft(selectionID: selectionID)
     }
 
     var cardAudioDraftStatus: CardAudioDraftStatus {
@@ -92,7 +108,9 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
         do {
             draftSelectionIsPublic = nil
             hasUncommittedDraft = true
+            hasStagedRemoval = false
             try? FileManager.default.removeItem(at: draftRecordingURL)
+            try? FileManager.default.removeItem(at: draftSelectionMarkerURL)
             try audioSession.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker])
             try audioSession.setActive(true)
             let settings: [String: Any] = [
@@ -105,7 +123,7 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
             recorder.delegate = self
             guard recorder.prepareToRecord(), recorder.record() else {
                 try? audioSession.setActive(false)
-                discardUncommittedDraft()
+                discardUncommittedEdits()
                 return
             }
             self.recorder = recorder
@@ -113,14 +131,14 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
             let item = DispatchWorkItem { [weak self] in self?.stopRecording() }
             stopWorkItem = item
             DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: item)
-        } catch { discardUncommittedDraft() }
+        } catch { discardUncommittedEdits() }
     }
 
     func stopRecording() {
         stopWorkItem?.cancel()
         stopWorkItem = nil
         guard let recorder else {
-            discardUncommittedDraft()
+            discardUncommittedEdits()
             return
         }
         let elapsedTime = recorder.currentTime
@@ -229,35 +247,87 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
         }
     }
 
-    func save(isPublic: Bool) {
+    func selectPublicDraft() throws {
         guard hasUncommittedDraft,
               let greeting = validatedGreeting(at: draftRecordingURL) else {
-            discardUncommittedDraft()
-            return
+            discardUncommittedEdits()
+            throw CommitError.invalidDraft
         }
-        draftSelectionIsPublic = isPublic
+        try writeDraftSelectionMarker(
+            PublicDraftSelectionMarker(selectionID: UUID().uuidString.lowercased())
+        )
+        draftSelectionIsPublic = true
         let duration = greeting.duration
-        state = .saved(isPublic: isPublic, duration: duration)
+        state = .saved(isPublic: true, duration: duration)
     }
 
-    func commitDraftForCardSave() throws {
-        guard hasUncommittedDraft, let isPublic = draftSelectionIsPublic else { return }
-        let draftIsValid = validatedGreeting(at: draftRecordingURL) != nil
-        if PublicGreetingCommitPolicy.shouldPromoteDraft(
-            explicitPublicChoice: isPublic,
-            cardSaveSucceeded: true,
-            draftIsValid: draftIsValid
-        ) {
+    func commitEditsForCardSave(
+        authorizedBy record: PendingAudioCardCommitRecord?,
+        currentCard: PersonCard,
+        pendingOperations: [PendingSyncOperation]
+    ) throws {
+        guard hasUncommittedDraft || hasStagedRemoval else { return }
+        guard let record,
+              AudioCardCommitRecoveryPolicy.authorizes(
+                  record: record,
+                  markerSelectionID: readDraftSelectionMarker()?.selectionID,
+                  currentCard: currentCard,
+                  pendingOperations: pendingOperations
+              ) else { throw CommitError.invalidDraft }
+        try applyAuthorizedCardAudioCommit(record)
+    }
+
+    @discardableResult
+    func recoverPendingCardAudioCommit(
+        _ record: PendingAudioCardCommitRecord?,
+        currentCard: PersonCard?,
+        pendingOperations: [PendingSyncOperation]
+    ) -> Bool {
+        guard let record,
+              AudioCardCommitRecoveryPolicy.authorizes(
+                  record: record,
+                  markerSelectionID: readDraftSelectionMarker()?.selectionID,
+                  currentCard: currentCard,
+                  pendingOperations: pendingOperations
+              ) else {
+            discardUncommittedEdits()
+            return false
+        }
+        do {
+            try applyAuthorizedCardAudioCommit(record)
+            return true
+        } catch {
+            discardUncommittedEdits()
+            return false
+        }
+    }
+
+    private func applyAuthorizedCardAudioCommit(
+        _ record: PendingAudioCardCommitRecord
+    ) throws {
+        switch record.intent.kind {
+        case .promotePublicDraft:
+            guard validatedGreeting(at: draftRecordingURL) != nil else {
+                throw CommitError.invalidDraft
+            }
             try promoteDraftToCommittedPublicGreeting()
             committedPublicGreetingIsEnabled = true
-        } else if isPublic {
-            throw CommitError.invalidDraft
-        } else {
-            committedPublicGreetingIsEnabled = false
+        case .removeCommitted:
             try? FileManager.default.removeItem(at: committedPublicGreetingURL)
+            try? FileManager.default.removeItem(at: legacyRecordingURL)
+            committedPublicGreetingIsEnabled = false
         }
+        try? FileManager.default.removeItem(at: draftRecordingURL)
+        try? FileManager.default.removeItem(at: draftSelectionMarkerURL)
         draftSelectionIsPublic = nil
         hasUncommittedDraft = false
+        hasStagedRemoval = false
+        if committedPublicGreetingIsEnabled,
+           let greeting = validatedCommittedPublicGreeting() {
+            state = .saved(isPublic: true, duration: greeting.duration)
+        } else {
+            state = .empty
+        }
     }
 
     private func promoteDraftToCommittedPublicGreeting() throws {
@@ -267,8 +337,35 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
         try? FileManager.default.removeItem(at: draftRecordingURL)
     }
 
-    func discardUncommittedDraft() {
-        guard hasUncommittedDraft else { return }
+    private func writeDraftSelectionMarker(
+        _ marker: PublicDraftSelectionMarker
+    ) throws {
+        try JSONEncoder().encode(marker).write(
+            to: draftSelectionMarkerURL,
+            options: .atomic
+        )
+    }
+
+    private func readDraftSelectionMarker() -> PublicDraftSelectionMarker? {
+        guard let data = try? Data(contentsOf: draftSelectionMarkerURL) else { return nil }
+        return try? JSONDecoder().decode(PublicDraftSelectionMarker.self, from: data)
+    }
+
+    func stageRemovalForCardSave() {
+        stopWorkItem?.cancel()
+        recorder?.stop()
+        recorder = nil
+        player?.stop()
+        player = nil
+        try? FileManager.default.removeItem(at: draftRecordingURL)
+        try? FileManager.default.removeItem(at: draftSelectionMarkerURL)
+        draftSelectionIsPublic = nil
+        hasUncommittedDraft = false
+        hasStagedRemoval = true
+        state = .empty
+    }
+
+    func discardUncommittedEdits() {
         stopWorkItem?.cancel()
         stopWorkItem = nil
         recorder?.stop()
@@ -277,8 +374,10 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
         player = nil
         try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
         try? FileManager.default.removeItem(at: draftRecordingURL)
+        try? FileManager.default.removeItem(at: draftSelectionMarkerURL)
         draftSelectionIsPublic = nil
         hasUncommittedDraft = false
+        hasStagedRemoval = false
         if committedPublicGreetingIsEnabled,
            let greeting = validatedCommittedPublicGreeting() {
             state = .saved(isPublic: true, duration: greeting.duration)
@@ -294,9 +393,11 @@ final class AudioGreetingController: NSObject, AVAudioRecorderDelegate, AVAudioP
         try? FileManager.default.removeItem(at: draftRecordingURL)
         try? FileManager.default.removeItem(at: committedPublicGreetingURL)
         try? FileManager.default.removeItem(at: legacyRecordingURL)
+        try? FileManager.default.removeItem(at: draftSelectionMarkerURL)
         committedPublicGreetingIsEnabled = false
         draftSelectionIsPublic = nil
         hasUncommittedDraft = false
+        hasStagedRemoval = false
         state = .empty
     }
 

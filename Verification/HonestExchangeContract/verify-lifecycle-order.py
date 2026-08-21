@@ -584,6 +584,8 @@ ordered(
 make_root = function_body(app_factory, "func makeRootViewController(")
 ordered(
     make_root,
+    "audio.recoverPendingCardAudioCommit(",
+    "clearPendingAudioCardCommitRecord(ifCurrent:",
     "audio.restoreSavedPublicGreetingIfAvailable(",
     "syncCoordinator.publicationGreetingProvider =",
     "refreshPeople()",
@@ -609,7 +611,10 @@ require(
     "audio draft and committed public greeting do not have distinct paths",
 )
 audio_init = function_body(audio_controller, "override init()")
-ordered(audio_init, "draftRecordingURL =", "removeItem(at: draftRecordingURL)")
+require(
+    "removeItem(at: draftRecordingURL)" not in audio_init,
+    "audio init deletes a crash-recoverable explicit-public draft before provenance is checked",
+)
 require(
     "migrateLegacyRecordingIfNeeded" not in audio_controller,
     "untrusted legacy audio is auto-promoted",
@@ -631,22 +636,39 @@ ordered(
     "stateBeforeExternalPlayback = previousState",
     "state = .playing",
 )
-audio_save = function_body(audio_controller, "func save(isPublic:")
+audio_save = function_body(audio_controller, "func selectPublicDraft()")
 require(
     "promoteDraftToCommittedPublicGreeting" not in audio_save,
     "public selection promotes the draft before Card Done succeeds",
 )
 ordered(
     audio_save,
-    "draftSelectionIsPublic = isPublic",
-    "state = .saved(isPublic: isPublic",
+    "writeDraftSelectionMarker",
+    "state = .saved(isPublic: true",
 )
-audio_commit = function_body(audio_controller, "func commitDraftForCardSave()")
+audio_commit = function_body(audio_controller, "func commitEditsForCardSave(")
 ordered(
     audio_commit,
-    "PublicGreetingCommitPolicy.shouldPromoteDraft(",
+    "AudioCardCommitRecoveryPolicy.authorizes(",
+    "applyAuthorizedCardAudioCommit",
+)
+audio_apply_commit = function_body(
+    audio_controller,
+    "private func applyAuthorizedCardAudioCommit(",
+)
+ordered(
+    audio_apply_commit,
+    "case .promotePublicDraft:",
     "promoteDraftToCommittedPublicGreeting()",
-    "committedPublicGreetingIsEnabled = true",
+    "case .removeCommitted:",
+    "removeItem(at: committedPublicGreetingURL)",
+)
+audio_recovery = function_body(audio_controller, "func recoverPendingCardAudioCommit(")
+ordered(
+    audio_recovery,
+    "AudioCardCommitRecoveryPolicy.authorizes(",
+    "applyAuthorizedCardAudioCommit",
+    "discardUncommittedEdits",
 )
 audio_restore = function_body(
     audio_controller,
@@ -664,24 +686,50 @@ require(
     and "draftRecordingURL" not in audio_provider,
     "publication provider can read an uncommitted draft",
 )
+audio_stage_removal = function_body(audio_controller, "func stageRemovalForCardSave()")
+require(
+    "committedPublicGreetingURL" not in audio_stage_removal
+    and "legacyRecordingURL" not in audio_stage_removal,
+    "editor deletion removes committed audio before durable Card Done",
+)
+audio_discard = function_body(audio_controller, "func discardUncommittedEdits()")
+require(
+    "validatedCommittedPublicGreeting()" in audio_discard
+    and "state = .saved(isPublic: true" in audio_discard,
+    "Back cannot restore the previously committed public greeting",
+)
 audio_delete = function_body(audio_controller, "func delete()")
 for path_marker in (
     "draftRecordingURL",
     "committedPublicGreetingURL",
     "legacyRecordingURL",
+    "draftSelectionMarkerURL",
 ):
     require(path_marker in audio_delete, f"audio deletion does not remove {path_marker}")
 
 card_editor = source("YPerson/UI/CardEditorViewController.swift")
 editor_detach = function_body(card_editor, "override func didMove(toParent parent:")
-ordered(editor_detach, "parent == nil", "audio.discardUncommittedDraft()")
+ordered(editor_detach, "parent == nil", "audio.discardUncommittedEdits()")
+require(
+    "Только в закрытой карточке" not in card_editor
+    and "Закрытая запись передаётся" not in card_editor,
+    "production audio UI still offers unsupported private audio",
+)
+confirm_audio_delete = function_body(card_editor, "private func confirmDelete()")
+require(
+    "audio.stageRemovalForCardSave()" in confirm_audio_delete
+    and "audio.delete()" not in confirm_audio_delete,
+    "editor deletion physically removes committed audio before Card Done",
+)
 
 card_source = source("YPerson/UI/CardViewController.swift")
 card_save = function_body(card_source, "@objc private func editCard()")
 ordered(
     card_save,
     "syncCoordinator.saveUserCardForPublication(",
-    "audio.commitDraftForCardSave()",
+    "audioCommitIntent: self.audio.pendingCardCommitIntent",
+    "audio.commitEditsForCardSave(",
+    "completeAudioCardCommit(",
     "captureProfileOperationContext()",
     "audio.savedGreeting()",
     "publishTask = Task",
@@ -695,6 +743,7 @@ store_source = source("YPerson/Storage/AppGroupSnapshotStore.swift")
 atomic_save = function_body(store_source, "func writeOwnCardAndStagePublication(")
 ordered(
     atomic_save,
+    "audioCommitIntent: audioCommitIntent",
     "defaults.set(try encoder.encode(journal)",
     "recoverPendingCardPublication()",
 )
@@ -703,7 +752,21 @@ ordered(
     recover_publication,
     "writeOwnCard(journal.card)",
     "enqueue(journal.operation)",
+    "pendingAudioCardCommitRecord",
     "pendingCardPublicationJournal = nil",
+)
+
+nearby_claim = function_body(source("YPerson/UI/ExchangeViewController.swift"), "private func claimNearby(")
+ordered(
+    nearby_claim,
+    "ownedCredential.generation == generation",
+    "isCurrentProfileOperationContext(ownedCredential.context)",
+    "NearbyPeerClaimPolicy.claimablePeerToken(",
+    "credential: .token(peerToken)",
+)
+require(
+    "ownedCredential.credential == .token(token)" not in nearby_claim,
+    "Bluetooth still requires the received peer token to equal the local token",
 )
 
 audio_recovery_request = function_body(

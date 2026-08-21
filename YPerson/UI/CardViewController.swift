@@ -285,11 +285,19 @@ final class CardViewController: YPBaseViewController {
                 throw CardSaveError.profileLifecycleChanged
             }
             if self.persistsChanges {
-                try self.syncCoordinator.saveUserCardForPublication(
+                let audioCommit = try self.syncCoordinator.saveUserCardForPublication(
                     updatedCard,
-                    allowsProfileReactivation: isNew
+                    allowsProfileReactivation: isNew,
+                    audioCommitIntent: self.audio.pendingCardCommitIntent
                 )
-                try self.audio.commitDraftForCardSave()
+                try self.audio.commitEditsForCardSave(
+                    authorizedBy: audioCommit,
+                    currentCard: updatedCard,
+                    pendingOperations: self.snapshotStore?.pendingOperations ?? []
+                )
+                if let audioCommit {
+                    self.syncCoordinator.completeAudioCardCommit(audioCommit)
+                }
             }
             self.lifecycleGeneration = UUID()
             let profileGeneration = self.lifecycleGeneration

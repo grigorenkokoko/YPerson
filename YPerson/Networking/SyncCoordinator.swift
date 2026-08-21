@@ -484,10 +484,12 @@ final class SyncCoordinator {
         }
     }
 
+    @discardableResult
     func saveUserCardForPublication(
         _ card: PersonCard,
-        allowsProfileReactivation: Bool
-    ) throws {
+        allowsProfileReactivation: Bool,
+        audioCommitIntent: AudioCardCommitIntent? = nil
+    ) throws -> PendingAudioCardCommitRecord? {
         guard let snapshotStore else { throw CoordinatorError.localStorageUnavailable }
         guard profileLifecycle.state != .deleting else {
             throw CoordinatorError.deletionInProgress
@@ -507,7 +509,17 @@ final class SyncCoordinator {
             snapshotStore.profileTerminallyDeleted = false
         }
         do {
-            try snapshotStore.writeOwnCardAndStagePublication(card)
+            let operation = try snapshotStore.writeOwnCardAndStagePublication(
+                card,
+                audioCommitIntent: audioCommitIntent
+            )
+            guard let record = snapshotStore.pendingAudioCardCommitRecord,
+                  record.publicationOperationID == operation.id else {
+                if reactivatesProfile { onProfileReactivated?() }
+                return nil
+            }
+            if reactivatesProfile { onProfileReactivated?() }
+            return record
         } catch {
             snapshotStore.pendingCardPublicationJournal = nil
             if reactivatesProfile {
@@ -516,7 +528,10 @@ final class SyncCoordinator {
             }
             throw error
         }
-        if reactivatesProfile { onProfileReactivated?() }
+    }
+
+    func completeAudioCardCommit(_ record: PendingAudioCardCommitRecord) {
+        snapshotStore?.clearPendingAudioCardCommitRecord(ifCurrent: record)
     }
 
     private func explicitProfileClient() throws -> APIClient {

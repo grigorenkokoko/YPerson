@@ -1,6 +1,6 @@
 import Foundation
 
-private let harnessVersion = 8
+private let harnessVersion = 9
 
 private func require(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() { fatalError(message) }
@@ -103,6 +103,28 @@ let codePrepared = try PreparedExchange.resolve(
     exchangeToken: nil,
     exchangeCode: "yp 0123 4567 89ab",
     expiresAt: expiry
+)
+
+require(
+    NearbyPeerClaimPolicy.claimablePeerToken(
+        receivedPeerToken: "peer-token",
+        localOwnedCredential: .token("local-token")
+    ) == "peer-token",
+    "Bluetooth rejected the distinct peer token after validating local ownership"
+)
+require(
+    NearbyPeerClaimPolicy.claimablePeerToken(
+        receivedPeerToken: "local-token",
+        localOwnedCredential: .token("local-token")
+    ) == nil,
+    "Bluetooth accepted its own locally prepared token as the peer claim"
+)
+require(
+    NearbyPeerClaimPolicy.claimablePeerToken(
+        receivedPeerToken: "",
+        localOwnedCredential: .token("local-token")
+    ) == nil,
+    "Bluetooth accepted an empty peer token"
 )
 require(codePrepared.credential.exchangeToken == nil, "code was duplicated as a token")
 require(
@@ -525,6 +547,97 @@ require(
     "audio playback synthesized a source without a draft or committed greeting"
 )
 
+let publicDraftIntent = AudioCardCommitIntent.promotePublicDraft(
+    selectionID: "explicit-public-selection"
+)
+let publicDraftRecord = PendingAudioCardCommitRecord(
+    intent: publicDraftIntent,
+    publicationOperationID: "public-audio-publication",
+    cardID: card.id
+)
+let publicDraftOperation = PendingSyncOperation(
+    request: SyncRequest(
+        operation: .publishCard,
+        operationID: publicDraftRecord.publicationOperationID,
+        card: PersonCard(
+            id: card.id,
+            name: card.name,
+            role: card.role,
+            company: card.company,
+            phone: card.phone,
+            email: card.email,
+            tagline: card.tagline,
+            hasAudioGreeting: true,
+            meetingPlace: card.meetingPlace,
+            isBlocked: false
+        ).exchangeCopy
+    ),
+    expiresAt: nil,
+    localCardID: nil
+)
+require(
+    AudioCardCommitRecoveryPolicy.authorizes(
+        record: publicDraftRecord,
+        markerSelectionID: "explicit-public-selection",
+        currentCard: publicDraftOperation.request.card,
+        pendingOperations: [publicDraftOperation]
+    ),
+    "a crash-recovered explicit-public draft lost its durable Card Done provenance"
+)
+require(
+    !AudioCardCommitRecoveryPolicy.authorizes(
+        record: publicDraftRecord,
+        markerSelectionID: "explicit-public-selection",
+        currentCard: publicDraftOperation.request.card,
+        pendingOperations: []
+    ),
+    "public selection alone promoted a draft without a pending card publication"
+)
+require(
+    !AudioCardCommitRecoveryPolicy.authorizes(
+        record: publicDraftRecord,
+        markerSelectionID: "different-selection",
+        currentCard: publicDraftOperation.request.card,
+        pendingOperations: [publicDraftOperation]
+    ),
+    "a stale draft marker borrowed a newer publication provenance"
+)
+let removalRecord = PendingAudioCardCommitRecord(
+    intent: .removeCommitted,
+    publicationOperationID: "audio-removal-publication",
+    cardID: card.id
+)
+let removalCard = PersonCard(
+    id: card.id,
+    name: card.name,
+    role: card.role,
+    company: card.company,
+    phone: card.phone,
+    email: card.email,
+    tagline: card.tagline,
+    hasAudioGreeting: false,
+    meetingPlace: card.meetingPlace,
+    isBlocked: false
+)
+let removalOperation = PendingSyncOperation(
+    request: SyncRequest(
+        operation: .publishCard,
+        operationID: removalRecord.publicationOperationID,
+        card: removalCard.exchangeCopy
+    ),
+    expiresAt: nil,
+    localCardID: nil
+)
+require(
+    AudioCardCommitRecoveryPolicy.authorizes(
+        record: removalRecord,
+        markerSelectionID: nil,
+        currentCard: removalCard,
+        pendingOperations: [removalOperation]
+    ),
+    "a successful durable card save did not authorize its staged audio removal"
+)
+
 var deletionAttempts = ProfileDeletionAttemptOwnership()
 let firstDeletionAttempt = deletionAttempts.begin()
 require(
@@ -697,6 +810,30 @@ require(recoveredStore.readOwnCard() == atomicallySavedCard, "atomic save did no
 require(
     recoveredStore.pendingOperations == [atomicallyStaged],
     "atomic save did not compact to the matching publication intent"
+)
+let crashAudioOperation = try recoveredStore.writeOwnCardAndStagePublication(
+    journalCard,
+    audioCommitIntent: publicDraftIntent
+)
+require(
+    recoveredStore.pendingAudioCardCommitRecord == PendingAudioCardCommitRecord(
+        intent: publicDraftIntent,
+        publicationOperationID: crashAudioOperation.id,
+        cardID: journalCard.id
+    ),
+    "Card Done did not durably bind the public draft to its publication intent"
+)
+let stagedRemovalOperation = try recoveredStore.writeOwnCardAndStagePublication(
+    atomicallySavedCard,
+    audioCommitIntent: .removeCommitted
+)
+require(
+    recoveredStore.pendingAudioCardCommitRecord == PendingAudioCardCommitRecord(
+        intent: .removeCommitted,
+        publicationOperationID: stagedRemovalOperation.id,
+        cardID: atomicallySavedCard.id
+    ),
+    "audio deletion was not staged as a crash-safe card-save tombstone"
 )
 store.pendingOperations = []
 store.profileDeletionRecord = deletionRecord

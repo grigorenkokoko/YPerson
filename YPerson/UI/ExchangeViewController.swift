@@ -452,9 +452,12 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private func claimNearby(token: String, generation: UUID) {
         guard lifecycleGeneration == generation,
               let ownedCredential = nearbyCredential,
-              ownedCredential.credential == .token(token),
               ownedCredential.generation == generation,
               syncCoordinator.isCurrentProfileOperationContext(ownedCredential.context),
+              let peerToken = NearbyPeerClaimPolicy.claimablePeerToken(
+                  receivedPeerToken: token,
+                  localOwnedCredential: ownedCredential.credential
+              ),
               let originatingOwnCard = ownCard() else { return }
         let profileContext = ownedCredential.context
         let greeting = audio.savedGreeting()
@@ -467,7 +470,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             defer { self.claimTasks.removeValue(forKey: taskID) }
             do {
                 let response = try await claimExchange(
-                    credential: .token(token),
+                    credential: .token(peerToken),
                     expiresAt: nil,
                     localCardID: nil,
                     ownCard: originatingOwnCard,

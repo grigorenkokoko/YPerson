@@ -103,6 +103,15 @@ final class YPersonExperienceBuilder {
             savedPeople = [.reviewAlexey, .reviewMaria]
         }
 #endif
+        let pendingAudioCommit = snapshotStore?.pendingAudioCardCommitRecord
+        _ = audio.recoverPendingCardAudioCommit(
+            pendingAudioCommit,
+            currentCard: ownCard,
+            pendingOperations: snapshotStore?.pendingOperations ?? []
+        )
+        if let pendingAudioCommit {
+            snapshotStore?.clearPendingAudioCardCommitRecord(ifCurrent: pendingAudioCommit)
+        }
         audio.restoreSavedPublicGreetingIfAvailable(
             expected: ownCard?.hasAudioGreeting == true
         )

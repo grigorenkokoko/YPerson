@@ -244,9 +244,97 @@ struct PublicationCardOwnership: Equatable {
     }
 }
 
+struct AudioCardCommitIntent: Codable, Equatable {
+    enum Kind: String, Codable {
+        case promotePublicDraft
+        case removeCommitted
+    }
+
+    let kind: Kind
+    let draftSelectionID: String?
+
+    static func promotePublicDraft(selectionID: String) -> Self {
+        Self(kind: .promotePublicDraft, draftSelectionID: selectionID)
+    }
+
+    static let removeCommitted = Self(
+        kind: .removeCommitted,
+        draftSelectionID: nil
+    )
+
+    private init(kind: Kind, draftSelectionID: String?) {
+        self.kind = kind
+        self.draftSelectionID = draftSelectionID
+    }
+}
+
+struct PendingAudioCardCommitRecord: Codable, Equatable {
+    let intent: AudioCardCommitIntent
+    let publicationOperationID: String
+    let cardID: String
+}
+
+enum AudioCardCommitRecoveryPolicy {
+    static func authorizes(
+        record: PendingAudioCardCommitRecord,
+        markerSelectionID: String?,
+        currentCard: PersonCard?,
+        pendingOperations: [PendingSyncOperation]
+    ) -> Bool {
+        guard !record.publicationOperationID.isEmpty,
+              !record.cardID.isEmpty,
+              let currentCard,
+              currentCard.id == record.cardID,
+              let operation = pendingOperations.first(where: {
+                  $0.id == record.publicationOperationID
+              }),
+              operation.request.operation == .publishCard,
+              operation.request.card?.id == record.cardID else { return false }
+        switch record.intent.kind {
+        case .promotePublicDraft:
+            guard let selectionID = record.intent.draftSelectionID,
+                  !selectionID.isEmpty else { return false }
+            return markerSelectionID == selectionID
+                && currentCard.hasAudioGreeting
+                && operation.request.card?.hasAudioGreeting == true
+        case .removeCommitted:
+            return record.intent.draftSelectionID == nil
+                && !currentCard.hasAudioGreeting
+                && operation.request.card?.hasAudioGreeting == false
+        }
+    }
+}
+
 struct CardPublicationJournal: Codable, Equatable {
     let card: PersonCard
     let operation: PendingSyncOperation
+    let audioCommitIntent: AudioCardCommitIntent?
+
+    init(
+        card: PersonCard,
+        operation: PendingSyncOperation,
+        audioCommitIntent: AudioCardCommitIntent? = nil
+    ) {
+        self.card = card
+        self.operation = operation
+        self.audioCommitIntent = audioCommitIntent
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case card
+        case operation
+        case audioCommitIntent
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        card = try container.decode(PersonCard.self, forKey: .card)
+        operation = try container.decode(PendingSyncOperation.self, forKey: .operation)
+        audioCommitIntent = try container.decodeIfPresent(
+            AudioCardCommitIntent.self,
+            forKey: .audioCommitIntent
+        )
+    }
 }
 
 enum ProfileBootstrapCredentialPolicy {
@@ -297,6 +385,18 @@ enum PublicGreetingCommitPolicy {
     ) -> PlaybackSource {
         if hasUncommittedDraft { return .draft }
         return committedPublicEnabled ? .committedPublic : .none
+    }
+}
+
+enum NearbyPeerClaimPolicy {
+    static func claimablePeerToken(
+        receivedPeerToken: String,
+        localOwnedCredential: ExchangeCredential
+    ) -> String? {
+        guard case .token(let localToken) = localOwnedCredential,
+              !receivedPeerToken.isEmpty,
+              receivedPeerToken != localToken else { return nil }
+        return receivedPeerToken
     }
 }
 

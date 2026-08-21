@@ -18,6 +18,7 @@ final class AppGroupSnapshotStore {
         static let profileDeletionRecord = "yperson.v3.profile_deletion_record"
         static let cardPublicationJournal = "yperson.v4.card_publication_journal"
         static let pendingPushTokenSyncRecord = "yperson.v4.pending_push_token_sync_record"
+        static let pendingAudioCardCommitRecord = "yperson.v5.pending_audio_card_commit_record"
 
         enum Legacy {
             static let ownCard = "own_card"
@@ -39,7 +40,10 @@ final class AppGroupSnapshotStore {
     }
 
     @discardableResult
-    func writeOwnCardAndStagePublication(_ card: PersonCard) throws -> PendingSyncOperation {
+    func writeOwnCardAndStagePublication(
+        _ card: PersonCard,
+        audioCommitIntent: AudioCardCommitIntent? = nil
+    ) throws -> PendingSyncOperation {
         let operation = PendingSyncOperation(
             request: SyncRequest(operation: .publishCard, card: card.exchangeCopy),
             expiresAt: nil,
@@ -47,7 +51,8 @@ final class AppGroupSnapshotStore {
         )
         let journal = CardPublicationJournal(
             card: card,
-            operation: operation
+            operation: operation,
+            audioCommitIntent: audioCommitIntent
         )
         defaults.set(try encoder.encode(journal), forKey: Key.cardPublicationJournal)
         try recoverPendingCardPublication()
@@ -72,7 +77,44 @@ final class AppGroupSnapshotStore {
         guard let journal = pendingCardPublicationJournal else { return }
         try writeOwnCard(journal.card)
         enqueue(journal.operation)
+        if let intent = journal.audioCommitIntent {
+            pendingAudioCardCommitRecord = PendingAudioCardCommitRecord(
+                intent: intent,
+                publicationOperationID: journal.operation.id,
+                cardID: journal.card.id
+            )
+        } else {
+            pendingAudioCardCommitRecord = nil
+        }
         pendingCardPublicationJournal = nil
+    }
+
+    var pendingAudioCardCommitRecord: PendingAudioCardCommitRecord? {
+        get {
+            guard let data = defaults.data(forKey: Key.pendingAudioCardCommitRecord) else {
+                return nil
+            }
+            return try? decoder.decode(PendingAudioCardCommitRecord.self, from: data)
+        }
+        set {
+            if let newValue {
+                defaults.set(
+                    try? encoder.encode(newValue),
+                    forKey: Key.pendingAudioCardCommitRecord
+                )
+            } else {
+                defaults.removeObject(forKey: Key.pendingAudioCardCommitRecord)
+            }
+        }
+    }
+
+    @discardableResult
+    func clearPendingAudioCardCommitRecord(
+        ifCurrent record: PendingAudioCardCommitRecord
+    ) -> Bool {
+        guard pendingAudioCardCommitRecord == record else { return false }
+        pendingAudioCardCommitRecord = nil
+        return true
     }
 
     @discardableResult
@@ -346,6 +388,7 @@ final class AppGroupSnapshotStore {
             Key.pendingAPNSRemoval,
             Key.cardPublicationJournal,
             Key.pendingPushTokenSyncRecord,
+            Key.pendingAudioCardCommitRecord,
             Key.Legacy.ownCard,
             Key.Legacy.obsoleteWidgetSnapshot,
             Key.Legacy.remoteConfiguration,
