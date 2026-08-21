@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from hmac import compare_digest
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -1259,6 +1260,31 @@ def test_schema_v2_defines_public_link_and_reply_tables() -> None:
     assert 'TTL = Interval("PT0S") ON expires_at' in ddl
 
 
+def test_schema_rejects_public_replies_without_required_ttl() -> None:
+    from app.ydb_schema import EXPECTED_TABLES, SchemaMismatch, apply_schema
+
+    class SchemaPool:
+        def execute_with_retries(
+            self,
+            _query: str,
+            *,
+            retry_settings: ydb.RetrySettings,
+        ) -> None:
+            assert retry_settings.idempotent
+
+    def describe_table(table_name: str) -> SimpleNamespace:
+        table = EXPECTED_TABLES[table_name]
+        return SimpleNamespace(
+            columns=[ydb.Column(name, column_type) for name, column_type in table.columns],
+            primary_key=list(table.primary_key),
+            indexes=[ydb.TableIndex(name) for name in table.indexes],
+            ttl_settings=None,
+        )
+
+    with pytest.raises(SchemaMismatch, match="public_replies"):
+        apply_schema(SchemaPool(), describe_table)  # type: ignore[arg-type]
+
+
 def test_public_link_activation_replaces_owner_token_and_resolves_only_digest(
     card: PersonCard,
 ) -> None:
@@ -1275,6 +1301,14 @@ def test_public_link_activation_replaces_owner_token_and_resolves_only_digest(
                 if operation_type is not None
                 else []
             )
+            return [ResultSet(rows)]
+        if "FROM public_links VIEW by_token" in query:
+            token_hash = _parameter(parameters, "$token_hash")
+            rows = [
+                {"owner_installation_id": owner}
+                for owner, (stored_hash, _card_json) in links.items()
+                if stored_hash == token_hash
+            ]
             return [ResultSet(rows)]
         if "UPSERT INTO public_links" in query:
             links[owner] = (
@@ -1318,6 +1352,70 @@ def test_public_link_activation_replaces_owner_token_and_resolves_only_digest(
     all_calls = repr(pool.transaction_calls + pool.read_calls)
     assert old_token not in all_calls
     assert new_token not in all_calls
+
+
+def test_public_link_activation_rejects_token_owned_by_another_installation(
+    card: PersonCard,
+) -> None:
+    token_hash = sha256(b"copied-public-token").digest()
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "FROM public_links VIEW by_token" in query:
+            return [ResultSet([{"owner_installation_id": "installation-other"}])]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    adapter = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    with pytest.raises(StorageConflict, match="public link unavailable"):
+        adapter.activate_public_link(
+            "installation-owner",
+            "op-link-collision",
+            "copied-public-token",
+            card,
+        )
+
+    assert not any("UPSERT INTO public_links" in query for query, _ in pool.transaction_calls)
+    assert any(
+        _parameter(parameters, "$token_hash") == token_hash
+        for query, parameters in pool.transaction_calls
+        if "FROM public_links VIEW by_token" in query
+    )
+
+
+def test_public_link_activation_replay_remains_idempotent_for_same_owner(
+    card: PersonCard,
+) -> None:
+    completed = False
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        nonlocal completed
+        if "FROM operations" in query:
+            rows = (
+                [{"operation_type": "activatePublicLink", "result_json": "{}"}]
+                if completed
+                else []
+            )
+            return [ResultSet(rows)]
+        if "FROM public_links VIEW by_token" in query:
+            return [ResultSet([{"owner_installation_id": "installation-owner"}])]
+        if "UPSERT INTO public_links" in query:
+            completed = True
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    adapter = YDBSyncStore(pool)  # type: ignore[arg-type]
+    for _ in range(2):
+        adapter.activate_public_link(
+            "installation-owner",
+            "op-link-replay",
+            "same-owner-token",
+            card,
+        )
+
+    assert sum("UPSERT INTO public_links" in query for query, _ in pool.transaction_calls) == 1
 
 
 def test_revoked_public_link_does_not_resolve_or_accept_reply(card: PersonCard) -> None:
@@ -1505,6 +1603,47 @@ def test_refresh_returns_public_state_and_replies_in_stable_order(card: PersonCa
             created_at=created_at,
         ),
     )
+
+
+def test_refresh_excludes_expired_public_replies() -> None:
+    now = datetime(2026, 8, 21, 12, tzinfo=UTC)
+    expired = {
+        "reply_id": "123e4567-e89b-12d3-a456-426614174000",
+        "name": "Expired",
+        "email": "expired@example.invalid",
+        "phone": None,
+        "created_at": now - timedelta(days=31),
+        "expires_at": now - timedelta(seconds=1),
+    }
+    active = {
+        "reply_id": "123e4567-e89b-12d3-a456-426614174001",
+        "name": "Active",
+        "email": "active@example.invalid",
+        "phone": None,
+        "created_at": now - timedelta(days=1),
+        "expires_at": now + timedelta(days=29),
+    }
+
+    def read_handler(query: str, parameters: dict[str, Any]) -> list[ResultSet]:
+        replies = [expired, active]
+        if "expires_at > $now" in query:
+            query_now = _parameter(parameters, "$now")
+            replies = [reply for reply in replies if reply["expires_at"] > query_now]
+        return [
+            ResultSet([]),
+            ResultSet([]),
+            ResultSet([]),
+            ResultSet([]),
+            ResultSet(replies),
+        ]
+
+    pool = ScriptedPool(transaction_handler=lambda _query, _parameters: [], read_handler=read_handler)
+    snapshot = YDBSyncStore(pool, clock=lambda: now).refresh(  # type: ignore[arg-type]
+        "installation-owner",
+        None,
+    )
+
+    assert [reply.name for reply in snapshot.public_replies] == ["Active"]
 
 
 def test_delete_profile_cleans_up_public_link_and_replies(card: PersonCard) -> None:

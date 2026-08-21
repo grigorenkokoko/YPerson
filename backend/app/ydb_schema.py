@@ -20,6 +20,7 @@ class TableSchema:
     columns: tuple[tuple[str, object], ...]
     primary_key: tuple[str, ...]
     indexes: tuple[str, ...] = ()
+    ttl: tuple[str, int] | None = None
 
 
 _UTF8_OPTIONAL = ydb.OptionalType(ydb.PrimitiveType.Utf8)
@@ -132,6 +133,7 @@ EXPECTED_TABLES: Final[dict[str, TableSchema]] = {
             ("expires_at", ydb.PrimitiveType.Timestamp),
         ),
         primary_key=("owner_installation_id", "reply_id"),
+        ttl=("expires_at", 0),
     ),
 }
 
@@ -269,10 +271,21 @@ def _verify_schema(describe_table: Callable[[str], object]) -> None:
         expected_columns = dict(expected.columns)
         primary_key = tuple(getattr(description, "primary_key", ()))
         index_names = tuple(index.name for index in getattr(description, "indexes", ()))
+        ttl_settings = getattr(description, "ttl_settings", None)
+        date_type_column = getattr(ttl_settings, "date_type_column", None)
+        actual_ttl = (
+            (
+                getattr(date_type_column, "column_name", None),
+                getattr(date_type_column, "expire_after_seconds", None),
+            )
+            if date_type_column is not None
+            else None
+        )
         if (
             actual_columns.keys() != expected_columns.keys()
             or any(actual_columns[name] != column_type for name, column_type in expected.columns)
             or primary_key != expected.primary_key
             or any(index_name not in index_names for index_name in expected.indexes)
+            or (expected.ttl is not None and actual_ttl != expected.ttl)
         ):
             raise SchemaMismatch(f"incompatible YDB schema version {SCHEMA_VERSION}: {table_name}")

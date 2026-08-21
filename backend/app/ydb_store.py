@@ -463,8 +463,10 @@ class YDBSyncStore:
         )[0]
 
     def refresh(self, installation_id: str, cursor: str | None) -> SyncSnapshot:
+        now = self._clock()
         query = """
         DECLARE $installation_id AS Utf8;
+        DECLARE $now AS Timestamp;
 
         SELECT version, card_json
         FROM cards
@@ -495,11 +497,15 @@ class YDBSyncStore:
         SELECT reply_id, name, email, phone, created_at
         FROM public_replies
         WHERE owner_installation_id = $installation_id
+          AND expires_at > $now
         ORDER BY created_at, reply_id;
         """
         result_sets = self._execute(
             query,
-            {"$installation_id": _utf8(installation_id)},
+            {
+                "$installation_id": _utf8(installation_id),
+                "$now": _timestamp(now),
+            },
         )
         if len(result_sets) != 5:
             raise StorageIntegrityError
@@ -560,6 +566,24 @@ class YDBSyncStore:
             )
             if previous is not None:
                 return
+            token_result_sets = self._tx_rows(
+                tx,
+                """
+                DECLARE $token_hash AS String;
+                SELECT owner_installation_id
+                FROM public_links VIEW by_token
+                WHERE token_hash = $token_hash;
+                """,
+                {"$token_hash": _string(token_hash)},
+            )
+            if len(token_result_sets) != 1:
+                raise StorageIntegrityError
+            token_rows = token_result_sets[0]
+            token_owners = {
+                _stored_text(row, "owner_installation_id") for row in token_rows
+            }
+            if any(owner != installation_id for owner in token_owners):
+                raise StorageConflict("public link unavailable")
             self._tx_rows(
                 tx,
                 """
