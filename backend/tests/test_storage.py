@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from hmac import compare_digest
@@ -205,6 +206,28 @@ class ScriptedPool:
 
 def _parameter(parameters: dict[str, Any], name: str) -> Any:
     return parameters.get(name, (None,))[0]
+
+
+_COLUMN_EQUALITY = re.compile(
+    r"[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]* = "
+    r"[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*"
+)
+
+
+def _join_conjuncts(query: str) -> tuple[str, ...]:
+    conjuncts: list[str] = []
+    inside_join = False
+    for raw_line in query.splitlines():
+        line = raw_line.strip()
+        if line.startswith(("INNER JOIN ", "LEFT JOIN ")):
+            inside_join = True
+        elif inside_join and line.startswith("ON "):
+            conjuncts.append(line.removeprefix("ON "))
+        elif inside_join and line.startswith("AND "):
+            conjuncts.append(line.removeprefix("AND "))
+        elif line:
+            inside_join = False
+    return tuple(conjuncts)
 
 
 class DeterministicStore:
@@ -829,6 +852,119 @@ def test_exchange_token_rejects_second_operation_even_for_same_recipient(
     assert not any("UPDATE exchange_claims" in query for query, _ in pool.transaction_calls)
 
 
+def test_exchange_queries_use_only_ydb_column_equality_join_predicates() -> None:
+    """Validate emitted YQL deterministically without a live YDB compiler."""
+
+    refresh_pool = ScriptedPool(
+        transaction_handler=lambda _query, _parameters: [],
+        read_handler=lambda _query, _parameters: [
+            ResultSet([]),
+            ResultSet([]),
+            ResultSet([]),
+        ],
+    )
+    YDBSyncStore(refresh_pool).refresh("installation-peer", None)  # type: ignore[arg-type]
+    refresh_query = refresh_pool.read_calls[0][0]
+
+    def fresh_claim_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query or "FROM exchange_claims AS claim" in query:
+            return [ResultSet([])]
+        return []
+
+    fresh_claim_pool = ScriptedPool(transaction_handler=fresh_claim_handler)
+    with pytest.raises(StorageConflict):
+        YDBSyncStore(fresh_claim_pool).claim_exchange(  # type: ignore[arg-type]
+            "installation-peer",
+            "op-fresh-query-shape",
+            "fresh-query-token",
+        )
+    fresh_claim_query = next(
+        query
+        for query, _ in fresh_claim_pool.transaction_calls
+        if "FROM exchange_claims AS claim" in query
+    )
+
+    replay_token = "replay-query-token"
+    replay_result = json.dumps(
+        {
+            "issuerInstallationID": "installation-owner",
+            "tokenHash": sha256(replay_token.encode()).hexdigest(),
+        }
+    )
+
+    def replay_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "operation_type": "claimExchange",
+                            "result_json": replay_result,
+                        }
+                    ]
+                )
+            ]
+        if "FROM cards AS card" in query:
+            return [ResultSet([])]
+        return []
+
+    replay_pool = ScriptedPool(transaction_handler=replay_handler)
+    with pytest.raises(StorageIntegrityError):
+        YDBSyncStore(replay_pool).claim_exchange(  # type: ignore[arg-type]
+            "installation-peer",
+            "op-replay-query-shape",
+            replay_token,
+        )
+    replay_query = next(
+        query for query, _ in replay_pool.transaction_calls if "FROM cards AS card" in query
+    )
+
+    expected_conjuncts = {
+        "refresh": (
+            "reverse.owner_installation_id = connection.peer_installation_id",
+            "reverse.peer_installation_id = connection.owner_installation_id",
+            "peer_installation.installation_id = connection.peer_installation_id",
+            "peer.installation_id = connection.peer_installation_id",
+            "grant_fields.owner_installation_id = connection.owner_installation_id",
+            "grant_fields.peer_installation_id = connection.peer_installation_id",
+        ),
+        "fresh_claim": (
+            "issuer.installation_id = claim.issuer_installation_id",
+            "card.installation_id = claim.issuer_installation_id",
+            "exchange_fields.token_hash = claim.token_hash",
+        ),
+        "replay": (
+            "issuer.installation_id = card.installation_id",
+            "connection.peer_installation_id = card.installation_id",
+            "reverse.owner_installation_id = card.installation_id",
+            "reverse.peer_installation_id = connection.owner_installation_id",
+            "grant_fields.owner_installation_id = connection.owner_installation_id",
+            "grant_fields.peer_installation_id = card.installation_id",
+        ),
+    }
+    queries = {
+        "refresh": refresh_query,
+        "fresh_claim": fresh_claim_query,
+        "replay": replay_query,
+    }
+    for name, query in queries.items():
+        conjuncts = _join_conjuncts(query)
+        assert conjuncts == expected_conjuncts[name]
+        assert all(_COLUMN_EQUALITY.fullmatch(conjunct) for conjunct in conjuncts)
+
+    assert "peer_installation.deleted_at IS NULL" in refresh_query
+    assert "issuer.deleted_at IS NULL" in fresh_claim_query
+    assert "JOIN connections AS" not in fresh_claim_query
+    for predicate in (
+        "card.installation_id = $issuer_id",
+        "connection.owner_installation_id = $installation_id",
+        'connection.status = "confirmed"u',
+        'reverse.status = "confirmed"u',
+        "issuer.deleted_at IS NULL",
+    ):
+        assert predicate in replay_query
+
+
 @pytest.mark.parametrize("issuer_state", ["missing", "deleted"])
 def test_fresh_claim_requires_an_active_issuer_installation(
     card: PersonCard,
@@ -1274,11 +1410,11 @@ def test_claim_replay_rejects_inactive_issuer_or_invalid_reciprocal_connection(
                     "issuer.deleted_at IS NULL",
                     "INNER JOIN connections AS connection",
                     "connection.owner_installation_id = $installation_id",
-                    "connection.peer_installation_id = $issuer_id",
+                    "connection.peer_installation_id = card.installation_id",
                     'connection.status = "confirmed"u',
                     "INNER JOIN connections AS reverse",
-                    "reverse.owner_installation_id = $issuer_id",
-                    "reverse.peer_installation_id = $installation_id",
+                    "reverse.owner_installation_id = card.installation_id",
+                    "reverse.peer_installation_id = connection.owner_installation_id",
                     'reverse.status = "confirmed"u',
                 )
             )

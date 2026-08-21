@@ -479,7 +479,6 @@ class YDBSyncStore:
            AND reverse.peer_installation_id = connection.owner_installation_id
         INNER JOIN installations AS peer_installation
             ON peer_installation.installation_id = connection.peer_installation_id
-           AND peer_installation.deleted_at IS NULL
         INNER JOIN cards AS peer
             ON peer.installation_id = connection.peer_installation_id
         LEFT JOIN connection_private_fields AS grant_fields
@@ -487,7 +486,8 @@ class YDBSyncStore:
            AND grant_fields.peer_installation_id = connection.peer_installation_id
         WHERE connection.owner_installation_id = $installation_id
           AND connection.status = "confirmed"u
-          AND reverse.status = "confirmed"u;
+          AND reverse.status = "confirmed"u
+          AND peer_installation.deleted_at IS NULL;
 
         SELECT operation_id, result_json
         FROM operations
@@ -705,12 +705,12 @@ class YDBSyncStore:
                 FROM exchange_claims AS claim
                 INNER JOIN installations AS issuer
                     ON issuer.installation_id = claim.issuer_installation_id
-                   AND issuer.deleted_at IS NULL
                 INNER JOIN cards AS card
                     ON card.installation_id = claim.issuer_installation_id
                 LEFT JOIN exchange_private_fields AS exchange_fields
                     ON exchange_fields.token_hash = claim.token_hash
-                WHERE claim.token_hash = $token_hash;
+                WHERE claim.token_hash = $token_hash
+                  AND issuer.deleted_at IS NULL;
                 """,
                 {"$token_hash": _string(token_hash)},
             )[0]
@@ -820,15 +820,15 @@ class YDBSyncStore:
             INNER JOIN installations AS issuer
                 ON issuer.installation_id = card.installation_id
             INNER JOIN connections AS connection
-                ON connection.owner_installation_id = $installation_id
-               AND connection.peer_installation_id = $issuer_id
+                ON connection.peer_installation_id = card.installation_id
             INNER JOIN connections AS reverse
-                ON reverse.owner_installation_id = $issuer_id
-               AND reverse.peer_installation_id = $installation_id
+                ON reverse.owner_installation_id = card.installation_id
+               AND reverse.peer_installation_id = connection.owner_installation_id
             LEFT JOIN connection_private_fields AS grant_fields
-                ON grant_fields.owner_installation_id = $installation_id
+                ON grant_fields.owner_installation_id = connection.owner_installation_id
                AND grant_fields.peer_installation_id = card.installation_id
             WHERE card.installation_id = $issuer_id
+              AND connection.owner_installation_id = $installation_id
               AND issuer.deleted_at IS NULL
               AND connection.status = "confirmed"u
               AND reverse.status = "confirmed"u;
