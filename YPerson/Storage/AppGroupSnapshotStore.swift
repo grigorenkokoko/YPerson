@@ -155,6 +155,7 @@ final class AppGroupSnapshotStore {
         migrateLegacyValues()
     }
 
+#if DEBUG
     private init(defaults: any SnapshotKeyValueStore) {
         self.defaults = defaults
     }
@@ -162,6 +163,7 @@ final class AppGroupSnapshotStore {
     static func inMemory() -> AppGroupSnapshotStore {
         AppGroupSnapshotStore(defaults: InMemorySnapshotKeyValueStore())
     }
+#endif
 
     func cachedConfiguration() -> (RemoteConfiguration, String?)? {
         guard let data = defaults.data(forKey: Key.remoteConfiguration),
@@ -289,6 +291,7 @@ private protocol SnapshotKeyValueStore: AnyObject {
 
 extension UserDefaults: SnapshotKeyValueStore {}
 
+#if DEBUG
 private final class InMemorySnapshotKeyValueStore: SnapshotKeyValueStore {
     private let lock = NSLock()
     private var values: [String: Any] = [:]
@@ -332,3 +335,4 @@ private final class InMemorySnapshotKeyValueStore: SnapshotKeyValueStore {
         return values[defaultName]
     }
 }
+#endif

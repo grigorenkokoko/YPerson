@@ -150,13 +150,13 @@
       "uvicorn": "0.52.3"
     },
     "xcodegen": "generated the shared project during the 2026-08-18 verification",
-    "debugBuild": "passed again on 2026-08-21T06:32:55Z after reviewer-fixture isolation; generic iOS Simulator, fresh /tmp/yperson-fixture-isolation-debug-20260821b, local pinned package cache with automatic resolution disabled, CODE_SIGNING_ALLOWED=NO, exit 0",
-    "releaseSimulatorBuild": "passed again on 2026-08-21T06:32:55Z after reviewer-fixture isolation; xcodebuild -quiet, Release, generic iOS Simulator, fresh /tmp/yperson-fixture-isolation-release-20260821a, local pinned package cache with automatic resolution disabled, CODE_SIGNING_ALLOWED=NO, exit 0; produced app, widget, notification service, and notification content products",
+    "debugBuild": "passed again on 2026-08-21T06:57:06Z after compile-time reviewer-fixture isolation; generic iOS Simulator, fresh /tmp/yperson-pr-reviewfix-debug-20260821a, local pinned package cache with automatic resolution disabled, CODE_SIGNING_ALLOWED=NO, exit 0",
+    "releaseSimulatorBuild": "passed again on 2026-08-21T06:57:06Z after compile-time reviewer-fixture isolation; xcodebuild -quiet, Release, generic iOS Simulator, fresh /tmp/yperson-pr-reviewfix-release-20260821a, local pinned package cache with automatic resolution disabled, CODE_SIGNING_ALLOWED=NO, exit 0; produced app, widget, notification service, and notification content products",
     "simulator": "iPhone 16 Pro, iOS 18.5",
     "cleanInstallReleaseSimulator": "passed: empty create-card state with no profile, people, counters, or sync claims",
     "ordinaryDebugState": "passed: matches clean Release state without YP_SCREENSHOT_STATE",
     "explicitDebugReviewerState": "passed by Foundation/UI contracts and fresh Debug build: any explicit YP_SCREENSHOT_STATE selects a per-launch in-memory snapshot store and credential before app services are created, and injects a URL protocol that locally rejects every fixture request; fixture writes and identity remain launch-local and fixture actions cannot reach the ordinary Debug backend",
-    "releaseFixtureBinaryScan": "passed after the isolation fix: YP_SCREENSHOT_STATE, Debug-only credential, fixture URL protocol, and fixture identity literals are absent",
+    "releaseFixtureBinaryScan": "release-fixture-binary-scan-pass: YP_SCREENSHOT_STATE, review fixture policy, ephemeral credential store, fixture URL protocol, in-memory snapshot store, fixture-only state flag, credential literal, and fixture identities are absent",
     "purposeStringsExact": "9/9 Info.plist strings plus push pre-prompt",
     "appOwnedPrivacyManifestDataTypes": 12,
     "backendSmoke": {
@@ -195,7 +195,7 @@
         ],
         "fixtureIsolation": [
           "fixture-isolation-pass",
-          "fixture-release-isolation-pass"
+          "release-fixture-binary-scan-pass"
         ],
         "vCard": [
           "vcard-contract-pass"

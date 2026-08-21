@@ -12,7 +12,7 @@ final class YPersonExperienceBuilder {
     private let permissions: PermissionCenter
     private let credentialStore: any InstallationCredentialStoring
     private let mediaTransfer: MediaTransferClient
-    private let usesReviewFixtures: Bool
+    private let persistsUserChanges: Bool
     private let nearby = NearbyExchangeController()
     private let photoScanner = PhotoCardScanner()
     private let audio = AudioGreetingController()
@@ -22,8 +22,12 @@ final class YPersonExperienceBuilder {
 
     init(configuration: AppConfiguration) throws {
         self.configuration = configuration
+#if DEBUG
         let usesReviewFixtures = ReviewFixtureIsolationPolicy.isEnabled()
-        self.usesReviewFixtures = usesReviewFixtures
+        self.persistsUserChanges = !usesReviewFixtures
+#else
+        self.persistsUserChanges = true
+#endif
         let sessionConfiguration = URLSessionConfiguration.ephemeral
         sessionConfiguration.timeoutIntervalForRequest = 12
         sessionConfiguration.timeoutIntervalForResource = 20
@@ -85,7 +89,7 @@ final class YPersonExperienceBuilder {
         var ownCard = snapshotStore?.readOwnCard()
         var savedPeople = snapshotStore?.readPeople() ?? []
 #if DEBUG
-        if usesReviewFixtures {
+        if !persistsUserChanges {
             ownCard = .reviewOwn
             savedPeople = [.reviewAlexey, .reviewMaria]
         }
@@ -103,7 +107,7 @@ final class YPersonExperienceBuilder {
         let makeEditor: (PersonCard?, @escaping (PersonCard) -> Void) -> UIViewController = { [permissions, audio] card, onSave in
             CardEditorViewController(card: card, permissions: permissions, audio: audio, makeAppearance: makeAppearance, onSave: onSave)
         }
-        let card = CardViewController(card: ownCard, persistsChanges: !usesReviewFixtures, permissions: permissions, audio: audio, imageSaver: imageSaver, syncCoordinator: syncCoordinator, analytics: analytics, snapshotStore: snapshotStore, makeEditor: makeEditor)
+        let card = CardViewController(card: ownCard, persistsChanges: persistsUserChanges, permissions: permissions, audio: audio, imageSaver: imageSaver, syncCoordinator: syncCoordinator, analytics: analytics, snapshotStore: snapshotStore, makeEditor: makeEditor)
         let person = { [permissions, imageSaver, syncCoordinator, analytics, snapshotStore, mediaTransfer, audio] card in
             PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, syncCoordinator: syncCoordinator, mediaTransfer: mediaTransfer, audio: audio, analytics: analytics, snapshotStore: snapshotStore)
         }
@@ -141,7 +145,7 @@ final class YPersonExperienceBuilder {
         let root = MainTabBarController(card: card, exchange: exchange, people: people, privacy: privacy)
         self.rootViewController = root
         root.route(to: context.entryPoint)
-        if !usesReviewFixtures {
+        if persistsUserChanges {
             syncCoordinator.onPeopleChanged = { [weak people, snapshotStore] in
                 people?.reload(people: snapshotStore?.readPeople() ?? [])
             }

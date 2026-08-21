@@ -12,18 +12,14 @@ protocol InstallationCredentialStoring {
     func deleteCredential() throws
 }
 
+#if DEBUG
 enum ReviewFixtureIsolationPolicy {
     static func isEnabled(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool {
-#if DEBUG
         environment["YP_SCREENSHOT_STATE"] != nil
-#else
-        false
-#endif
     }
 
-#if DEBUG
     static let credential = InstallationCredential(
         installationID: "00000000-0000-0000-0000-000000000001",
         bearer: Base64URL.encode(Data(repeating: 0xA5, count: 32))
@@ -33,10 +29,8 @@ enum ReviewFixtureIsolationPolicy {
         configuration.protocolClasses = [ReviewFixtureURLProtocol.self]
         configuration.waitsForConnectivity = false
     }
-#endif
 }
 
-#if DEBUG
 final class EphemeralInstallationCredentialStore: InstallationCredentialStoring {
     private var credential: InstallationCredential?
 
