@@ -48,20 +48,13 @@ Toolchain observed for this run: Python `3.12.14`; Ruff `0.16.3`.
 
 ### Swift contract harness
 
-The existing Task 5 harness at `/tmp/yperson-honest-exchange-contract/main.swift` contains the public/private projection, manual-code normalization, typed credential, response exclusivity/failure, request-routing, and public-QR assertions recorded by Tasks 4 and 5.
+The reproducible harness now lives in the repository at `Verification/HonestExchangeContract/`. Version 2 compiles real Foundation production sources and covers public/private projection, manual-code normalization, typed credential exclusivity/routing, public QR, public-only Bluetooth policy, single-use manual consent, App Group persistence policy, legacy sensitive-queue cleanup, and strict UIKit/coordinator source contracts.
 
 ```bash
-xcrun swiftc YPerson/Domain/Models.swift YPerson/Domain/ExchangeContract.swift \
-  /tmp/yperson-honest-exchange-contract/main.swift \
-  -o /tmp/yperson-honest-exchange-contract/check
-/tmp/yperson-honest-exchange-contract/check
+Verification/HonestExchangeContract/run.sh
 ```
 
-Result: compile exit `0`; binary exit `0`; marker `honest-exchange-contract-pass`.
-
-The first sandboxed compile could not write the user Clang module cache and did not reach source verification. The unchanged compile command was rerun with module-cache access and produced the PASS result above.
-
-Toolchain observed for this run: Apple Swift `6.3.2` (`swift-driver 1.148.6`).
+The earlier Task 8 PASS below was produced by the historical `/tmp` harness and remains historical evidence. The broad parallel fix wave must rerun the repository command above as part of its final integrated gate; no new PASS result or aggregate count is added to this file by the contract-path update.
 
 ### Fresh unsigned simulator builds
 
@@ -202,7 +195,7 @@ The following remain explicitly unverified and are not implied by any automated 
 
 - Physical-device Face ID success/cancel/lockout and device-passcode fallback.
 - Two-installation manual-code display, normalized entry, one-time claim, cancellation, and real expiry.
-- Mutual Bluetooth exchange and directional private-phone isolation on two physical iPhones.
+- Mutual public Bluetooth exchange on two physical iPhones; phone absence must be verified even when manual-code consent was authorized. Private Bluetooth remains deferred until recipient-bound mutual pairing exists.
 - App backgrounding, clipboard inspection, VoiceOver traversal/labels/announcements, Dynamic Type, iOS 15 behavior, APNs, widgets, and the wider permission matrix in `Release/manual-device-checks.md`.
 - Live YDB schema application/query compilation, Object Storage/Lockbox/IAM configuration, Serverless Container deployment, API Gateway routing, external `/health`/`/config`/`/sync` smoke, monitoring, backup/restore, and production AppMetrica traffic.
 - Apple signing identities, final bundle/App Group/provisioning/APNs configuration, signed archive creation/validation, archive privacy report, App Store Connect mutation, or upload.

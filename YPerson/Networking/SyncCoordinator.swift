@@ -65,6 +65,7 @@ final class SyncCoordinator {
     }
 
     func bootstrap() async {
+        snapshotStore?.purgeNonDurablePendingOperations()
         guard snapshotStore?.profileTerminallyDeleted != true else { return }
         if snapshotStore?.profileDeletionPending == true {
             if apiClient == nil {
@@ -88,7 +89,7 @@ final class SyncCoordinator {
             await retryPendingOperations()
             await retryPushToken()
         } catch {
-            // Durable local state remains visible and all pending work remains queued.
+            // Durable local state remains visible; only non-sensitive work stays queued.
         }
     }
 
@@ -195,15 +196,12 @@ final class SyncCoordinator {
             exchangeToken: credential.exchangeToken,
             exchangeCode: credential.exchangeCode
         )
-        snapshotStore?.enqueue(PendingSyncOperation(request: request, expiresAt: nil, localCardID: nil))
         do {
             _ = try await apiClient.sync(request)
-            snapshotStore?.removePendingOperation(id: request.operationID)
         } catch APIClient.ClientError.status(let status, _) where status == 409 {
             // Claim already won the serializable race; cancellation is terminal, not retryable.
-            snapshotStore?.removePendingOperation(id: request.operationID)
         } catch {
-            // The exact request and stable operation ID stay durable for foreground retry.
+            // Raw exchange credentials are never persisted; expiry is the cleanup backstop.
         }
     }
 
@@ -233,7 +231,6 @@ final class SyncCoordinator {
             expiresAt: expiresAt,
             localCardID: localCardID
         )
-        snapshotStore?.enqueue(pending)
         if let expiresAt, expiresAt <= Date() {
             try markExpired(pending)
             throw CoordinatorError.expiredExchange
@@ -241,7 +238,6 @@ final class SyncCoordinator {
         do {
             let response = try await apiClient.sync(request)
             try apply(response)
-            snapshotStore?.removePendingOperation(id: request.operationID)
             return response
         } catch APIClient.ClientError.status(let status, _) where status == 409 {
             try markExpired(pending)
@@ -354,6 +350,12 @@ final class SyncCoordinator {
         guard let apiClient, snapshotStore?.profileTerminallyDeleted != true else { return }
         let pending = snapshotStore?.pendingOperations ?? []
         for operation in pending {
+            guard PendingSyncOperationPersistencePolicy.allowsDurablePersistence(
+                operation.request.operation
+            ) else {
+                snapshotStore?.removePendingOperation(id: operation.id)
+                continue
+            }
             if snapshotStore?.profileDeletionPending == true,
                operation.request.operation != .deleteProfile { continue }
             if operation.request.operation == .claimExchange,

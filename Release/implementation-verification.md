@@ -4,7 +4,7 @@
 
 Статус остаётся `implementation-verified`, но не `archive-validated` и не `release-ready`.
 
-Локально реализованы iOS-клиент, installation-authenticated sync v2, YDB Serverless adapter и schema, приватный Object Storage для аудиоприветствий, обмен QR/Bluetooth, локальное хранение людей и полный путь удаления профиля. Эта запись не является доказательством внешней выкладки: применение YDB schema, создание private bucket/Lockbox, новая ревизия Serverless Container и маршрутизация API Gateway проверяются отдельно в deployment-задаче.
+Локально реализованы iOS-клиент, installation-authenticated sync v2, YDB Serverless adapter и schema, приватный Object Storage для аудиоприветствий, публичный обмен QR/Bluetooth, recipient-specific телефон через ручной код, локальное хранение людей и полный путь удаления профиля. Эта запись не является доказательством внешней выкладки: применение YDB schema, создание private bucket/Lockbox, новая ревизия Serverless Container и маршрутизация API Gateway проверяются отдельно в deployment-задаче.
 
 ## Локально проверено
 
@@ -26,11 +26,12 @@
 ## Recipient-specific private exchange
 
 - Sync v2 локально реализует additive-поля запроса `privateFields`/`exchangeCode` и ответа `exchangeCode`/`exchangeExpiresAt`. Публичный `card`, сохранённый `cards.card_json` и QR-проекция всегда исключают телефон и локальный `meetingPlace`.
-- `privateFields` сейчас содержит только непустой обрезанный `phone` длиной до 64 Unicode-символов и принимается только для Bluetooth/manual prepare. Временная запись использует тот же credential digest и тот же авторитетный `exchangeExpiresAt`, что и claim, с максимумом 10 минут.
-- Manual prepare выдаёт `YP-XXXX-XXXX-XXXX` из 12 символов однозначного Crockford Base32 (60 бит). Claim требует аутентифицированную installation, допускает одного получателя, отклоняет self-claim и хранит только SHA-256 нормализованного кода; raw code/token не сохраняется и не логируется.
+- `privateFields` сейчас содержит только непустой обрезанный `phone` длиной до 64 Unicode-символов и принимается только для manual prepare. QR, photo и Bluetooth готовятся с `privateFields: nil`; private Bluetooth отложен до recipient-bound mutual pairing. Временная manual-запись использует тот же credential digest и тот же авторитетный `exchangeExpiresAt`, что и claim, с максимумом 10 минут.
+- Manual prepare выдаёт `YP-XXXX-XXXX-XXXX` из 12 символов однозначного Crockford Base32 (60 бит). Claim требует аутентифицированную installation, допускает одного получателя, отклоняет self-claim и хранит на backend только SHA-256 нормализованного кода. На iOS raw code/token остаётся в памяти active flow: claim/cancel не ставятся в App Group `UserDefaults`, а legacy sensitive pending entries удаляются без отправки; stable durable retry сохраняется для несекретных операций.
 - Успешный claim переносит телефон только в directional grant получателя к владельцу. Refresh накладывает этот grant на текущую публичную карточку только для соответствующего получателя; обратная и другие связи остаются публичными. Значение сохраняется до удаления связи/профиля; profile deletion очищает временные поля и grants с обеих сторон.
 - Deployment-contract проверка `/Users/grigornkokoko/YPerson/backend/.venv/bin/python -m pytest -q backend/tests/test_serverless_deployment.py backend/tests/test_deployment_files.py` завершилась `12 passed`. Exact ordered-block assertions связывают QR prepare/response/`exchangeExpiresAt`/claim только с `exchangeToken`, а manual prepare/response/тот же response expiry/claim — только с `exchangeCode`. Отдельный безопасный fail-fast запуск реального script через inherited `bash -x` с уникальными sentinel deployment values подтверждает, что tracing отключается сразу после shebang, до environment inspection, и больше не включается; token/code variables также очищаются до cleanup/rollback output. Это локальная contract-проверка deploy artifact, не доказательство внешнего smoke.
-- Private-audio persistence/recipient-specific delivery и connection-level private-grant revoke/update/propagation последующих изменений телефона остаются незавершёнными. Физические Face ID/device-passcode, Bluetooth и two-installation manual-code сценарии остаются `PENDING` в `Release/manual-device-checks.md`.
+- Репозиторный Foundation runner `Verification/HonestExchangeContract/run.sh` заменяет прежний `/tmp`-only harness и содержит executable policy/source contracts. Финальная интегрированная fix-wave verification и её общие test counts остаются `PENDING` и этим документом не заявляются.
+- Private-audio persistence/recipient-specific delivery, recipient-bound pairing для private Bluetooth и connection-level private-grant revoke/update/propagation последующих изменений телефона остаются незавершёнными. Физические Face ID/device-passcode, публичный Bluetooth и two-installation manual-code сценарии остаются `PENDING` в `Release/manual-device-checks.md`.
 
 ## QR scanner widget
 
@@ -44,8 +45,8 @@
 
 - Новая YDB/Object Storage версия ещё не выкачена и не проверена через внешний API Gateway URL.
 - Production APNs credentials, доставка push и notification extensions не проверены на физических iPhone.
-- Bluetooth взаимный обмен, отмена и восстановление после background требуют двух физических iPhone.
-- Recipient-specific телефон через Face ID/device-passcode, Bluetooth и реальный одноразовый код на двух installations не проверен на физических устройствах; локальный deploy smoke не заменяет эту проверку.
+- Публичный Bluetooth взаимный обмен, отмена и восстановление после background требуют двух физических iPhone; private Bluetooth не заявляется до recipient-bound mutual pairing.
+- Recipient-specific телефон через Face ID/device-passcode и реальный одноразовый код на двух installations не проверен на физических устройствах; локальный deploy smoke не заменяет эту проверку.
 - Не проверены Apple signing/App Groups, production AppMetrica traffic, privacy report подписанного архива и App Store Connect.
 - Политика backup/restore и срок удаления резервных копий до 30 дней требуют подтверждения фактической Yandex Cloud конфигурацией.
 - Сохраняется release blocker по conformance сторонних vCard: требуется backend-контракт владения/retention/deletion/update либо явное повторное утверждение local-only поведения в `AppSpec.md` и `AppPrivacy.yml`.

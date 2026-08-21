@@ -278,7 +278,7 @@ final class CardViewController: YPBaseViewController {
     @objc private func unlockPrivate() {
         guard card != nil else { return }
         explainPermission(title: "Закрытые поля", message: "Face ID защищает закрытые поля вашей визитки и подтверждает их передачу выбранному человеку.") { [weak self] in
-            self?.permissions.authenticatePrivateFields { result in
+            self?.permissions.authenticatePrivateFields(for: .revealPrivateFields) { result in
                 guard let self else { return }
                 if case .success = result {
                     self.showsPrivateFields = true

@@ -10,6 +10,44 @@ struct PrivateCardFields: Codable, Equatable {
     }
 }
 
+struct PrivatePhoneShareConsent: Equatable {
+    private(set) var isAuthorized = false
+
+    mutating func authorize() {
+        isAuthorized = true
+    }
+
+    mutating func revoke() {
+        isAuthorized = false
+    }
+
+    mutating func consume(
+        forPreparationMethod method: String,
+        card: PersonCard
+    ) -> PrivateCardFields? {
+        guard method == "manual", isAuthorized else { return nil }
+        isAuthorized = false
+        return PrivateCardFields(card: card)
+    }
+}
+
+enum PendingSyncOperationPersistencePolicy {
+    static func allowsDurablePersistence(_ operation: SyncOperation) -> Bool {
+        switch operation {
+        case .claimExchange, .cancelExchange:
+            return false
+        default:
+            return true
+        }
+    }
+
+    static func durableOperations(
+        from operations: [PendingSyncOperation]
+    ) -> [PendingSyncOperation] {
+        operations.filter { allowsDurablePersistence($0.request.operation) }
+    }
+}
+
 enum ManualExchangeCode {
     private static let alphabet = Set("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
 

@@ -135,7 +135,7 @@ final class CardEditorViewController: YPBaseViewController {
     }
     @objc private func unlock() {
         explainPermission(title: "Закрытые поля", message: "Face ID защищает закрытые поля вашей визитки и подтверждает их передачу выбранному человеку.") { [weak self] in
-            self?.permissions.authenticatePrivateFields { result in
+            self?.permissions.authenticatePrivateFields(for: .revealPrivateFields) { result in
                 guard let self else { return }
                 if case .success = result {
                     self.phoneField.text = self.existingCard?.phone

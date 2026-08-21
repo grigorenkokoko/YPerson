@@ -17,17 +17,16 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private let meetingPlaceStatus = YPStyle.label("Место не выбрано · координаты не передаются другому человеку или на сервер.", style: .footnote)
     private let privateSwitch = UISwitch()
     private let privateStatus = YPStyle.label(
-        "Телефон передаётся только через Bluetooth или ваш короткий код. QR остаётся публичным.",
+        "Телефон передаётся только по вашему следующему короткому коду. QR и Bluetooth остаются публичными.",
         style: .footnote
     )
-    private var includePrivatePhone = false
+    private var privatePhoneConsent = PrivatePhoneShareConsent()
     private var nearbyCredential: ExchangeCredential?
     private var scannerLaunchGate = QRScannerLaunchGate()
     private var pendingMeetingPlace: String?
     private var nearbySearchAlert: UIAlertController?
     private var nearbyPrepareTask: Task<Void, Never>?
     private var nearbyPreparationID: UUID?
-    private var nearbySharesPrivatePhone = false
     private var shortCodePrepareTask: Task<Void, Never>?
     private var shortCodePreparationID: UUID?
     private var shortCodePreparationSharesPrivatePhone = false
@@ -58,10 +57,10 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         meetingPlaceRow.distribution = .equalSpacing
         contentStack.addArrangedSubview(meetingPlaceRow)
         contentStack.addArrangedSubview(meetingPlaceStatus)
-        privateSwitch.accessibilityLabel = "Поделиться телефоном · Face ID"
-        privateSwitch.accessibilityHint = "Телефон будет передан только в следующем Bluetooth-обмене или по короткому коду"
+        privateSwitch.accessibilityLabel = "Поделиться телефоном по коду · Face ID"
+        privateSwitch.accessibilityHint = "Телефон будет передан только по следующему короткому коду. QR и Bluetooth публичные"
         privateSwitch.addTarget(self, action: #selector(togglePrivate(_:)), for: .valueChanged)
-        let privateLabel = YPStyle.label("Поделиться телефоном · Face ID", style: .headline)
+        let privateLabel = YPStyle.label("Поделиться телефоном по коду · Face ID", style: .headline)
         privateLabel.isAccessibilityElement = false
         let privateRow = UIStackView(arrangedSubviews: [
             privateLabel,
@@ -89,7 +88,6 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         nearbyPrepareTask?.cancel()
         nearbyPrepareTask = nil
         nearbyPreparationID = nil
-        nearbySharesPrivatePhone = false
         shortCodePrepareTask?.cancel()
         shortCodePrepareTask = nil
         shortCodePreparationID = nil
@@ -240,13 +238,11 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                 self?.showMessage("Сначала создайте визитку", "Для обмена по Bluetooth нужна ваша сохранённая карточка.")
                 return
             }
-            guard let privateSelection = selectedPrivateFields(for: card) else { return }
             analytics.report(.exchangeStarted("bluetooth"))
             nearbyPrepareTask?.cancel()
             cancelNearbyExchange()
             let preparationID = UUID()
             nearbyPreparationID = preparationID
-            nearbySharesPrivatePhone = privateSelection.sharesPhone
             nearbyPrepareTask = Task { [weak self] in
                 guard let self else { return }
                 var preparedCredential: ExchangeCredential?
@@ -254,7 +250,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                     let prepared = try await syncCoordinator.prepareExchange(
                         card: card,
                         method: "bluetooth",
-                        privateFields: privateSelection.fields,
+                        privateFields: nil,
                         greeting: audio.savedGreeting()
                     )
                     preparedCredential = prepared.credential
@@ -278,7 +274,6 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                     guard isCurrent else { return }
                     nearbyPrepareTask = nil
                     nearbyPreparationID = nil
-                    nearbySharesPrivatePhone = false
                     guard !shouldSuppressPreparationError(error, isCurrent: isCurrent),
                           viewIfLoaded?.window != nil else { return }
                     nearby.stop()
@@ -372,7 +367,6 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                 let saved = try persist(response: response, meetingPlace: pendingMeetingPlace)
                 guard !saved.isEmpty else { throw ExchangeError.missingPeerCard }
                 nearbyCredential = nil
-                nearbySharesPrivatePhone = false
                 clearPendingMeetingPlace()
                 analytics.report(.cardReceived("bluetooth"))
                 showMessage("Человек добавлен", "Карточка сохранена в YPerson и связана с подтверждённым Bluetooth-обменом.")
@@ -611,18 +605,16 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             showMessage("Телефон недоступен", "В визитке пока нет телефона для передачи.")
             return
         }
-        explainPermission(title: "Передача телефона", message: "Face ID или код-пароль подтверждает передачу телефона выбранному человеку через Bluetooth или короткий код. QR остаётся публичным.") { [weak self] in
+        explainPermission(title: "Передача телефона", message: "Face ID или код-пароль подтверждает однократную передачу телефона по следующему короткому коду. QR и Bluetooth остаются публичными.") { [weak self] in
             guard let self else { return }
-            permissions.authenticatePrivateFields { [weak self] result in
+            permissions.authenticatePrivateFields(for: .transmitPrivatePhoneByShortCode) { [weak self] result in
                 guard let self else { return }
                 let allowed = (try? result.get()) != nil && viewIfLoaded?.window != nil
-                includePrivatePhone = allowed
-                privateSwitch.setOn(allowed, animated: true)
-                privateStatus.text = allowed
-                    ? "Телефон включён для следующего Bluetooth-обмена или короткого кода. QR остаётся публичным."
-                    : "Телефон передаётся только через Bluetooth или ваш короткий код. QR остаётся публичным."
+                if allowed { privatePhoneConsent.authorize() }
+                else { privatePhoneConsent.revoke() }
+                updatePrivatePhoneSharingUI()
                 if allowed {
-                    UIAccessibility.post(notification: .announcement, argument: "Передача телефона включена")
+                    UIAccessibility.post(notification: .announcement, argument: "Передача телефона по следующему короткому коду включена")
                 } else {
                     showMessage("Оставили публичные поля", "Обмен продолжает работать без телефона.")
                 }
@@ -631,16 +623,25 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     }
 
     @objc private func showShortCode() {
+        guard shortCodePrepareTask == nil else { return }
         guard let card = ownCard() else {
             showMessage("Сначала создайте визитку", "Для короткого кода нужна ваша сохранённая карточка.")
             return
         }
-        guard let privateSelection = selectedPrivateFields(for: card) else { return }
+        let hadPrivateConsent = privatePhoneConsent.isAuthorized
+        let privateFields = privatePhoneConsent.consume(
+            forPreparationMethod: "manual",
+            card: card
+        )
+        updatePrivatePhoneSharingUI()
+        guard !hadPrivateConsent || privateFields != nil else {
+            showMessage("Телефон недоступен", "В визитке пока нет телефона для передачи.")
+            return
+        }
         analytics.report(.exchangeStarted("manual"))
-        shortCodePrepareTask?.cancel()
         let preparationID = UUID()
         shortCodePreparationID = preparationID
-        shortCodePreparationSharesPrivatePhone = privateSelection.sharesPhone
+        shortCodePreparationSharesPrivatePhone = privateFields != nil
         shortCodePrepareTask = Task { [weak self] in
             guard let self else { return }
             var preparedCredential: ExchangeCredential?
@@ -648,7 +649,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                 let prepared = try await syncCoordinator.prepareExchange(
                     card: card,
                     method: "manual",
-                    privateFields: privateSelection.fields,
+                    privateFields: privateFields,
                     greeting: audio.savedGreeting()
                 )
                 preparedCredential = prepared.credential
@@ -689,35 +690,20 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         }
     }
 
-    private func selectedPrivateFields(for card: PersonCard) -> PrivateFieldsSelection? {
-        guard includePrivatePhone else { return .publicOnly }
-        guard let fields = PrivateCardFields(card: card) else {
-            resetPrivatePhoneSharing()
-            showMessage("Телефон недоступен", "В визитке пока нет телефона для передачи.")
-            return nil
-        }
-        return .phone(fields)
+    private func resetPrivatePhoneSharing() {
+        privatePhoneConsent.revoke()
+        updatePrivatePhoneSharingUI()
     }
 
-    private func resetPrivatePhoneSharing() {
-        includePrivatePhone = false
-        privateSwitch.setOn(false, animated: true)
-        privateStatus.text = "Телефон передаётся только через Bluetooth или ваш короткий код. QR остаётся публичным."
+    private func updatePrivatePhoneSharingUI() {
+        privateSwitch.setOn(privatePhoneConsent.isAuthorized, animated: true)
+        privateStatus.text = privatePhoneConsent.isAuthorized
+            ? "Телефон разрешён только для следующего короткого кода. QR и Bluetooth остаются публичными."
+            : "Телефон передаётся только по вашему следующему короткому коду. QR и Bluetooth остаются публичными."
     }
 
     private func revokePrivateSharingAuthorization() {
         resetPrivatePhoneSharing()
-
-        if nearbySharesPrivatePhone {
-            nearbyPrepareTask?.cancel()
-            nearbyPrepareTask = nil
-            nearbyPreparationID = nil
-            nearbySharesPrivatePhone = false
-            cancelNearbyExchange()
-            nearby.stop()
-            nearbySearchAlert?.dismiss(animated: true)
-            nearbySearchAlert = nil
-        }
 
         if shortCodePreparationSharesPrivatePhone {
             shortCodePrepareTask?.cancel()
@@ -740,7 +726,6 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private func cancelNearbyExchange() {
         guard let credential = nearbyCredential else { return }
         nearbyCredential = nil
-        nearbySharesPrivatePhone = false
         cancelPreparedCredential(credential)
     }
 
@@ -762,17 +747,5 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         case localStorageUnavailable
         case invalidPreparedCredential
         case missingPeerCard
-    }
-
-    private enum PrivateFieldsSelection {
-        case publicOnly
-        case phone(PrivateCardFields)
-
-        var fields: PrivateCardFields? {
-            if case .phone(let fields) = self { return fields }
-            return nil
-        }
-
-        var sharesPhone: Bool { fields != nil }
     }
 }

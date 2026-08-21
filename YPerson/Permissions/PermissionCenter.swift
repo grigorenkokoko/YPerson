@@ -16,6 +16,20 @@ enum AuthorizationState: Equatable {
     case unavailable(String)
 }
 
+enum PrivateFieldsAuthenticationPurpose {
+    case revealPrivateFields
+    case transmitPrivatePhoneByShortCode
+
+    var localizedReason: String {
+        switch self {
+        case .revealPrivateFields:
+            return "Открыть закрытые поля визитки"
+        case .transmitPrivatePhoneByShortCode:
+            return "Подтвердить передачу телефона по короткому коду"
+        }
+    }
+}
+
 final class PermissionCenter: NSObject, CLLocationManagerDelegate {
     private let contactStore = CNContactStore()
     private let contactQueue = DispatchQueue(label: "app.yperson.contacts-reconciliation")
@@ -218,7 +232,10 @@ final class PermissionCenter: NSObject, CLLocationManagerDelegate {
         )
     }
 
-    func authenticatePrivateFields(completion: @escaping (Result<Void, Error>) -> Void) {
+    func authenticatePrivateFields(
+        for purpose: PrivateFieldsAuthenticationPurpose,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
         let context = LAContext()
         context.localizedCancelTitle = "Оставить закрытым"
         var error: NSError?
@@ -228,7 +245,7 @@ final class PermissionCenter: NSObject, CLLocationManagerDelegate {
             DispatchQueue.main.async { completion(.failure(evaluationError)) }
             return
         }
-        context.evaluatePolicy(policy, localizedReason: "Открыть закрытые поля визитки") { success, error in
+        context.evaluatePolicy(policy, localizedReason: purpose.localizedReason) { success, error in
             DispatchQueue.main.async {
                 if success { completion(.success(())) }
                 else { completion(.failure(error ?? NSError(domain: "YPerson.LocalAuthentication", code: 1))) }

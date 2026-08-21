@@ -90,10 +90,16 @@ final class AppGroupSnapshotStore {
             guard let data = defaults.data(forKey: Key.pendingOperations) else { return [] }
             return (try? decoder.decode([PendingSyncOperation].self, from: data)) ?? []
         }
-        set { defaults.set(try? encoder.encode(newValue), forKey: Key.pendingOperations) }
+        set {
+            let durable = PendingSyncOperationPersistencePolicy.durableOperations(from: newValue)
+            defaults.set(try? encoder.encode(durable), forKey: Key.pendingOperations)
+        }
     }
 
     func enqueue(_ operation: PendingSyncOperation) {
+        guard PendingSyncOperationPersistencePolicy.allowsDurablePersistence(
+            operation.request.operation
+        ) else { return }
         var operations = pendingOperations
         if let index = operations.firstIndex(where: { $0.id == operation.id }) {
             operations[index] = operation
@@ -105,6 +111,13 @@ final class AppGroupSnapshotStore {
 
     func removePendingOperation(id: String) {
         pendingOperations = pendingOperations.filter { $0.id != id }
+    }
+
+    func purgeNonDurablePendingOperations() {
+        let operations = pendingOperations
+        let durable = PendingSyncOperationPersistencePolicy.durableOperations(from: operations)
+        guard operations != durable else { return }
+        pendingOperations = durable
     }
 
     var pendingAPNSToken: String? {
@@ -153,6 +166,7 @@ final class AppGroupSnapshotStore {
         guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else { return nil }
         self.defaults = defaults
         migrateLegacyValues()
+        purgeNonDurablePendingOperations()
     }
 
 #if DEBUG

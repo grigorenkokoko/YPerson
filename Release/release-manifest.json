@@ -64,7 +64,7 @@
       "backend/Dockerfile"
     ],
     "implementationStatus": "implemented locally; external YDB/Object Storage deployment not yet verified",
-    "containerVerification": "Final integrated local verification ran the complete backend suite (146 passed with the one existing Starlette/httpx warning), Ruff check and format check, focused contract harnesses, and a fresh Release simulator build. No new Serverless Container revision, YDB schema application, bucket mutation, or external API Gateway smoke is claimed.",
+    "containerVerification": "Historical integrated local verification is retained in Release/honest-exchange-verification.md. Final counts and build evidence for the parallel broad-fix wave remain PENDING and are intentionally not updated here. No new Serverless Container revision, YDB schema application, bucket mutation, or external API Gateway smoke is claimed.",
     "endpoints": [
       "GET /health",
       "GET /config",
@@ -115,7 +115,7 @@
     }
   },
   "privateExchange": {
-    "implementationStatus": "implemented locally; external deployment and physical-device exchange are not verified",
+    "implementationStatus": "local iOS privacy fix implemented; final parallel fix-wave verification, external deployment, and physical-device exchange remain PENDING",
     "contractVersion": 2,
     "requestFields": [
       "privateFields",
@@ -130,12 +130,12 @@
         "phone": "trimmed non-empty Unicode display string, maximum 64 characters"
       },
       "allowedPreparationMethods": [
-        "bluetooth",
         "manual"
       ],
       "publicMethodsExcluded": [
         "qr",
-        "photo"
+        "photo",
+        "bluetooth"
       ],
       "temporaryRetention": "same authoritative exchangeExpiresAt as the claim, at most 10 minutes",
       "grantRetention": "the value shared at confirmation remains directional from claimant to issuer until connection/profile deletion"
@@ -146,16 +146,18 @@
       "manualClaimAuthentication": "authenticated installation required; issuer self-claim rejected",
       "requestExclusivity": "claimExchange and cancelExchange accept exactly one of exchangeCode or exchangeToken; new clients use exchangeCode and correctly formatted legacy exchangeToken codes remain compatible",
       "oneTime": true,
-      "durableStorage": "SHA-256 digest only after normalization; raw token/code is not persisted or logged",
+      "durableStorage": "backend stores only a SHA-256 digest after normalization; iOS keeps raw token/code in active memory only, never App Group UserDefaults, and does not enqueue claimExchange/cancelExchange for durable retry",
       "expiry": "exchangeExpiresAt, at most 10 minutes"
     },
     "storage": {
       "temporary": "exchange_private_fields keyed by credential digest with claim-correlated issuer and expiry",
       "directional": "connection_private_fields keyed by claimant owner_installation_id and issuer peer_installation_id",
-      "profileDeletion": "removes temporary fields and grants where the installation is owner or peer"
+      "profileDeletion": "removes temporary fields and grants where the installation is owner or peer",
+      "iosLegacyPendingCleanup": "legacy claimExchange/cancelExchange entries are purged and skipped without sending; stable durable retry remains available for non-sensitive operations"
     },
     "remainingWork": [
       "private-audio persistence and recipient-specific delivery",
+      "recipient-bound mutual pairing before private Bluetooth; current Bluetooth is public-only",
       "connection-level private-grant revoke/update and propagation of later phone updates"
     ],
     "evidence": [
@@ -170,6 +172,9 @@
       "YPerson/Networking/SyncCoordinator.swift",
       "YPerson/UI/ExchangeViewController.swift",
       "YPerson/UI/ShortCodeViewController.swift",
+      "Verification/HonestExchangeContract/main.swift",
+      "Verification/HonestExchangeContract/run.sh",
+      "Verification/HonestExchangeContract/verify-source-contracts.sh",
       "deploy/yandex/serverless/deploy.sh",
       "backend/tests/test_serverless_deployment.py"
     ]
@@ -211,6 +216,7 @@
       "uvicorn": "0.52.3"
     },
     "xcodegen": "generated the shared project during the 2026-08-18 verification",
+    "honestExchangeBroadFixWave": "PENDING final integrated verification after the parallel iOS/backend fix wave; no final test counts or new release evidence are claimed by this manifest update",
     "debugBuild": "passed again on 2026-08-21T06:57:06Z after compile-time reviewer-fixture isolation; generic iOS Simulator, fresh /tmp/yperson-pr-reviewfix-debug-20260821a, local pinned package cache with automatic resolution disabled, CODE_SIGNING_ALLOWED=NO, exit 0",
     "releaseSimulatorBuild": "passed again on 2026-08-21T06:57:06Z after compile-time reviewer-fixture isolation; xcodebuild -quiet, Release, generic iOS Simulator, fresh /tmp/yperson-pr-reviewfix-release-20260821a, local pinned package cache with automatic resolution disabled, CODE_SIGNING_ALLOWED=NO, exit 0; produced app, widget, notification service, and notification content products",
     "simulator": "iPhone 16 Pro, iOS 18.5",
@@ -287,7 +293,7 @@
     "Finalize moderation operations and App Store Connect privacy/ATT/export-compliance/age-rating answers.",
     "Provide final owner metadata: SKU, copyright holder, review contact, content-rights attestation, categories, and availability.",
     "Resolve the mismatch between local-only third-party vCard imports and required confirmed photo/scanned payload synchronization by approving backend ownership, retention, deletion, and update semantics or explicitly re-approving the local-only AppSpec/AppPrivacy behavior.",
-    "Implement and verify private-audio persistence plus connection-level private-grant revoke/update and later-phone-update behavior before claiming those capabilities are complete.",
+    "Implement and verify private-audio persistence, recipient-bound mutual pairing before any private Bluetooth claim, plus connection-level private-grant revoke/update and later-phone-update behavior before claiming those capabilities are complete; current Bluetooth remains public-only.",
     "Create, inspect, and validate the signed archive after signing and production configuration become available; obtain new approval immediately before any upload or App Store Connect mutation."
   ]
 }
