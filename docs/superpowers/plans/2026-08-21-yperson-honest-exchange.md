@@ -39,7 +39,7 @@
 - Produces: `derive_exchange_code(bearer: str, installation_id: str, operation_id: str) -> str`.
 - Produces: `normalize_exchange_code(value: str) -> str`, raising `ValueError` for invalid input.
 
-- [ ] **Step 1: Add failing schema tests**
+- [x] **Step 1: Add failing schema tests**
 
 Add tests that accept a trimmed phone only on `prepareExchange`, reject empty/over-64/unknown private fields, require exactly one credential for claim/cancel, and decode the new response fields:
 
@@ -102,7 +102,7 @@ def test_claim_exchange_requires_exactly_one_credential() -> None:
         )
 ```
 
-- [ ] **Step 2: Run the schema tests and record RED**
+- [x] **Step 2: Run the schema tests and record RED**
 
 Run:
 
@@ -113,7 +113,7 @@ Run:
 
 Expected: failures because `PrivateCardFields`, `privateFields`, `exchangeCode`, and `exchangeExpiresAt` do not exist.
 
-- [ ] **Step 3: Add strict Pydantic fields and operation validation**
+- [x] **Step 3: Add strict Pydantic fields and operation validation**
 
 Implement the model and additive fields:
 
@@ -125,7 +125,7 @@ class PrivateCardFields(BaseModel):
 
 Allow `privateFields` only for `prepareExchange`; allow `exchangeCode` only for claim/cancel. Replace the fixed token requirement for claim/cancel with an after-validator that enforces exactly one non-`None` value across `exchangeToken` and `exchangeCode`. Add both response fields with bounded types.
 
-- [ ] **Step 4: Add failing code-format tests**
+- [x] **Step 4: Add failing code-format tests**
 
 ```python
 def test_manual_code_is_deterministic_unambiguous_and_domain_separated() -> None:
@@ -151,7 +151,7 @@ def test_manual_code_normalization(value: str, canonical: str) -> None:
 
 Also reject wrong length, `I`, `L`, `O`, `U`, punctuation other than separators, and arbitrary token text.
 
-- [ ] **Step 5: Run the code-format tests and record RED**
+- [x] **Step 5: Run the code-format tests and record RED**
 
 Run:
 
@@ -162,7 +162,7 @@ Run:
 
 Expected: import failures for the missing code helpers.
 
-- [ ] **Step 6: Implement code derivation and normalization**
+- [x] **Step 6: Implement code derivation and normalization**
 
 Refactor token derivation through a shared domain-separated digest and implement the code without modulo bias:
 
@@ -184,7 +184,7 @@ def derive_exchange_code(bearer: str, installation_id: str, operation_id: str) -
 
 `normalize_exchange_code` uppercases, removes ASCII spaces and hyphens, removes one optional `YP` prefix, validates exactly 12 alphabet characters, and returns the grouped canonical representation.
 
-- [ ] **Step 7: Run focused tests GREEN**
+- [x] **Step 7: Run focused tests GREEN**
 
 Run:
 
@@ -195,7 +195,7 @@ Run:
 
 Expected: all selected tests pass.
 
-- [ ] **Step 8: Commit the wire primitives**
+- [x] **Step 8: Commit the wire primitives**
 
 ```bash
 git add backend/app/schemas.py backend/app/sync_service.py \
@@ -219,7 +219,7 @@ git commit -m "feat: define honest exchange wire contract"
 - Produces: service preparation responses containing exactly one credential and `exchangeExpiresAt`.
 - Produces: claim/refresh responses overlaid with only the requester's directional private grant.
 
-- [ ] **Step 1: Change service fixtures to public cards and add failing round-trip tests**
+- [x] **Step 1: Change service fixtures to public cards and add failing round-trip tests**
 
 Make the default `card()` helper return `phone=""`; pass `privateFields={"phone": "+70000000000"}` only in private tests. Add a three-installation test:
 
@@ -258,7 +258,7 @@ def test_manual_private_phone_is_directional_and_survives_refresh() -> None:
 
 Add tests for deterministic prepare replay, QR token response, legacy formatted code in `exchangeToken`, one-time claim, cancellation, expiry, self-claim, and public-card rejection when `phone` or `meetingPlace` is non-empty.
 
-- [ ] **Step 2: Run service round-trip tests and record RED**
+- [x] **Step 2: Run service round-trip tests and record RED**
 
 Run:
 
@@ -269,7 +269,7 @@ Run:
 
 Expected: failures because the store boundary and service still publish and claim a single public card/token path.
 
-- [ ] **Step 3: Replace the test store with explicit temporary fields and directional grants**
+- [x] **Step 3: Replace the test store with explicit temporary fields and directional grants**
 
 The `MemoryStore` keeps:
 
@@ -282,7 +282,7 @@ self.operation_results: dict[tuple[str, str], dict[str, object]] = {}
 
 `prepare_exchange` performs card versioning, claim creation, optional temporary-field storage, and stable replay in one method. `claim_exchange` copies fields to key `(claimant, issuer)`. `refresh` overlays only `connection_private_fields[(requester, peer)]` on a copy of the public card.
 
-- [ ] **Step 4: Implement service credential routing and public-card guard**
+- [x] **Step 4: Implement service credential routing and public-card guard**
 
 Use one helper for public-card enforcement:
 
@@ -294,11 +294,11 @@ def _require_public_card(card: PersonCard) -> None:
 
 Manual preparation derives/returns `exchangeCode`; other methods derive/return `exchangeToken`. Both return `exchangeExpiresAt`. Claim/cancel use normalized `exchangeCode` when present and otherwise preserve the opaque token exactly. Pass the public card and optional fields to the atomic store method.
 
-- [ ] **Step 5: Extend secret-free logging regression coverage**
+- [x] **Step 5: Extend secret-free logging regression coverage**
 
 Add an exchange-code sentinel and private-phone sentinel to `test_logs_exclude_hostile_url_and_sync_secrets`; send them in a rejected prepare/claim request and assert neither appears in captured logs or response details.
 
-- [ ] **Step 6: Run service and review-contract tests GREEN**
+- [x] **Step 6: Run service and review-contract tests GREEN**
 
 Run:
 
@@ -309,7 +309,7 @@ Run:
 
 Expected: both files pass; QR/Bluetooth token assertions remain green.
 
-- [ ] **Step 7: Commit the service behavior**
+- [x] **Step 7: Commit the service behavior**
 
 ```bash
 git add backend/app/storage.py backend/app/sync_service.py \
@@ -333,7 +333,7 @@ git commit -m "feat: isolate private fields by exchange recipient"
 - Produces: `connection_private_fields(owner_installation_id, peer_installation_id, fields_json, updated_at)`.
 - Produces: YDB refresh and claim paths that validate `PrivateCardFields` before overlay.
 
-- [ ] **Step 1: Add failing schema-version tests**
+- [x] **Step 1: Add failing schema-version tests**
 
 Assert `SCHEMA_VERSION == 2`, both new exact table descriptions exist, `exchange_private_fields` has expiry TTL DDL, and all existing version-1 table definitions remain byte-for-byte compatible.
 
@@ -345,7 +345,7 @@ assert EXPECTED_TABLES["connection_private_fields"].primary_key == (
 )
 ```
 
-- [ ] **Step 2: Run schema tests and record RED**
+- [x] **Step 2: Run schema tests and record RED**
 
 Run:
 
@@ -356,7 +356,7 @@ Run:
 
 Expected: failures because schema version 1 has neither table.
 
-- [ ] **Step 3: Add the two additive tables and bump schema version**
+- [x] **Step 3: Add the two additive tables and bump schema version**
 
 Add exact DDL:
 
@@ -383,7 +383,7 @@ CREATE TABLE IF NOT EXISTS connection_private_fields (
 
 Update the schema docstring and tests to expect nine applied tables.
 
-- [ ] **Step 4: Add failing YDB adapter tests**
+- [x] **Step 4: Add failing YDB adapter tests**
 
 Script transactions that verify:
 
@@ -395,7 +395,7 @@ Script transactions that verify:
 - profile deletion removes temporary rows and connection grants where the installation is either side;
 - malformed JSON or an unknown private key raises `StorageIntegrityError`.
 
-- [ ] **Step 5: Run adapter tests and record RED**
+- [x] **Step 5: Run adapter tests and record RED**
 
 Run:
 
@@ -406,7 +406,7 @@ Run:
 
 Expected: signature mismatches and missing-query assertions.
 
-- [ ] **Step 6: Implement atomic prepare, claim overlay, refresh overlay, and cleanup**
+- [x] **Step 6: Implement atomic prepare, claim overlay, refresh overlay, and cleanup**
 
 Use `_json_document(_json(private_fields.model_dump(mode="json")))` only after Pydantic validation. Add helpers that reuse the adapter's existing `_json_value` decoder:
 
@@ -440,7 +440,7 @@ result_json = _json(
 
 On replay, load the issuer's current public card and the claimant's directional grant rather than deserializing a stored private card snapshot.
 
-- [ ] **Step 7: Run YDB and service tests GREEN**
+- [x] **Step 7: Run YDB and service tests GREEN**
 
 Run:
 
@@ -452,7 +452,7 @@ Run:
 
 Expected: all selected files pass.
 
-- [ ] **Step 8: Commit durable storage**
+- [x] **Step 8: Commit durable storage**
 
 ```bash
 git add backend/app/ydb_schema.py backend/app/ydb_store.py \
@@ -478,7 +478,7 @@ git commit -m "feat: persist recipient private field grants"
 - Produces: `PreparedExchange(credential: ExchangeCredential, expiresAt: Date)`.
 - Produces: additive Codable fields on Swift request/response/wire models.
 
-- [ ] **Step 1: Write a temporary failing Foundation harness**
+- [x] **Step 1: Write a temporary failing Foundation harness**
 
 Create `/tmp/yperson-honest-exchange-contract/main.swift` with:
 
@@ -508,7 +508,7 @@ require(prepared.credential.exchangeCode == "YP-0123-4567-89AB", "code missing")
 print("honest-exchange-contract-pass")
 ```
 
-- [ ] **Step 2: Compile the harness and record RED**
+- [x] **Step 2: Compile the harness and record RED**
 
 Run:
 
@@ -520,7 +520,7 @@ xcrun swiftc YPerson/Domain/Models.swift \
 
 Expected: compile errors for `PrivateCardFields`, `ManualExchangeCode`, and `PreparedExchange`.
 
-- [ ] **Step 3: Implement the focused Swift contract file**
+- [x] **Step 3: Implement the focused Swift contract file**
 
 ```swift
 struct PrivateCardFields: Codable, Equatable {
@@ -556,7 +556,7 @@ struct PreparedExchange: Equatable {
 
 Implement manual normalization with the same alphabet and separators as Python. Add the new optional properties to `SyncRequest`, `SyncResponse`, and `SyncWireRequest`, then pass them through `APIClient.makeWireRequest`.
 
-- [ ] **Step 4: Regenerate the Xcode project**
+- [x] **Step 4: Regenerate the Xcode project**
 
 Run:
 
@@ -567,7 +567,7 @@ git diff --check
 
 Expected: the project references `ExchangeContract.swift`; PersonalDebug source files and local signing values are unchanged.
 
-- [ ] **Step 5: Compile and run the harness GREEN**
+- [x] **Step 5: Compile and run the harness GREEN**
 
 Run:
 
@@ -580,7 +580,7 @@ xcrun swiftc YPerson/Domain/Models.swift YPerson/Domain/ExchangeContract.swift \
 
 Expected: `honest-exchange-contract-pass`.
 
-- [ ] **Step 6: Commit the Swift contract**
+- [x] **Step 6: Commit the Swift contract**
 
 ```bash
 git add YPerson/Domain/ExchangeContract.swift YPerson/Domain/Models.swift \
@@ -603,7 +603,7 @@ git commit -m "feat: add typed iOS exchange credentials"
 - Produces: `claimExchange(credential:expiresAt:localCardID:ownCard:greeting:) async throws -> SyncResponse`.
 - Produces: `cancelExchange(credential:) async`.
 
-- [ ] **Step 1: Extend the harness with failing request-routing assertions**
+- [x] **Step 1: Extend the harness with failing request-routing assertions**
 
 Encode token and code requests and inspect their JSON dictionaries:
 
@@ -627,11 +627,11 @@ require(publicCard["phone"] as? String == "", "QR request leaked phone")
 require(publicJSON["privateFields"] == nil, "QR request leaked private fields")
 ```
 
-- [ ] **Step 2: Compile the harness and record RED**
+- [x] **Step 2: Compile the harness and record RED**
 
 Run the Task 4 compile command. Expected: initializer errors for the missing `exchangeCode` and `privateFields` routing.
 
-- [ ] **Step 3: Refactor coordinator methods to typed credentials**
+- [x] **Step 3: Refactor coordinator methods to typed credentials**
 
 Preparation sends `card.exchangeCopy` plus explicitly supplied private fields. It validates response exclusivity and method:
 
@@ -657,11 +657,11 @@ default:
 
 Claim/cancel construct `SyncRequest` from `credential.exchangeToken` and `credential.exchangeCode`. Pending-operation retry keeps the encoded request unchanged.
 
-- [ ] **Step 4: Update Card QR to require a token and server expiry**
+- [x] **Step 4: Update Card QR to require a token and server expiry**
 
 `CardViewController` requests preparation with `privateFields: nil`, rejects `.code`, encodes `prepared.expiresAt`, and cancels through `.token(token)`. Offline fallback continues to use `card.exchangeCopy` with no token.
 
-- [ ] **Step 5: Run the harness GREEN and build Debug**
+- [x] **Step 5: Run the harness GREEN and build Debug**
 
 Run:
 
@@ -678,7 +678,7 @@ xcodebuild -quiet -project YPerson.xcodeproj -scheme YPerson -configuration Debu
 
 Expected: harness pass marker and Xcode exit 0.
 
-- [ ] **Step 6: Commit coordinator and QR changes**
+- [x] **Step 6: Commit coordinator and QR changes**
 
 ```bash
 git add YPerson/Networking/SyncCoordinator.swift YPerson/UI/CardViewController.swift
@@ -701,7 +701,7 @@ git commit -m "feat: route exchange codes separately from tokens"
 - Produces: `ShortCodeViewController(code:expiresAt:onClose:)` with once-only cancellation callback.
 - Produces: outgoing Bluetooth/manual private-field selection and manual code input normalization.
 
-- [ ] **Step 1: Add a failing source-contract check to the Swift harness workflow**
+- [x] **Step 1: Add a failing source-contract check to the Swift harness workflow**
 
 Before UI edits, verify the intended source markers are absent:
 
@@ -712,7 +712,7 @@ Before UI edits, verify the intended source markers are absent:
 
 Expected: both commands exit 0 because the truthful controls are not implemented yet.
 
-- [ ] **Step 2: Implement an accessible short-code screen**
+- [x] **Step 2: Implement an accessible short-code screen**
 
 Create a UIKit controller that displays:
 
@@ -724,7 +724,7 @@ Create a UIKit controller that displays:
 
 Do not include the owner's name, phone, or card payload in the clipboard.
 
-- [ ] **Step 3: Replace the local private switch with owned truthful state**
+- [x] **Step 3: Replace the local private switch with owned truthful state**
 
 Add properties:
 
@@ -740,17 +740,17 @@ private var nearbyCredential: ExchangeCredential?
 
 Place the switch and status before outgoing exchange actions. On screen exit, set the switch off and clear `includePrivatePhone`. If the saved card has no valid `PrivateCardFields`, authentication is not started and the user sees `В визитке пока нет телефона для передачи.`
 
-- [ ] **Step 4: Wire authenticated Bluetooth and manual preparation**
+- [x] **Step 4: Wire authenticated Bluetooth and manual preparation**
 
 Bluetooth passes `PrivateCardFields(card: card)` only when `includePrivatePhone` is true and requires a token result. Add `showShortCode()` that requests method `manual`, pushes `ShortCodeViewController`, and cancels its `.code` credential on close.
 
 Keep lifecycle ownership separate: `viewWillDisappear` cancels only active nearby discovery; the code controller owns its own cancellation so pushing it does not invalidate the code immediately.
 
-- [ ] **Step 5: Normalize the entered code and route it as `.code`**
+- [x] **Step 5: Normalize the entered code and route it as `.code`**
 
 Set the input hint to `YP-XXXX-XXXX-XXXX`. Reject locally when `ManualExchangeCode.normalize` returns `nil`; otherwise call `claimExchange(credential: .code(canonical), ...)`. Preserve the generic server failure copy and do not echo the submitted code.
 
-- [ ] **Step 6: Regenerate, inspect, and build**
+- [x] **Step 6: Regenerate, inspect, and build**
 
 Run:
 
@@ -766,11 +766,11 @@ xcodebuild -quiet -project YPerson.xcodeproj -scheme YPerson -configuration Debu
 
 Expected: all copy markers found and build exit 0.
 
-- [ ] **Step 7: Record physical-device-only limitations**
+- [x] **Step 7: Record physical-device-only limitations**
 
 Add checklist entries for two-device manual claim, Bluetooth private sharing, successful/cancelled Face ID/passcode, code expiry, app backgrounding, clipboard content, VoiceOver, and Dynamic Type. Mark them pending when no physical devices are available; do not claim simulator evidence for Face ID/Bluetooth mutual exchange.
 
-- [ ] **Step 8: Commit the UI**
+- [x] **Step 8: Commit the UI**
 
 ```bash
 git add YPerson/UI/ShortCodeViewController.swift YPerson/UI/ExchangeViewController.swift \
@@ -796,11 +796,11 @@ git commit -m "feat: show real short exchange codes"
 - Produces: deployment smoke coverage for both opaque token and manual code.
 - Produces: canonical privacy/release documentation matching actual storage and UI behavior.
 
-- [ ] **Step 1: Add failing deployment-contract assertions**
+- [x] **Step 1: Add failing deployment-contract assertions**
 
 Require the deployment script to read `exchangeCode` and `exchangeExpiresAt`, prepare manual exchange with `exchangeMethod: "manual"`, claim through `exchangeCode`, and keep the existing QR token smoke path.
 
-- [ ] **Step 2: Run deployment tests and record RED**
+- [x] **Step 2: Run deployment tests and record RED**
 
 Run:
 
@@ -811,11 +811,11 @@ Run:
 
 Expected: new assertions fail because the script only exercises `exchangeToken`.
 
-- [ ] **Step 3: Extend the serverless smoke exchange**
+- [x] **Step 3: Extend the serverless smoke exchange**
 
 Use separate stable operation IDs for QR preparation/claim and manual preparation/claim. Store the manual response value only in the process variable `SMOKE_EXCHANGE_CODE`; never print it. Assert both responses provide `exchangeExpiresAt`, and unset token/code variables before cleanup output.
 
-- [ ] **Step 4: Align canonical product and privacy documents**
+- [x] **Step 4: Align canonical product and privacy documents**
 
 Document:
 
@@ -828,7 +828,7 @@ Document:
 
 Do not mark physical-device Face ID/Bluetooth checks complete.
 
-- [ ] **Step 5: Validate JSON/YAML and deployment tests GREEN**
+- [x] **Step 5: Validate JSON/YAML and deployment tests GREEN**
 
 Run:
 
@@ -841,7 +841,7 @@ Run:
 
 Expected: tests pass and parsers exit 0.
 
-- [ ] **Step 6: Commit contract documentation**
+- [x] **Step 6: Commit contract documentation**
 
 ```bash
 git add deploy/yandex/serverless/deploy.sh backend/tests/test_serverless_deployment.py \
@@ -862,7 +862,7 @@ git commit -m "docs: align release contract with private exchange"
 - Consumes: all tasks.
 - Produces: reproducible final verification evidence and a clean review boundary.
 
-- [ ] **Step 1: Run full backend quality gates**
+- [x] **Step 1: Run full backend quality gates**
 
 Run:
 
@@ -874,11 +874,11 @@ Run:
 
 Expected: complete pytest suite passes; Ruff reports no errors or formatting changes.
 
-- [ ] **Step 2: Re-run the Swift contract harness**
+- [x] **Step 2: Re-run the Swift contract harness**
 
 Run the Task 5 harness compile and binary. Expected: `honest-exchange-contract-pass`.
 
-- [ ] **Step 3: Build Debug and Release in fresh derived-data directories**
+- [x] **Step 3: Build Debug and Release in fresh derived-data directories**
 
 Run:
 
@@ -905,7 +905,7 @@ test -d "$YP_RELEASE_APP/PlugIns/YPersonNotificationService.appex"
 test -d "$YP_RELEASE_APP/PlugIns/YPersonNotificationContent.appex"
 ```
 
-- [ ] **Step 4: Run privacy and secret scans**
+- [x] **Step 4: Run privacy and secret scans**
 
 Run:
 
@@ -923,11 +923,11 @@ YP_RELEASE_BINARY=/tmp/yperson-honest-exchange-final-release/Build/Products/Rele
 ! strings "$YP_RELEASE_BINARY" | rg 'person-alexey|\+7 900 555-10-20|bearer-sentinel|YP-0123-4567-89AB'
 ```
 
-- [ ] **Step 5: Write verification evidence**
+- [x] **Step 5: Write verification evidence**
 
 Record exact commands, counts, build configurations, product paths, known Starlette warning, and pending physical-device checks in `Release/honest-exchange-verification.md`. Separate automated PASS from device-only PENDING.
 
-- [ ] **Step 6: Mark plan progress and commit evidence**
+- [x] **Step 6: Mark plan progress and commit evidence**
 
 Check only steps actually completed, then run:
 
@@ -937,7 +937,7 @@ git add docs/superpowers/plans/2026-08-21-yperson-honest-exchange.md \
 git commit -m "test: verify honest exchange end to end"
 ```
 
-- [ ] **Step 7: Review the complete branch**
+- [x] **Step 7: Review the complete branch**
 
 Run:
 
