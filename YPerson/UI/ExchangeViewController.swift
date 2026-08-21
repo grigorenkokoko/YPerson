@@ -27,8 +27,10 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private var nearbySearchAlert: UIAlertController?
     private var nearbyPrepareTask: Task<Void, Never>?
     private var nearbyPreparationID: UUID?
+    private var nearbySharesPrivatePhone = false
     private var shortCodePrepareTask: Task<Void, Never>?
     private var shortCodePreparationID: UUID?
+    private var shortCodePreparationSharesPrivatePhone = false
 
     init(nearby: NearbyExchangeController, photoScanner: PhotoCardScanner, permissions: PermissionCenter, audio: AudioGreetingController, syncCoordinator: SyncCoordinator, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, ownCard: @escaping () -> PersonCard?, onPersonSaved: @escaping (PersonCard) -> Void) {
         self.nearby = nearby
@@ -59,12 +61,19 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         privateSwitch.accessibilityLabel = "Поделиться телефоном · Face ID"
         privateSwitch.accessibilityHint = "Телефон будет передан только в следующем Bluetooth-обмене или по короткому коду"
         privateSwitch.addTarget(self, action: #selector(togglePrivate(_:)), for: .valueChanged)
+        let privateLabel = YPStyle.label("Поделиться телефоном · Face ID", style: .headline)
+        privateLabel.isAccessibilityElement = false
         let privateRow = UIStackView(arrangedSubviews: [
-            YPStyle.label("Поделиться телефоном · Face ID", style: .headline),
+            privateLabel,
             privateSwitch
         ])
         privateRow.alignment = .center
         privateRow.distribution = .equalSpacing
+        privateRow.isUserInteractionEnabled = true
+        privateRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        let privateRowTap = UITapGestureRecognizer(target: self, action: #selector(togglePrivateRow(_:)))
+        privateRowTap.cancelsTouchesInView = false
+        privateRow.addGestureRecognizer(privateRowTap)
         contentStack.addArrangedSubview(privateRow)
         contentStack.addArrangedSubview(privateStatus)
         addButton("Показать мой QR", "qrcode", #selector(showOwnQR), primary: true)
@@ -80,9 +89,11 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         nearbyPrepareTask?.cancel()
         nearbyPrepareTask = nil
         nearbyPreparationID = nil
+        nearbySharesPrivatePhone = false
         shortCodePrepareTask?.cancel()
         shortCodePrepareTask = nil
         shortCodePreparationID = nil
+        shortCodePreparationSharesPrivatePhone = false
         cancelNearbyExchange()
         nearby.stop()
         nearbySearchAlert = nil
@@ -235,6 +246,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             cancelNearbyExchange()
             let preparationID = UUID()
             nearbyPreparationID = preparationID
+            nearbySharesPrivatePhone = privateSelection.sharesPhone
             nearbyPrepareTask = Task { [weak self] in
                 guard let self else { return }
                 var preparedCredential: ExchangeCredential?
@@ -260,13 +272,15 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                     }, onToken: { [weak self] token in self?.finishNearbySearch(token: token) })
                 } catch {
                     if let preparedCredential, nearbyCredential != preparedCredential {
-                        await syncCoordinator.cancelExchange(credential: preparedCredential)
+                        cancelPreparedCredential(preparedCredential)
                     }
-                    if error is CancellationError { return }
-                    if nearbyPreparationID == preparationID {
-                        nearbyPrepareTask = nil
-                        nearbyPreparationID = nil
-                    }
+                    let isCurrent = nearbyPreparationID == preparationID
+                    guard isCurrent else { return }
+                    nearbyPrepareTask = nil
+                    nearbyPreparationID = nil
+                    nearbySharesPrivatePhone = false
+                    guard !shouldSuppressPreparationError(error, isCurrent: isCurrent),
+                          viewIfLoaded?.window != nil else { return }
                     nearby.stop()
                     showMessage("Не удалось начать поиск", "Для Bluetooth-обмена сейчас нужен интернет, чтобы получить короткоживущий защищённый токен. Используйте офлайн QR.")
                 }
@@ -358,6 +372,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                 let saved = try persist(response: response, meetingPlace: pendingMeetingPlace)
                 guard !saved.isEmpty else { throw ExchangeError.missingPeerCard }
                 nearbyCredential = nil
+                nearbySharesPrivatePhone = false
                 clearPendingMeetingPlace()
                 analytics.report(.cardReceived("bluetooth"))
                 showMessage("Человек добавлен", "Карточка сохранена в YPerson и связана с подтверждённым Bluetooth-обменом.")
@@ -588,7 +603,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
 
     @objc private func togglePrivate(_ sender: UISwitch) {
         guard sender.isOn else {
-            resetPrivatePhoneSharing()
+            revokePrivateSharingAuthorization()
             return
         }
         resetPrivatePhoneSharing()
@@ -625,6 +640,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         shortCodePrepareTask?.cancel()
         let preparationID = UUID()
         shortCodePreparationID = preparationID
+        shortCodePreparationSharesPrivatePhone = privateSelection.sharesPhone
         shortCodePrepareTask = Task { [weak self] in
             guard let self else { return }
             var preparedCredential: ExchangeCredential?
@@ -644,6 +660,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                 }
                 shortCodePrepareTask = nil
                 shortCodePreparationID = nil
+                shortCodePreparationSharesPrivatePhone = false
                 let coordinator = syncCoordinator
                 let controller = ShortCodeViewController(
                     code: code,
@@ -658,13 +675,15 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
                 }
             } catch {
                 if let preparedCredential {
-                    await syncCoordinator.cancelExchange(credential: preparedCredential)
+                    cancelPreparedCredential(preparedCredential)
                 }
-                if error is CancellationError { return }
-                if shortCodePreparationID == preparationID {
-                    shortCodePrepareTask = nil
-                    shortCodePreparationID = nil
-                }
+                let isCurrent = shortCodePreparationID == preparationID
+                guard isCurrent else { return }
+                shortCodePrepareTask = nil
+                shortCodePreparationID = nil
+                shortCodePreparationSharesPrivatePhone = false
+                guard !shouldSuppressPreparationError(error, isCurrent: isCurrent),
+                      viewIfLoaded?.window != nil else { return }
                 showMessage("Не удалось показать код", "Для короткого кода сейчас нужен интернет. Публичный QR остаётся доступен.")
             }
         }
@@ -686,10 +705,50 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         privateStatus.text = "Телефон передаётся только через Bluetooth или ваш короткий код. QR остаётся публичным."
     }
 
+    private func revokePrivateSharingAuthorization() {
+        resetPrivatePhoneSharing()
+
+        if nearbySharesPrivatePhone {
+            nearbyPrepareTask?.cancel()
+            nearbyPrepareTask = nil
+            nearbyPreparationID = nil
+            nearbySharesPrivatePhone = false
+            cancelNearbyExchange()
+            nearby.stop()
+            nearbySearchAlert?.dismiss(animated: true)
+            nearbySearchAlert = nil
+        }
+
+        if shortCodePreparationSharesPrivatePhone {
+            shortCodePrepareTask?.cancel()
+            shortCodePrepareTask = nil
+            shortCodePreparationID = nil
+            shortCodePreparationSharesPrivatePhone = false
+        }
+    }
+
+    private func shouldSuppressPreparationError(_ error: Error, isCurrent: Bool) -> Bool {
+        guard isCurrent, !Task.isCancelled, !(error is CancellationError) else { return true }
+        return (error as? URLError)?.code == .cancelled
+    }
+
+    private func cancelPreparedCredential(_ credential: ExchangeCredential) {
+        let coordinator = syncCoordinator
+        Task { await coordinator.cancelExchange(credential: credential) }
+    }
+
     private func cancelNearbyExchange() {
         guard let credential = nearbyCredential else { return }
         nearbyCredential = nil
-        Task { await syncCoordinator.cancelExchange(credential: credential) }
+        nearbySharesPrivatePhone = false
+        cancelPreparedCredential(credential)
+    }
+
+    @objc private func togglePrivateRow(_ recognizer: UITapGestureRecognizer) {
+        let locationInSwitch = recognizer.location(in: privateSwitch)
+        guard !privateSwitch.bounds.contains(locationInSwitch) else { return }
+        privateSwitch.setOn(!privateSwitch.isOn, animated: true)
+        togglePrivate(privateSwitch)
     }
 
     deinit {
@@ -713,5 +772,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             if case .phone(let fields) = self { return fields }
             return nil
         }
+
+        var sharesPhone: Bool { fields != nil }
     }
 }

@@ -222,8 +222,12 @@ final class PermissionCenter: NSObject, CLLocationManagerDelegate {
         let context = LAContext()
         context.localizedCancelTitle = "Оставить закрытым"
         var error: NSError?
-        let policy: LAPolicy = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
-            ? .deviceOwnerAuthenticationWithBiometrics : .deviceOwnerAuthentication
+        let policy: LAPolicy = .deviceOwnerAuthentication
+        guard context.canEvaluatePolicy(policy, error: &error) else {
+            let evaluationError = error ?? NSError(domain: "YPerson.LocalAuthentication", code: 1)
+            DispatchQueue.main.async { completion(.failure(evaluationError)) }
+            return
+        }
         context.evaluatePolicy(policy, localizedReason: "Открыть закрытые поля визитки") { success, error in
             DispatchQueue.main.async {
                 if success { completion(.success(())) }
