@@ -5,21 +5,20 @@ import UserNotifications
 final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterDelegate, YPersonExperienceOutput {
     var window: UIWindow?
     private var experienceBuilder: YPersonExperienceBuilder?
+    private var configuration: AppConfiguration?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         configureNotifications()
         let window = UIWindow(frame: UIScreen.main.bounds)
         do {
-            let builder = try YPersonExperienceBuilder(
-                configuration: try AppConfiguration(bundle: .main)
-            )
+            let configuration = try AppConfiguration(bundle: .main)
+            self.configuration = configuration
+            let builder = try YPersonExperienceBuilder(configuration: configuration)
             self.experienceBuilder = builder
-            let launchURL = launchOptions?[.url] as? URL
-            let entryPoint: YPersonEntryPoint = launchURL.map(ScannerWidgetRoute.matches) == true
-                ? .scanQR
-                : .root
             window.rootViewController = builder.makeRootViewController(
-                context: YPersonExperienceContext(entryPoint: entryPoint),
+                context: YPersonExperienceContext(
+                    entryPoint: entryPoint(from: launchOptions, configuration: configuration)
+                ),
                 output: self
             )
         } catch {
@@ -44,6 +43,18 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
             return false
         }
         experienceBuilder.route(to: .scanQR)
+        return true
+    }
+
+    func application(
+        _ application: UIApplication,
+        continue userActivity: NSUserActivity,
+        restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void
+    ) -> Bool {
+        guard let token = publicCardToken(from: userActivity), let experienceBuilder else {
+            return false
+        }
+        experienceBuilder.route(to: .publicCard(token: token))
         return true
     }
 
@@ -82,6 +93,41 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
         let center = UNUserNotificationCenter.current()
         center.setNotificationCategories([category])
         center.delegate = self
+    }
+
+    private func entryPoint(
+        from launchOptions: [UIApplication.LaunchOptionsKey: Any]?,
+        configuration: AppConfiguration
+    ) -> YPersonEntryPoint {
+        if let url = launchOptions?[.url] as? URL, ScannerWidgetRoute.matches(url) {
+            return .scanQR
+        }
+        guard let activityDictionary = launchOptions?[.userActivityDictionary]
+                as? [AnyHashable: Any],
+              let activity = activityDictionary.values.lazy
+                .compactMap({ $0 as? NSUserActivity })
+                .first,
+              let token = publicCardToken(from: activity, configuration: configuration) else {
+            return .root
+        }
+        return .publicCard(token: token)
+    }
+
+    private func publicCardToken(from userActivity: NSUserActivity) -> String? {
+        guard let configuration else { return nil }
+        return publicCardToken(from: userActivity, configuration: configuration)
+    }
+
+    private func publicCardToken(
+        from userActivity: NSUserActivity,
+        configuration: AppConfiguration
+    ) -> String? {
+        guard userActivity.activityType == NSUserActivityTypeBrowsingWeb,
+              let url = userActivity.webpageURL,
+              let allowedHost = configuration.apiBaseURL.host else {
+            return nil
+        }
+        return PublicCardRoute.token(from: url, allowedHost: allowedHost)
     }
 
     private func configurationErrorController(_ error: Error) -> UIViewController {

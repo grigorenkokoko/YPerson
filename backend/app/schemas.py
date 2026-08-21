@@ -1,9 +1,12 @@
 """Strict request and response schemas for the versioned iOS wire contract."""
 
+import base64
+import binascii
 from collections.abc import Mapping
 from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -36,6 +39,9 @@ class SyncOperation(str, Enum):
     delete_profile = "deleteProfile"
     report = "report"
     block = "block"
+    activate_public_link = "activatePublicLink"
+    revoke_public_link = "revokePublicLink"
+    dismiss_public_reply = "dismissPublicReply"
 
 
 class PersonCard(BaseModel):
@@ -80,6 +86,22 @@ class SyncRequest(BaseModel):
     audioDurationMS: int | None = Field(default=None, ge=1, le=10_000)
     moderationCategory: ModerationCategory | None = None
     subjectInstallationID: str | None = Field(default=None, max_length=128)
+    publicLinkToken: str | None = Field(default=None, max_length=43)
+    publicReplyID: str | None = Field(default=None, max_length=36)
+
+    @field_validator("publicLinkToken")
+    @classmethod
+    def require_canonical_public_link_token(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_public_link_token(value)
+
+    @field_validator("publicReplyID")
+    @classmethod
+    def require_canonical_public_reply_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _validate_canonical_uuid(value, "publicReplyID")
 
     @model_validator(mode="before")
     @classmethod
@@ -101,6 +123,9 @@ class SyncRequest(BaseModel):
             SyncOperation.delete_profile: (),
             SyncOperation.report: ("subjectInstallationID", "moderationCategory"),
             SyncOperation.block: ("subjectInstallationID",),
+            SyncOperation.activate_public_link: ("card", "publicLinkToken"),
+            SyncOperation.revoke_public_link: (),
+            SyncOperation.dismiss_public_reply: ("publicReplyID",),
         }
         allowed_by_operation: dict[SyncOperation, frozenset[str]] = {
             SyncOperation.refresh: frozenset({"cursor"}),
@@ -114,6 +139,9 @@ class SyncRequest(BaseModel):
             SyncOperation.delete_profile: frozenset(),
             SyncOperation.report: frozenset({"subjectInstallationID", "moderationCategory"}),
             SyncOperation.block: frozenset({"subjectInstallationID"}),
+            SyncOperation.activate_public_link: frozenset({"card", "publicLinkToken"}),
+            SyncOperation.revoke_public_link: frozenset(),
+            SyncOperation.dismiss_public_reply: frozenset({"publicReplyID"}),
         }
         operation_field_names = frozenset(
             {
@@ -127,6 +155,8 @@ class SyncRequest(BaseModel):
                 "audioDurationMS",
                 "moderationCategory",
                 "subjectInstallationID",
+                "publicLinkToken",
+                "publicReplyID",
             }
         )
         supplied_fields = operation_field_names.intersection(self.model_fields_set)
@@ -187,6 +217,41 @@ class SyncedPerson(BaseModel):
     audio: AudioAsset | None = None
 
 
+class PublicContactReply(BaseModel):
+    """A pending contact response received through a public card."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(max_length=36)
+    name: str = Field(min_length=1, max_length=80)
+    email: str | None = Field(default=None, max_length=256)
+    phone: str | None = Field(default=None, max_length=256)
+    createdAt: datetime
+
+    @field_validator("id")
+    @classmethod
+    def require_canonical_id(cls, value: str) -> str:
+        return _validate_canonical_uuid(value, "public reply id")
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def trim_name(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("email", "phone", mode="before")
+    @classmethod
+    def trim_contact_method(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        return value.strip() or None
+
+    @model_validator(mode="after")
+    def require_one_contact_method(self) -> "PublicContactReply":
+        if (self.email is None) == (self.phone is None):
+            raise ValueError("public reply requires exactly one contact method")
+        return self
+
+
 class SyncResponse(BaseModel):
     """The response shape consumed by the version 2 iOS sync client."""
 
@@ -203,6 +268,8 @@ class SyncResponse(BaseModel):
     exchangeToken: str | None = Field(default=None, max_length=256)
     audioUpload: AudioUpload | None = None
     notificationConfiguration: dict[str, bool] | None = None
+    publicLinkActive: bool | None = None
+    publicReplies: list[PublicContactReply] = Field(default_factory=list)
 
 
 class FeatureAvailability(BaseModel):
@@ -255,4 +322,29 @@ def _reject_prohibited_data_fields(value: Any) -> None:
 def _require_https_url(value: AnyHttpUrl) -> AnyHttpUrl:
     if value.scheme != "https":
         raise ValueError("signed audio URLs require HTTPS")
+    return value
+
+
+def validate_public_link_token(value: str) -> str:
+    """Return a canonical unpadded Base64URL token representing 32 random bytes."""
+
+    if len(value) != 43:
+        raise ValueError("public link token must be canonical Base64URL")
+    try:
+        decoded = base64.b64decode(value + "=", altchars=b"-_", validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise ValueError("public link token must be canonical Base64URL") from error
+    canonical = base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=")
+    if len(decoded) != 32 or canonical != value:
+        raise ValueError("public link token must be canonical Base64URL")
+    return value
+
+
+def _validate_canonical_uuid(value: str, field_name: str) -> str:
+    try:
+        parsed = UUID(value)
+    except (AttributeError, TypeError, ValueError) as error:
+        raise ValueError(f"{field_name} must be a canonical UUID") from error
+    if str(parsed) != value:
+        raise ValueError(f"{field_name} must be a canonical UUID")
     return value

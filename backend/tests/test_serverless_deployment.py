@@ -26,6 +26,8 @@ EXPECTED_CONFIG_KEYS = {
     "YPERSON_CONFIG_VERSION",
     "YPERSON_PRIVACY_URL",
     "YPERSON_SUPPORT_URL",
+    "YPERSON_APP_STORE_ID",
+    "YPERSON_APPLE_APPLICATION_IDENTIFIER",
     "YDB_ENDPOINT",
     "YDB_DATABASE",
     "YPERSON_OBJECT_BUCKET",
@@ -75,8 +77,8 @@ def test_release_runs_schema_before_revision_and_routes_sync_to_container() -> N
     steps = workflow["jobs"]["deploy"]["steps"]
     names = [step.get("name", step.get("uses", "")) for step in steps]
     assert names.index("Test backend") < names.index("Build and push backend image")
-    assert names.index("Build and push backend image") < names.index("Apply YDB schema")
-    assert names.index("Apply YDB schema") < names.index("Deploy HTTP revision")
+    assert names.index("Build and push backend image") < names.index("Apply YDB schema v2")
+    assert names.index("Apply YDB schema v2") < names.index("Deploy HTTP revision")
 
     iam = next(step for step in steps if step.get("name") == "Get Yandex Cloud IAM token")
     assert iam == {
@@ -89,7 +91,7 @@ def test_release_runs_schema_before_revision_and_routes_sync_to_container() -> N
     assert image["with"]["platforms"] == "linux/amd64"
     assert image["with"]["push"] is True
     assert image["with"]["tags"].endswith(":${{ github.sha }}")
-    schema = next(step for step in steps if step.get("name") == "Apply YDB schema")
+    schema = next(step for step in steps if step.get("name") == "Apply YDB schema v2")
     assert schema["run"] == "python backend/scripts/apply_ydb_schema.py"
     assert schema["env"] == {
         "YDB_ENDPOINT": "${{ vars.YDB_ENDPOINT }}",
@@ -106,7 +108,18 @@ def test_release_runs_schema_before_revision_and_routes_sync_to_container() -> N
 
     gateway = load_yaml(GATEWAY)
     assert gateway["openapi"] == "3.0.0"
-    assert set(gateway["paths"]) == {"/health", "/config", "/privacy", "/support", "/sync"}
+    assert set(gateway["paths"]) == {
+        "/health",
+        "/config",
+        "/privacy",
+        "/support",
+        "/sync",
+        "/.well-known/apple-app-site-association",
+        "/p/{token}",
+        "/p/{token}/card.json",
+        "/p/{token}/contact.vcf",
+        "/p/{token}/replies",
+    }
     expected_integration = {
         "type": "serverless_containers",
         "container_id": "${YC_HTTP_CONTAINER_ID}",
@@ -118,6 +131,11 @@ def test_release_runs_schema_before_revision_and_routes_sync_to_container() -> N
         "/privacy": "get",
         "/support": "get",
         "/sync": "post",
+        "/.well-known/apple-app-site-association": "get",
+        "/p/{token}": "get",
+        "/p/{token}/card.json": "get",
+        "/p/{token}/contact.vcf": "get",
+        "/p/{token}/replies": "post",
     }.items():
         assert gateway["paths"][path][method]["x-yc-apigateway-integration"] == expected_integration
     assert set(gateway["paths"]["/sync"]["post"]["responses"]) == {

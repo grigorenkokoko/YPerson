@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
 from .media_service import MediaInvalid, MediaService
-from .schemas import SyncedPerson, SyncOperation, SyncRequest, SyncResponse
+from .schemas import PublicContactReply, SyncedPerson, SyncOperation, SyncRequest, SyncResponse
 from .storage import StorageConflict, SyncSnapshot, SyncStore
 
 EXCHANGE_TOKEN_LIFETIME = timedelta(minutes=10)
@@ -82,6 +82,12 @@ class SyncService:
                 return self._remove_push(request)
             case SyncOperation.report | SyncOperation.block:
                 return self._moderate(request)
+            case SyncOperation.activate_public_link:
+                return self._activate_public_link(request)
+            case SyncOperation.revoke_public_link:
+                return self._revoke_public_link(request)
+            case SyncOperation.dismiss_public_reply:
+                return self._dismiss_public_reply(request)
             case SyncOperation.delete_profile:
                 return self._delete(request, bearer)
 
@@ -215,6 +221,38 @@ class SyncService:
         )
         return _response(f"{request.operation.value} recorded", update_count=1)
 
+    def _activate_public_link(self, request: SyncRequest) -> SyncResponse:
+        if request.card is None or request.publicLinkToken is None:
+            raise ValueError("missing public link data")
+        public_card = request.card.model_copy(
+            update={
+                "phone": "",
+                "meetingPlace": None,
+                "hasAudioGreeting": False,
+            }
+        )
+        self._store.activate_public_link(
+            request.installationID,
+            request.operationID,
+            request.publicLinkToken,
+            public_card,
+        )
+        return self._refresh(request)
+
+    def _revoke_public_link(self, request: SyncRequest) -> SyncResponse:
+        self._store.revoke_public_link(request.installationID, request.operationID)
+        return self._refresh(request)
+
+    def _dismiss_public_reply(self, request: SyncRequest) -> SyncResponse:
+        if request.publicReplyID is None:
+            raise ValueError("missing public reply identifier")
+        self._store.dismiss_public_reply(
+            request.installationID,
+            request.operationID,
+            request.publicReplyID,
+        )
+        return self._refresh(request)
+
     def _delete(self, request: SyncRequest, bearer: str) -> SyncResponse:
         try:
             object_keys = self._store.delete_profile(request.installationID, request.operationID)
@@ -291,6 +329,16 @@ def _snapshot_response(
     people: Sequence[SyncedPerson] | None = None,
 ) -> SyncResponse:
     update_count = len(snapshot.people) + len(snapshot.revoked_card_ids)
+    replies = [
+        PublicContactReply(
+            id=item.id,
+            name=item.name,
+            email=item.email,
+            phone=item.phone,
+            createdAt=item.created_at,
+        )
+        for item in snapshot.public_replies
+    ]
     return _response(
         "refreshed",
         update_count=update_count,
@@ -298,6 +346,8 @@ def _snapshot_response(
         ownCardVersion=snapshot.own_card_version,
         people=list(snapshot.people if people is None else people),
         revokedCardIDs=list(snapshot.revoked_card_ids),
+        publicLinkActive=snapshot.public_link_active,
+        publicReplies=replies,
     )
 
 

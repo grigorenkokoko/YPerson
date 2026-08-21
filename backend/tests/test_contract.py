@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from collections.abc import Generator
+from types import SimpleNamespace
 
 import anyio
 import httpx
@@ -12,8 +13,9 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from app.main import MAX_SYNC_BODY_BYTES, _bounded_body, create_app
-from app.schemas import SyncResponse
+from app.schemas import PersonCard, SyncResponse
 from app.settings import Settings
+from app.storage import PublicCardRecord
 
 EXPECTED_CONFIG = {
     "version": "2026-08-18.1",
@@ -293,3 +295,64 @@ def test_every_response_has_request_id(client: TestClient) -> None:
     ]
 
     assert all(response.headers.get("x-request-id") for response in responses)
+
+
+def test_enabled_runtime_serves_public_cards_from_its_durable_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import serve
+
+    class FakeResources:
+        def __init__(self, settings: Settings) -> None:
+            del settings
+            self.pool = object()
+
+        def close(self) -> None:
+            pass
+
+    class FakeStore:
+        def __init__(self, pool: object, *, clock=None) -> None:
+            del pool, clock
+
+        def resolve_public_card(self, raw_token: str) -> PublicCardRecord | None:
+            del raw_token
+            return PublicCardRecord(
+                owner_installation_id="installation-owner-0001",
+                card=PersonCard(
+                    id="public-card",
+                    name="Runtime Person",
+                    role="Engineer",
+                    company="YPerson",
+                    phone="private-phone",
+                    email="runtime@example.invalid",
+                    tagline="Hello",
+                    hasAudioGreeting=False,
+                    isBlocked=False,
+                ),
+            )
+
+    monkeypatch.setattr(serve, "RuntimeResources", FakeResources)
+    monkeypatch.setattr(serve, "YDBSyncStore", FakeStore)
+    monkeypatch.setattr(serve, "ObjectStorage", lambda *_args: object())
+    monkeypatch.setattr(
+        serve,
+        "MediaService",
+        lambda *_args, **_kwargs: SimpleNamespace(delete_objects=lambda _keys: None),
+    )
+    application = serve.build_app(
+        Settings(
+            YPERSON_SYNC_ENABLED="true",
+            YDB_ENDPOINT="grpcs://ydb.example:2135",
+            YDB_DATABASE="/test/database",
+            YPERSON_OBJECT_BUCKET="private-bucket",
+            YPERSON_S3_ACCESS_KEY_ID="access",
+            YPERSON_S3_SECRET_ACCESS_KEY="secret",
+            _env_file=None,
+        )
+    )
+
+    with TestClient(application, base_url="https://cards.example") as runtime_client:
+        response = runtime_client.get(f"/p/{'A' * 43}/card.json")
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Runtime Person"

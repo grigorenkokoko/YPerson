@@ -108,6 +108,17 @@ class RequestObservabilityMiddleware:
 def _safe_route(scope: Scope) -> str:
     route = scope.get("route")
     route_path = getattr(route, "path", None)
-    if route_path in {"/health", "/config", "/privacy", "/support", "/sync"}:
+    if route_path in {
+        "/health",
+        "/config",
+        "/privacy",
+        "/support",
+        "/sync",
+        "/.well-known/apple-app-site-association",
+        "/p/{token}",
+        "/p/{token}/card.json",
+        "/p/{token}/contact.vcf",
+        "/p/{token}/replies",
+    }:
         return route_path
     return "unknown"

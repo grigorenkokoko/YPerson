@@ -25,6 +25,13 @@ final class MainTabBarController: UITabBarController {
             exchangeController?.openScannerFromWidget()
         case .privacy:
             selectedIndex = 3
+        case .publicCard(let token):
+            selectedIndex = 1
+            let exchangeController = exchangeController
+            exchangeController?.loadViewIfNeeded()
+            DispatchQueue.main.async { [weak exchangeController] in
+                exchangeController?.openPublicCard(token: token)
+            }
         }
     }
 

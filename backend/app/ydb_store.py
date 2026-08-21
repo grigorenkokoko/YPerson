@@ -13,10 +13,13 @@ import ydb
 from pydantic import ValidationError
 
 from .media_service import AUDIO_CONTENT_TYPE, MediaRecord
-from .schemas import PersonCard, SyncedPerson
+from .schemas import PersonCard, PublicContactReply, SyncedPerson
 from .storage import (
+    MAX_PENDING_PUBLIC_REPLIES,
     InstallationRecord,
     InvalidCredential,
+    PublicCardRecord,
+    PublicContactReplyRecord,
     StorageConflict,
     StorageIntegrityError,
     SyncSnapshot,
@@ -460,8 +463,10 @@ class YDBSyncStore:
         )[0]
 
     def refresh(self, installation_id: str, cursor: str | None) -> SyncSnapshot:
+        now = self._clock()
         query = """
         DECLARE $installation_id AS Utf8;
+        DECLARE $now AS Timestamp;
 
         SELECT version, card_json
         FROM cards
@@ -484,16 +489,31 @@ class YDBSyncStore:
         WHERE installation_id = $installation_id
           AND operation_type = "revocation"u
         ORDER BY completed_at, operation_id;
+
+        SELECT owner_installation_id
+        FROM public_links
+        WHERE owner_installation_id = $installation_id;
+
+        SELECT reply_id, name, email, phone, created_at
+        FROM public_replies
+        WHERE owner_installation_id = $installation_id
+          AND expires_at > $now
+        ORDER BY created_at, reply_id;
         """
         result_sets = self._execute(
             query,
-            {"$installation_id": _utf8(installation_id)},
+            {
+                "$installation_id": _utf8(installation_id),
+                "$now": _timestamp(now),
+            },
         )
-        if len(result_sets) != 3:
+        if len(result_sets) != 5:
             raise StorageIntegrityError
         own_rows = result_sets[0]
         people_rows = result_sets[1]
         revocation_rows = result_sets[2]
+        public_link_rows = result_sets[3]
+        public_reply_rows = result_sets[4]
         if len(own_rows) > 1:
             raise StorageIntegrityError
         own_card = _stored_card(own_rows[0]) if own_rows else None
@@ -511,13 +531,328 @@ class YDBSyncStore:
             dict.fromkeys(_stored_revoked_card_id(row) for row in unseen_revocations)
         )
         next_cursor = _stored_cursor(unseen_revocations[-1]) if unseen_revocations else cursor
+        if len(public_link_rows) > 1:
+            raise StorageIntegrityError
+        public_replies = tuple(_stored_public_reply(row) for row in public_reply_rows)
         return SyncSnapshot(
             own_card=own_card,
             own_card_version=own_version,
             people=people,
             revoked_card_ids=revoked_card_ids,
             next_cursor=next_cursor,
+            public_link_active=bool(public_link_rows),
+            public_replies=public_replies,
         )
+
+    def activate_public_link(
+        self,
+        installation_id: str,
+        operation_id: str,
+        raw_token: str,
+        card: PersonCard,
+    ) -> None:
+        token_hash = _digest(raw_token)
+        del raw_token
+        card_json = card.model_dump_json()
+        now = self._clock()
+
+        def activate(tx: ydb.QueryTxContext) -> None:
+            self._ensure_active(tx, installation_id)
+            previous = self._operation_result(
+                tx,
+                installation_id,
+                operation_id,
+                "activatePublicLink",
+            )
+            if previous is not None:
+                return
+            token_result_sets = self._tx_rows(
+                tx,
+                """
+                DECLARE $token_hash AS String;
+                SELECT owner_installation_id
+                FROM public_links VIEW by_token
+                WHERE token_hash = $token_hash;
+                """,
+                {"$token_hash": _string(token_hash)},
+            )
+            if len(token_result_sets) != 1:
+                raise StorageIntegrityError
+            token_rows = token_result_sets[0]
+            token_owners = {
+                _stored_text(row, "owner_installation_id") for row in token_rows
+            }
+            if any(owner != installation_id for owner in token_owners):
+                raise StorageConflict("public link unavailable")
+            self._tx_rows(
+                tx,
+                """
+                DECLARE $installation_id AS Utf8;
+                DECLARE $operation_id AS Utf8;
+                DECLARE $token_hash AS String;
+                DECLARE $card_json AS JsonDocument;
+                DECLARE $result_json AS JsonDocument;
+                DECLARE $now AS Timestamp;
+
+                UPSERT INTO public_links (
+                    owner_installation_id, token_hash, card_json, created_at, updated_at
+                ) VALUES (
+                    $installation_id, $token_hash, $card_json, $now, $now
+                );
+                UPSERT INTO operations (
+                    installation_id, operation_id, operation_type, result_json, completed_at
+                ) VALUES (
+                    $installation_id, $operation_id,
+                    "activatePublicLink"u, $result_json, $now
+                );
+                """,
+                {
+                    "$installation_id": _utf8(installation_id),
+                    "$operation_id": _utf8(operation_id),
+                    "$token_hash": _string(token_hash),
+                    "$card_json": _json_document(card_json),
+                    "$result_json": _json_document("{}"),
+                    "$now": _timestamp(now),
+                },
+            )
+
+        self._transaction(activate)
+
+    def revoke_public_link(self, installation_id: str, operation_id: str) -> None:
+        now = self._clock()
+
+        def revoke(tx: ydb.QueryTxContext) -> None:
+            self._ensure_active(tx, installation_id)
+            previous = self._operation_result(
+                tx,
+                installation_id,
+                operation_id,
+                "revokePublicLink",
+            )
+            if previous is not None:
+                return
+            self._tx_rows(
+                tx,
+                """
+                DECLARE $installation_id AS Utf8;
+                DECLARE $operation_id AS Utf8;
+                DECLARE $result_json AS JsonDocument;
+                DECLARE $now AS Timestamp;
+
+                DELETE FROM public_links
+                WHERE owner_installation_id = $installation_id;
+                UPSERT INTO operations (
+                    installation_id, operation_id, operation_type, result_json, completed_at
+                ) VALUES (
+                    $installation_id, $operation_id,
+                    "revokePublicLink"u, $result_json, $now
+                );
+                """,
+                {
+                    "$installation_id": _utf8(installation_id),
+                    "$operation_id": _utf8(operation_id),
+                    "$result_json": _json_document("{}"),
+                    "$now": _timestamp(now),
+                },
+            )
+
+        self._transaction(revoke)
+
+    def resolve_public_card(self, raw_token: str) -> PublicCardRecord | None:
+        token_hash = _digest(raw_token)
+        del raw_token
+        result_sets = self._execute(
+            """
+            DECLARE $token_hash AS String;
+            SELECT owner_installation_id, card_json
+            FROM public_links VIEW by_token
+            WHERE token_hash = $token_hash;
+            """,
+            {"$token_hash": _string(token_hash)},
+        )
+        if len(result_sets) != 1:
+            raise StorageIntegrityError
+        rows = result_sets[0]
+        if not rows:
+            return None
+        if len(rows) != 1:
+            raise StorageIntegrityError
+        return PublicCardRecord(
+            owner_installation_id=_stored_text(rows[0], "owner_installation_id"),
+            card=_stored_card(rows[0]),
+        )
+
+    def create_public_reply(
+        self,
+        raw_token: str,
+        reply_id: str,
+        name: str,
+        email: str | None,
+        phone: str | None,
+        expires_at: datetime,
+    ) -> None:
+        token_hash = _digest(raw_token)
+        del raw_token
+        now = self._clock()
+
+        def create(tx: ydb.QueryTxContext) -> None:
+            link_result_sets = self._tx_rows(
+                tx,
+                """
+                DECLARE $token_hash AS String;
+                SELECT owner_installation_id, token_hash
+                FROM public_links VIEW by_token
+                WHERE token_hash = $token_hash;
+                """,
+                {"$token_hash": _string(token_hash)},
+            )
+            if len(link_result_sets) != 1:
+                raise StorageIntegrityError
+            link_rows = link_result_sets[0]
+            if not link_rows:
+                raise StorageConflict("public link unavailable")
+            if len(link_rows) != 1:
+                raise StorageIntegrityError
+            owner_installation_id = _stored_text(
+                link_rows[0],
+                "owner_installation_id",
+            )
+            stored_token_hash = _stored_bytes(
+                link_rows[0],
+                "token_hash",
+                expected_length=sha256().digest_size,
+            )
+            if not compare_digest(stored_token_hash, token_hash):
+                raise StorageIntegrityError
+
+            reply_result_sets = self._tx_rows(
+                tx,
+                """
+                DECLARE $installation_id AS Utf8;
+                DECLARE $reply_id AS Utf8;
+                DECLARE $now AS Timestamp;
+                SELECT COUNT(*) AS reply_count
+                FROM public_replies
+                WHERE owner_installation_id = $installation_id
+                  AND expires_at > $now;
+                SELECT public_token_hash, name, email, phone
+                FROM public_replies
+                WHERE owner_installation_id = $installation_id
+                  AND reply_id = $reply_id;
+                """,
+                {
+                    "$installation_id": _utf8(owner_installation_id),
+                    "$reply_id": _utf8(reply_id),
+                    "$now": _timestamp(now),
+                },
+            )
+            if len(reply_result_sets) != 2:
+                raise StorageIntegrityError
+            count_rows, existing_rows = reply_result_sets
+            if len(count_rows) != 1 or len(existing_rows) > 1:
+                raise StorageIntegrityError
+            if existing_rows:
+                existing = existing_rows[0]
+                if (
+                    compare_digest(
+                        _stored_bytes(
+                            existing,
+                            "public_token_hash",
+                            expected_length=sha256().digest_size,
+                        ),
+                        token_hash,
+                    )
+                    and _stored_text(existing, "name") == name
+                    and _stored_optional_text(existing, "email") == email
+                    and _stored_optional_text(existing, "phone") == phone
+                ):
+                    # A retry receives a newly calculated retention deadline from
+                    # the HTTP layer. Returning here preserves the first insert's
+                    # expiry while keeping the immutable reply contents idempotent.
+                    return
+                raise StorageConflict("reply identifier already used")
+            if _stored_nonnegative_int(count_rows[0], "reply_count") >= MAX_PENDING_PUBLIC_REPLIES:
+                raise StorageConflict("reply limit reached")
+
+            self._tx_rows(
+                tx,
+                """
+                DECLARE $installation_id AS Utf8;
+                DECLARE $reply_id AS Utf8;
+                DECLARE $token_hash AS String;
+                DECLARE $name AS Utf8;
+                DECLARE $email AS Utf8?;
+                DECLARE $phone AS Utf8?;
+                DECLARE $created_at AS Timestamp;
+                DECLARE $expires_at AS Timestamp;
+                UPSERT INTO public_replies (
+                    owner_installation_id, reply_id, public_token_hash,
+                    name, email, phone, created_at, expires_at
+                ) VALUES (
+                    $installation_id, $reply_id, $token_hash,
+                    $name, $email, $phone, $created_at, $expires_at
+                );
+                """,
+                {
+                    "$installation_id": _utf8(owner_installation_id),
+                    "$reply_id": _utf8(reply_id),
+                    "$token_hash": _string(token_hash),
+                    "$name": _utf8(name),
+                    "$email": _optional_utf8(email),
+                    "$phone": _optional_utf8(phone),
+                    "$created_at": _timestamp(now),
+                    "$expires_at": _timestamp(expires_at),
+                },
+            )
+
+        self._transaction(create)
+
+    def dismiss_public_reply(
+        self,
+        installation_id: str,
+        operation_id: str,
+        reply_id: str,
+    ) -> None:
+        now = self._clock()
+
+        def dismiss(tx: ydb.QueryTxContext) -> None:
+            self._ensure_active(tx, installation_id)
+            previous = self._operation_result(
+                tx,
+                installation_id,
+                operation_id,
+                "dismissPublicReply",
+            )
+            if previous is not None:
+                return
+            self._tx_rows(
+                tx,
+                """
+                DECLARE $installation_id AS Utf8;
+                DECLARE $operation_id AS Utf8;
+                DECLARE $reply_id AS Utf8;
+                DECLARE $result_json AS JsonDocument;
+                DECLARE $now AS Timestamp;
+                DELETE FROM public_replies
+                WHERE owner_installation_id = $installation_id
+                  AND reply_id = $reply_id;
+                UPSERT INTO operations (
+                    installation_id, operation_id, operation_type, result_json, completed_at
+                ) VALUES (
+                    $installation_id, $operation_id,
+                    "dismissPublicReply"u, $result_json, $now
+                );
+                """,
+                {
+                    "$installation_id": _utf8(installation_id),
+                    "$operation_id": _utf8(operation_id),
+                    "$reply_id": _utf8(reply_id),
+                    "$result_json": _json_document("{}"),
+                    "$now": _timestamp(now),
+                },
+            )
+
+        self._transaction(dismiss)
 
     def prepare_exchange(
         self,
@@ -998,6 +1333,10 @@ class YDBSyncStore:
                 DELETE FROM exchange_claims
                 WHERE issuer_installation_id = $installation_id
                    OR claimed_by_installation_id = $installation_id;
+                DELETE FROM public_replies
+                WHERE owner_installation_id = $installation_id;
+                DELETE FROM public_links
+                WHERE owner_installation_id = $installation_id;
                 DELETE FROM media_assets WHERE owner_installation_id = $installation_id;
                 DELETE FROM cards WHERE installation_id = $installation_id;
                 DELETE FROM installations WHERE installation_id = $installation_id;
@@ -1263,6 +1602,13 @@ def _stored_positive_int(row: Any, key: str) -> int:
     return value
 
 
+def _stored_nonnegative_int(row: Any, key: str) -> int:
+    value = _stored_value(row, key)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise StorageIntegrityError
+    return value
+
+
 def _stored_datetime(row: Any, key: str) -> datetime:
     value = _stored_value(row, key)
     if not isinstance(value, datetime):
@@ -1285,6 +1631,29 @@ def _stored_json(row: Any, key: str) -> dict[str, Any]:
 
 def _stored_card(row: Any) -> PersonCard:
     return _card(_stored_value(row, "card_json"))
+
+
+def _stored_public_reply(row: Any) -> PublicContactReplyRecord:
+    try:
+        reply = PublicContactReply.model_validate(
+            {
+                "id": _stored_text(row, "reply_id"),
+                "name": _stored_text(row, "name"),
+                "email": _stored_optional_text(row, "email"),
+                "phone": _stored_optional_text(row, "phone"),
+                "createdAt": _stored_datetime(row, "created_at"),
+            },
+            strict=True,
+        )
+    except ValidationError as error:
+        raise StorageIntegrityError from error
+    return PublicContactReplyRecord(
+        id=reply.id,
+        name=reply.name,
+        email=reply.email,
+        phone=reply.phone,
+        created_at=reply.createdAt,
+    )
 
 
 def _stored_object_key(row: Any, key: str) -> str:

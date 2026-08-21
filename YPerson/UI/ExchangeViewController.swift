@@ -21,6 +21,15 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     private var nearbySearchAlert: UIAlertController?
     private var prepareTask: Task<Void, Never>?
     private var preparedToken: String?
+    private var publicCardTask: Task<Void, Never>?
+    private var publicCardDrainTask: Task<Void, Never>?
+    // Distinct Universal Links are handled FIFO; duplicate active/pending tokens are coalesced.
+    private var pendingPublicCardTokens: [String] = []
+    private var activePublicCardToken: String?
+    private var pendingPublicCardPayload: ExchangePayload?
+    private var hasPendingPublicCardError = false
+    private var publicCardResultIsPresented = false
+    private weak var publicCardLoadingAlert: UIAlertController?
 
     init(nearby: NearbyExchangeController, photoScanner: PhotoCardScanner, permissions: PermissionCenter, audio: AudioGreetingController, syncCoordinator: SyncCoordinator, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, ownCard: @escaping () -> PersonCard?, onPersonSaved: @escaping (PersonCard) -> Void) {
         self.nearby = nearby
@@ -60,11 +69,18 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        publicCardDrainTask?.cancel()
+        publicCardDrainTask = nil
         prepareTask?.cancel()
         prepareTask = nil
         cancelPreparedExchange()
         nearby.stop()
         nearbySearchAlert = nil
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        drainPendingPublicCards()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -154,6 +170,155 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
             self.scannerLaunchGate.complete()
             self.scanQR()
         }
+    }
+
+    func openPublicCard(token: String) {
+        navigationController?.popToRootViewController(animated: false)
+        guard token != activePublicCardToken,
+              !pendingPublicCardTokens.contains(token) else {
+            drainPendingPublicCards()
+            return
+        }
+        pendingPublicCardTokens.append(token)
+        drainPendingPublicCards()
+    }
+
+    private func drainPendingPublicCards() {
+        guard publicCardTask == nil else { return }
+
+        if let token = activePublicCardToken {
+            guard !publicCardResultIsPresented,
+                  pendingPublicCardPayload != nil || hasPendingPublicCardError else {
+                return
+            }
+            guard canPresentPublicCardFlow else {
+                schedulePublicCardDrain()
+                return
+            }
+            publicCardResultIsPresented = true
+            if let payload = pendingPublicCardPayload {
+                confirmImportedCard(
+                    payload,
+                    localOnlyNote: "Публичная карточка сохранится только на этом iPhone после вашего подтверждения.",
+                    onComplete: { [weak self] in
+                        self?.finishPublicCardFlow(token: token)
+                    }
+                )
+            } else {
+                presentPublicCardError(token: token)
+            }
+            return
+        }
+
+        guard let token = pendingPublicCardTokens.first else { return }
+        guard canPresentPublicCardFlow else {
+            schedulePublicCardDrain()
+            return
+        }
+        pendingPublicCardTokens.removeFirst()
+        activePublicCardToken = token
+        startPublicCardFetch(token: token)
+    }
+
+    private var canPresentPublicCardFlow: Bool {
+        guard isViewLoaded,
+              view.window != nil,
+              navigationController?.topViewController === self,
+              tabBarController?.selectedViewController === navigationController else {
+            return false
+        }
+        var controller: UIViewController? = self
+        while let current = controller {
+            if current.presentedViewController != nil { return false }
+            controller = current.parent
+        }
+        return true
+    }
+
+    private func schedulePublicCardDrain() {
+        guard publicCardDrainTask == nil, viewIfLoaded?.window != nil else { return }
+        publicCardDrainTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 300_000_000)
+            } catch {
+                return
+            }
+            guard let self else { return }
+            publicCardDrainTask = nil
+            drainPendingPublicCards()
+        }
+    }
+
+    private func startPublicCardFetch(token: String) {
+        let loading = UIAlertController(
+            title: "Загружаем визитку…",
+            message: "Проверяем публичную ссылку.",
+            preferredStyle: .alert
+        )
+        publicCardLoadingAlert = loading
+        present(loading, animated: true)
+
+        publicCardTask = Task { [weak self, syncCoordinator] in
+            do {
+                let card = try await syncCoordinator.fetchPublicCard(token: token)
+                try Task.checkCancellation()
+                guard let self else { return }
+                let payload = ExchangePayload(
+                    version: 2,
+                    issuerInstallationID: card.sourceInstallationID
+                        ?? "00000000-0000-4000-8000-000000000000",
+                    card: card,
+                    exchangeToken: nil,
+                    expiresAt: nil
+                )
+                finishPublicCardLoad(token: token, payload: payload)
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                finishPublicCardLoad(token: token, payload: nil)
+            }
+        }
+    }
+
+    private func finishPublicCardLoad(
+        token: String,
+        payload: ExchangePayload?
+    ) {
+        guard activePublicCardToken == token else { return }
+        publicCardTask = nil
+        let loading = publicCardLoadingAlert
+        publicCardLoadingAlert = nil
+        let finish: () -> Void = { [weak self] in
+            guard let self, activePublicCardToken == token else { return }
+            pendingPublicCardPayload = payload
+            hasPendingPublicCardError = payload == nil
+            drainPendingPublicCards()
+        }
+        if loading?.presentingViewController != nil {
+            loading?.dismiss(animated: true, completion: finish)
+        } else {
+            finish()
+        }
+    }
+
+    private func presentPublicCardError(token: String) {
+        let alert = UIAlertController(
+            title: "Ссылка недоступна",
+            message: "Эта публичная ссылка недоступна или больше не действует.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "OK", style: .cancel) { [weak self] _ in
+            self?.finishPublicCardFlow(token: token)
+        })
+        present(alert, animated: true)
+    }
+
+    private func finishPublicCardFlow(token: String) {
+        guard activePublicCardToken == token else { return }
+        activePublicCardToken = nil
+        pendingPublicCardPayload = nil
+        hasPendingPublicCardError = false
+        publicCardResultIsPresented = false
+        drainPendingPublicCards()
     }
 
     @objc func scanQR() {
@@ -340,12 +505,17 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         }
     }
 
-    private func confirmImportedCard(_ payload: ExchangePayload) {
+    private func confirmImportedCard(
+        _ payload: ExchangePayload,
+        localOnlyNote: String? = nil,
+        onComplete: (() -> Void)? = nil
+    ) {
         let expired = payload.expiresAt.map { $0 <= Date() } ?? false
         let hasCloudClaim = payload.exchangeToken != nil && !expired
         let cloudNote = hasCloudClaim
             ? "После сохранения YPerson попробует подключить облачные обновления."
-            : "Офлайн-код: карточка сохранится только на этом iPhone без подтверждения облачной связи."
+            : localOnlyNote
+                ?? "Офлайн-код: карточка сохранится только на этом iPhone без подтверждения облачной связи."
         let companyLine = payload.card.company.isEmpty ? "" : " · \(payload.card.company)"
         let alert = UIAlertController(
             title: payload.card.name,
@@ -354,9 +524,11 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         )
         alert.addAction(UIAlertAction(title: "Добавить человека", style: .default) { [weak self] _ in
             self?.saveImportedCard(payload, allowsCloudClaim: hasCloudClaim)
+            onComplete?()
         })
         alert.addAction(UIAlertAction(title: "Не добавлять", style: .cancel) { [weak self] _ in
             self?.clearPendingMeetingPlace()
+            onComplete?()
         })
         present(alert, animated: true)
     }
@@ -517,7 +689,13 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
         Task { await syncCoordinator.cancelExchange(token: token) }
     }
 
-    deinit { prepareTask?.cancel(); nearby.stop(); photoScanner.cancel() }
+    deinit {
+        prepareTask?.cancel()
+        publicCardTask?.cancel()
+        publicCardDrainTask?.cancel()
+        nearby.stop()
+        photoScanner.cancel()
+    }
 
     private enum ExchangeError: Error {
         case localStorageUnavailable

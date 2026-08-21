@@ -4,3 +4,4 @@ APPMETRICA_API_KEY =
 PRIVACY_POLICY_URL = https:/$()/d5dl7dc4rc07v7jnvlf2.p8361f8z.apigw.yandexcloud.net/privacy
 SUPPORT_URL = https:/$()/d5dl7dc4rc07v7jnvlf2.p8361f8z.apigw.yandexcloud.net/support
 NOTIFICATION_SIGNING_PUBLIC_KEY =
+YP_ASSOCIATED_DOMAIN = d5dl7dc4rc07v7jnvlf2.p8361f8z.apigw.yandexcloud.net
