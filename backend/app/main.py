@@ -171,8 +171,8 @@ def create_app(
         content_type = request.headers.get("content-type", "")
         if content_type.partition(";")[0].strip().lower() != "application/x-www-form-urlencoded":
             return _public_text_response("Unsupported form content", 415)
-        raw = await request.body()
-        if len(raw) > MAX_FORM_BODY_BYTES:
+        raw = await _bounded_public_reply_body(request)
+        if raw is None:
             return _public_text_response("Reply form is too large", 413)
         try:
             reply_id, name, email, phone = parse_reply_form(raw)
@@ -354,6 +354,23 @@ async def _bounded_body(request: Request) -> bytes | None:
     body = bytearray()
     async for chunk in request.stream():
         if len(chunk) > MAX_SYNC_BODY_BYTES - len(body):
+            return None
+        body.extend(chunk)
+    return bytes(body)
+
+
+async def _bounded_public_reply_body(request: Request) -> bytes | None:
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > MAX_FORM_BODY_BYTES:
+                return None
+        except ValueError:
+            return None
+
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(chunk) > MAX_FORM_BODY_BYTES - len(body):
             return None
         body.extend(chunk)
     return bytes(body)

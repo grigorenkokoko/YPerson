@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
+import anyio
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -89,6 +90,60 @@ def public_client() -> Generator[tuple[TestClient, FakePublicCardService]]:
     )
     with TestClient(application, base_url="https://cards.example") as client:
         yield client, service
+
+
+def _direct_form_post(
+    *,
+    headers: list[tuple[bytes, bytes]],
+    messages: list[dict[str, object]],
+) -> tuple[int, int]:
+    application = create_app(
+        Settings(_env_file=None),
+        public_card_service=FakePublicCardService(),
+        lifespan=noop_lifespan,
+    )
+
+    async def scenario() -> tuple[int, int]:
+        pending = list(messages)
+        receive_calls = 0
+        response_status: int | None = None
+
+        async def receive() -> dict[str, object]:
+            nonlocal receive_calls
+            receive_calls += 1
+            if not pending:
+                return {"type": "http.disconnect"}
+            return pending.pop(0)
+
+        async def send(message: dict[str, object]) -> None:
+            nonlocal response_status
+            if message["type"] == "http.response.start":
+                response_status = int(message["status"])
+
+        path = f"{VALID_PATH}/replies"
+        await application(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "https",
+                "path": path,
+                "raw_path": path.encode(),
+                "query_string": b"",
+                "headers": [(b"host", b"cards.example"), *headers],
+                "client": ("127.0.0.1", 12345),
+                "server": ("cards.example", 443),
+                "root_path": "",
+                "extensions": {},
+            },
+            receive,
+            send,
+        )
+        assert response_status is not None
+        return response_status, receive_calls
+
+    return anyio.run(scenario)
 
 
 def test_public_card_route_fails_closed_when_service_is_unavailable() -> None:
@@ -227,6 +282,34 @@ def test_reply_form_rejects_non_form_content_and_body_above_four_kib(
     assert wrong_type.status_code == 415
     assert oversized.status_code == 413
     assert service.submissions == []
+
+
+def test_reply_form_rejects_oversized_content_length_without_reading_body() -> None:
+    status, receive_calls = _direct_form_post(
+        headers=[
+            (b"content-type", b"application/x-www-form-urlencoded"),
+            (b"content-length", b"4097"),
+        ],
+        messages=[{"type": "http.request", "body": b"x" * 4_097, "more_body": False}],
+    )
+
+    assert status == 413
+    assert receive_calls == 0
+
+
+def test_reply_form_stops_reading_chunked_body_as_soon_as_limit_is_exceeded() -> None:
+    status, receive_calls = _direct_form_post(
+        headers=[(b"content-type", b"application/x-www-form-urlencoded")],
+        messages=[
+            {"type": "http.request", "body": b"x" * 2_048, "more_body": True},
+            {"type": "http.request", "body": b"x" * 2_048, "more_body": True},
+            {"type": "http.request", "body": b"x", "more_body": True},
+            {"type": "http.request", "body": b"must-not-be-read", "more_body": False},
+        ],
+    )
+
+    assert status == 413
+    assert receive_calls == 3
 
 
 def test_valid_reply_is_trimmed_and_success_page_echoes_no_contact_data(
