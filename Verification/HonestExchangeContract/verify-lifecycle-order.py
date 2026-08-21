@@ -121,6 +121,18 @@ require(
 sync = source("YPerson/Networking/SyncCoordinator.swift")
 bootstrap = function_body(sync, "func bootstrap(context:")
 ordered(bootstrap, "profileLifecycle.state == .deleting", "await resumeDeletionIfNeeded()", "return")
+ordered(
+    bootstrap,
+    "isCurrentProfileOperationContext(context)",
+    "ProfileBootstrapCredentialPolicy.requiresNewCredential(",
+    "explicitProfileClient()",
+    "guard let apiClient",
+    "await retryPendingOperations(context: context)",
+)
+require(
+    bootstrap.count("explicitProfileClient()") == 1,
+    "bootstrap creates credentials outside the recovered-publication policy",
+)
 require(
     "hasPendingDeletion" not in bootstrap,
     "bootstrap still infers acknowledgement from queue absence",
@@ -589,16 +601,89 @@ require(
 ordered(
     audio_controller,
     "legacyRecordingURL",
-    "migrateLegacyRecordingIfNeeded",
     "restoreSavedPublicGreetingIfAvailable",
 )
+require(
+    "draftRecordingURL" in audio_controller
+    and "committedPublicGreetingURL" in audio_controller,
+    "audio draft and committed public greeting do not have distinct paths",
+)
+audio_init = function_body(audio_controller, "override init()")
+ordered(audio_init, "draftRecordingURL =", "removeItem(at: draftRecordingURL)")
+require(
+    "migrateLegacyRecordingIfNeeded" not in audio_controller,
+    "untrusted legacy audio is auto-promoted",
+)
+audio_start = function_body(audio_controller, "private func startRecording()")
+require(
+    "AVAudioRecorder(url: draftRecordingURL" in audio_start,
+    "recording still overwrites the committed public greeting",
+)
+audio_play = function_body(audio_controller, "func play()")
+ordered(
+    audio_play,
+    "let previousState = state",
+    "PublicGreetingCommitPolicy.playbackSource(",
+    "case .draft",
+    "draftRecordingURL",
+    "case .committedPublic",
+    "committedPublicGreetingURL",
+    "stateBeforeExternalPlayback = previousState",
+    "state = .playing",
+)
+audio_save = function_body(audio_controller, "func save(isPublic:")
+require(
+    "promoteDraftToCommittedPublicGreeting" not in audio_save,
+    "public selection promotes the draft before Card Done succeeds",
+)
+ordered(
+    audio_save,
+    "draftSelectionIsPublic = isPublic",
+    "state = .saved(isPublic: isPublic",
+)
+audio_commit = function_body(audio_controller, "func commitDraftForCardSave()")
+ordered(
+    audio_commit,
+    "PublicGreetingCommitPolicy.shouldPromoteDraft(",
+    "promoteDraftToCommittedPublicGreeting()",
+    "committedPublicGreetingIsEnabled = true",
+)
+audio_restore = function_body(
+    audio_controller,
+    "func restoreSavedPublicGreetingIfAvailable(",
+)
+ordered(
+    audio_restore,
+    "PublicGreetingCommitPolicy.restoreAction(",
+    "validatedCommittedPublicGreeting()",
+    "state = .saved(isPublic: true",
+)
+audio_provider = function_body(audio_controller, "func savedGreeting()")
+require(
+    "validatedCommittedPublicGreeting()" in audio_provider
+    and "draftRecordingURL" not in audio_provider,
+    "publication provider can read an uncommitted draft",
+)
+audio_delete = function_body(audio_controller, "func delete()")
+for path_marker in (
+    "draftRecordingURL",
+    "committedPublicGreetingURL",
+    "legacyRecordingURL",
+):
+    require(path_marker in audio_delete, f"audio deletion does not remove {path_marker}")
+
+card_editor = source("YPerson/UI/CardEditorViewController.swift")
+editor_detach = function_body(card_editor, "override func didMove(toParent parent:")
+ordered(editor_detach, "parent == nil", "audio.discardUncommittedDraft()")
 
 card_source = source("YPerson/UI/CardViewController.swift")
 card_save = function_body(card_source, "@objc private func editCard()")
 ordered(
     card_save,
     "syncCoordinator.saveUserCardForPublication(",
+    "audio.commitDraftForCardSave()",
     "captureProfileOperationContext()",
+    "audio.savedGreeting()",
     "publishTask = Task",
 )
 require(

@@ -289,6 +289,7 @@ final class CardViewController: YPBaseViewController {
                     updatedCard,
                     allowsProfileReactivation: isNew
                 )
+                try self.audio.commitDraftForCardSave()
             }
             self.lifecycleGeneration = UUID()
             let profileGeneration = self.lifecycleGeneration

@@ -249,6 +249,57 @@ struct CardPublicationJournal: Codable, Equatable {
     let operation: PendingSyncOperation
 }
 
+enum ProfileBootstrapCredentialPolicy {
+    static func requiresNewCredential(
+        apiClientExists: Bool,
+        pendingOperations: [PendingSyncOperation]
+    ) -> Bool {
+        !apiClientExists && pendingOperations.contains {
+            $0.request.operation == .publishCard
+        }
+    }
+}
+
+enum PublicGreetingCommitPolicy {
+    enum RestoreAction: Equatable {
+        case none
+        case useCommitted
+        case requireExplicitResave
+    }
+
+    enum PlaybackSource: Equatable {
+        case none
+        case draft
+        case committedPublic
+    }
+
+    static func restoreAction(
+        expectedPublic: Bool,
+        committedExists: Bool,
+        legacyExists: Bool
+    ) -> RestoreAction {
+        guard expectedPublic else { return .none }
+        if committedExists { return .useCommitted }
+        return legacyExists ? .requireExplicitResave : .none
+    }
+
+    static func shouldPromoteDraft(
+        explicitPublicChoice: Bool,
+        cardSaveSucceeded: Bool,
+        draftIsValid: Bool
+    ) -> Bool {
+        explicitPublicChoice && cardSaveSucceeded && draftIsValid
+    }
+
+    static func playbackSource(
+        hasUncommittedDraft: Bool,
+        committedPublicEnabled: Bool
+    ) -> PlaybackSource {
+        if hasUncommittedDraft { return .draft }
+        return committedPublicEnabled ? .committedPublic : .none
+    }
+}
+
 enum PendingPublicationAudioRecoveryPolicy {
     enum Action: Equatable {
         case send

@@ -1,6 +1,6 @@
 import Foundation
 
-private let harnessVersion = 7
+private let harnessVersion = 8
 
 private func require(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() { fatalError(message) }
@@ -391,6 +391,27 @@ let audioPlaceholderOperation = PendingSyncOperation(
     localCardID: nil
 )
 require(
+    ProfileBootstrapCredentialPolicy.requiresNewCredential(
+        apiClientExists: false,
+        pendingOperations: [audioPlaceholderOperation]
+    ),
+    "a recovered publication with no client did not request bootstrap credentials"
+)
+require(
+    !ProfileBootstrapCredentialPolicy.requiresNewCredential(
+        apiClientExists: false,
+        pendingOperations: []
+    ),
+    "an empty app implicitly requested profile credentials"
+)
+require(
+    !ProfileBootstrapCredentialPolicy.requiresNewCredential(
+        apiClientExists: true,
+        pendingOperations: [audioPlaceholderOperation]
+    ),
+    "bootstrap replaced an existing profile client"
+)
+require(
     PendingPublicationAudioRecoveryPolicy.action(
         for: audioPlaceholderOperation,
         savedGreetingAvailable: false
@@ -432,6 +453,76 @@ require(
         savedGreetingAvailable: false
     ) == .send,
     "ordinary audio-free publication was blocked"
+)
+
+require(
+    PublicGreetingCommitPolicy.restoreAction(
+        expectedPublic: false,
+        committedExists: false,
+        legacyExists: true
+    ) == .none,
+    "an uncommitted legacy draft was promoted without a public card"
+)
+require(
+    PublicGreetingCommitPolicy.restoreAction(
+        expectedPublic: true,
+        committedExists: true,
+        legacyExists: true
+    ) == .useCommitted,
+    "an existing committed greeting lost precedence over a later draft"
+)
+require(
+    PublicGreetingCommitPolicy.restoreAction(
+        expectedPublic: true,
+        committedExists: false,
+        legacyExists: true
+    ) == .requireExplicitResave,
+    "an untrusted legacy file was auto-promoted from own-card metadata alone"
+)
+require(
+    PublicGreetingCommitPolicy.shouldPromoteDraft(
+        explicitPublicChoice: true,
+        cardSaveSucceeded: true,
+        draftIsValid: true
+    ),
+    "a valid explicitly-public draft could not commit after card save"
+)
+require(
+    !PublicGreetingCommitPolicy.shouldPromoteDraft(
+        explicitPublicChoice: true,
+        cardSaveSucceeded: false,
+        draftIsValid: true
+    ),
+    "public selection alone promoted a draft before card save"
+)
+require(
+    !PublicGreetingCommitPolicy.shouldPromoteDraft(
+        explicitPublicChoice: false,
+        cardSaveSucceeded: true,
+        draftIsValid: true
+    ),
+    "a private/cancelled draft was allowed to become the committed public greeting"
+)
+require(
+    PublicGreetingCommitPolicy.playbackSource(
+        hasUncommittedDraft: true,
+        committedPublicEnabled: true
+    ) == .draft,
+    "audio preview did not prefer its explicit uncommitted draft"
+)
+require(
+    PublicGreetingCommitPolicy.playbackSource(
+        hasUncommittedDraft: false,
+        committedPublicEnabled: true
+    ) == .committedPublic,
+    "a committed public greeting could not play after promotion/relaunch"
+)
+require(
+    PublicGreetingCommitPolicy.playbackSource(
+        hasUncommittedDraft: false,
+        committedPublicEnabled: false
+    ) == .none,
+    "audio playback synthesized a source without a draft or committed greeting"
 )
 
 var deletionAttempts = ProfileDeletionAttemptOwnership()

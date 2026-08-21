@@ -38,6 +38,11 @@ final class CardEditorViewController: YPBaseViewController {
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
+    override func didMove(toParent parent: UIViewController?) {
+        super.didMove(toParent: parent)
+        if parent == nil { audio.discardUncommittedDraft() }
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Изменить"

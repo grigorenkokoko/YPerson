@@ -112,9 +112,15 @@ final class SyncCoordinator {
             return
         }
         guard let context,
-              isCurrentProfileOperationContext(context),
-              let apiClient else { return }
+              isCurrentProfileOperationContext(context) else { return }
         snapshotStore?.purgeNonDurablePendingOperations()
+        if ProfileBootstrapCredentialPolicy.requiresNewCredential(
+            apiClientExists: apiClient != nil,
+            pendingOperations: snapshotStore?.pendingOperations ?? []
+        ) {
+            apiClient = try? explicitProfileClient()
+        }
+        guard let apiClient else { return }
         do {
             let response = try await apiClient.sync(
                 SyncRequest(operation: .refresh, cursor: snapshotStore?.syncCursor)
