@@ -111,6 +111,7 @@ EXPECTED_TABLES: Final[dict[str, TableSchema]] = {
     "exchange_private_fields": TableSchema(
         columns=(
             ("token_hash", ydb.PrimitiveType.String),
+            ("issuer_installation_id", ydb.PrimitiveType.Utf8),
             ("fields_json", ydb.PrimitiveType.JsonDocument),
             ("expires_at", ydb.PrimitiveType.Timestamp),
         ),
@@ -211,6 +212,7 @@ TABLE_DDL: Final[tuple[str, ...]] = (
     """
     CREATE TABLE IF NOT EXISTS exchange_private_fields (
         token_hash String NOT NULL,
+        issuer_installation_id Utf8 NOT NULL,
         fields_json JsonDocument NOT NULL,
         expires_at Timestamp NOT NULL,
         PRIMARY KEY (token_hash)

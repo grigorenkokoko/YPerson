@@ -344,7 +344,7 @@ def test_published_card_survives_refresh(
     adapter.prepare_exchange(
         "installation-owner",
         "op-exchange-1",
-        "qr",
+        "bluetooth",
         public_card,
         private_fields,
         "raw-exchange-token",
@@ -353,7 +353,7 @@ def test_published_card_survives_refresh(
     adapter.prepare_exchange(
         "installation-owner",
         "op-exchange-1",
-        "qr",
+        "bluetooth",
         public_card,
         private_fields,
         "raw-exchange-token",
@@ -362,7 +362,7 @@ def test_published_card_survives_refresh(
 
     assert ydb_version == 1
     assert ydb_retry == ydb_version
-    assert ydb_snapshot.own_card == styled_card
+    assert ydb_snapshot.own_card == public_card
     assert pool.exchange_token_hashes == [sha256(b"raw-exchange-token").digest()]
     assert "raw-exchange-token" not in repr(pool.transaction_calls)
     assert all(settings.idempotent for _, settings in pool.transaction_settings)
@@ -372,7 +372,72 @@ def test_published_card_survives_refresh(
     )
     stored_json = json.loads(pool.cards["installation-owner"][1])
     assert stored_json["templateID"] == "mint-conference"
-    assert "meetingPlace" not in stored_json
+    assert stored_json["phone"] == ""
+    assert stored_json["meetingPlace"] is None
+
+
+def test_public_card_writes_project_phone_and_meeting_place(card: PersonCard) -> None:
+    legacy_card = card.model_copy(update={"meetingPlace": "Legacy room"})
+    expires_at = datetime(2026, 8, 21, 12, 30, tzinfo=UTC)
+    pool = RecordingPool()
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+    store.authenticate_or_create("installation-owner", "owner-secret")
+
+    store.publish_card("installation-owner", "op-publish-public", legacy_card, None)
+    store.prepare_exchange(
+        "installation-owner",
+        "op-prepare-public",
+        "qr",
+        legacy_card,
+        None,
+        "raw-public-token",
+        expires_at,
+    )
+
+    stored_cards = [
+        json.loads(_parameter(parameters, "$card_json"))
+        for query, parameters in pool.transaction_calls
+        if "UPSERT INTO cards" in query
+    ]
+    assert len(stored_cards) == 2
+    assert all(stored["phone"] == "" for stored in stored_cards)
+    assert all(stored["meetingPlace"] is None for stored in stored_cards)
+
+
+def test_legacy_public_card_rows_are_projected_before_refresh(card: PersonCard) -> None:
+    legacy_card = card.model_copy(update={"meetingPlace": "Legacy room"})
+
+    def read_handler(_query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        stored = legacy_card.model_dump(mode="json")
+        return [
+            ResultSet([{"version": 2, "card_json": stored}]),
+            ResultSet(
+                [
+                    {
+                        "installation_id": "installation-peer",
+                        "version": 3,
+                        "card_json": stored,
+                        "fields_json": None,
+                    }
+                ]
+            ),
+            ResultSet([]),
+        ]
+
+    store = YDBSyncStore(  # type: ignore[arg-type]
+        ScriptedPool(
+            transaction_handler=lambda _query, _parameters: [],
+            read_handler=read_handler,
+        )
+    )
+
+    snapshot = store.refresh("installation-owner", None)
+
+    assert snapshot.own_card is not None
+    assert snapshot.own_card.phone == ""
+    assert snapshot.own_card.meetingPlace is None
+    assert snapshot.people[0].card.phone == ""
+    assert snapshot.people[0].card.meetingPlace is None
 
 
 def test_prepare_exchange_atomically_persists_public_card_private_fields_and_expiry(
@@ -398,7 +463,7 @@ def test_prepare_exchange_atomically_persists_public_card_private_fields_and_exp
     result = store.prepare_exchange(
         "installation-owner",
         "op-prepare-private",
-        "qr",
+        "bluetooth",
         public_card,
         private_fields,
         raw_credential,
@@ -413,6 +478,8 @@ def test_prepare_exchange_atomically_persists_public_card_private_fields_and_exp
     )
     assert "UPSERT INTO cards" in mutation_query
     assert "UPSERT INTO exchange_private_fields" in mutation_query
+    assert "token_hash, issuer_installation_id, fields_json, expires_at" in mutation_query
+    assert "$token_hash, $installation_id, $fields_json, $expires_at" in mutation_query
     assert mutation_query.count("UPSERT INTO operations") == 1
     assert json.loads(_parameter(mutation_parameters, "$card_json"))["phone"] == ""
     assert json.loads(_parameter(mutation_parameters, "$fields_json")) == {
@@ -425,6 +492,36 @@ def test_prepare_exchange_atomically_persists_public_card_private_fields_and_exp
         "version": 5,
     }
     assert raw_credential not in repr(pool.transaction_calls)
+
+
+def test_prepare_without_private_fields_deletes_orphaned_digest_before_reuse(
+    card: PersonCard,
+) -> None:
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query or "FROM exchange_claims" in query:
+            return [ResultSet([])]
+        if "SELECT version FROM cards" in query:
+            return [ResultSet([])]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    store.prepare_exchange(
+        "installation-owner",
+        "op-prepare-orphan",
+        "manual",
+        card,
+        None,
+        "reused-orphaned-digest",
+        datetime.now(UTC) + timedelta(minutes=5),
+    )
+
+    mutation_query = next(
+        query for query, _ in pool.transaction_calls if "UPSERT INTO exchange_claims" in query
+    )
+    assert "DELETE FROM exchange_private_fields WHERE token_hash = $token_hash" in mutation_query
+    assert "UPSERT INTO exchange_private_fields" not in mutation_query
 
 
 def test_prepare_exchange_replay_returns_original_version_and_expiry() -> None:
@@ -464,7 +561,7 @@ def test_prepare_exchange_replay_returns_original_version_and_expiry() -> None:
     result = store.prepare_exchange(
         "installation-owner",
         "op-prepare-replay",
-        "qr",
+        "manual",
         public_card,
         PrivateCardFields(phone="+79990000000"),
         raw_credential,
@@ -476,12 +573,41 @@ def test_prepare_exchange_replay_returns_original_version_and_expiry() -> None:
         store.prepare_exchange(
             "installation-owner",
             "op-prepare-replay",
-            "qr",
+            "manual",
             public_card,
             None,
             "different-credential",
             proposed_expiry,
         )
+
+
+@pytest.mark.parametrize("method", ["qr", "photo"])
+def test_prepare_exchange_rejects_private_fields_for_nondisclosing_methods(
+    card: PersonCard,
+    method: str,
+) -> None:
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query or "FROM exchange_claims" in query:
+            return [ResultSet([])]
+        if "SELECT version FROM cards" in query:
+            return [ResultSet([])]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    with pytest.raises(StorageConflict):
+        store.prepare_exchange(
+            "installation-owner",
+            "op-prepare-method",
+            method,
+            card,
+            PrivateCardFields(phone=card.phone),
+            "raw-method-token",
+            datetime.now(UTC) + timedelta(minutes=5),
+        )
+
+    assert not any("UPSERT INTO cards" in query for query, _ in pool.transaction_calls)
 
 
 @pytest.mark.parametrize(
@@ -615,7 +741,8 @@ def test_delete_private_state_and_profile_replays_without_recreating_installatio
         for query, parameters in pool.transaction_calls
         if "DELETE FROM installations" in query
     )
-    assert "DELETE FROM exchange_private_fields" in deletion_query
+    assert """DELETE FROM exchange_private_fields
+                WHERE issuer_installation_id = $installation_id;""" in deletion_query
     assert """DELETE FROM connection_private_fields
                 WHERE owner_installation_id = $installation_id
                    OR peer_installation_id = $installation_id;""" in deletion_query
@@ -640,11 +767,14 @@ def test_exchange_token_rejects_second_operation_even_for_same_recipient(
                     [
                         {
                             "issuer_installation_id": "installation-owner",
+                            "method": "qr",
                             "expires_at": datetime.now(UTC) + timedelta(minutes=5),
                             "claimed_by_installation_id": "installation-peer",
                             "version": 1,
                             "card_json": json.dumps(card.model_dump(mode="json")),
                             "fields_json": None,
+                            "private_issuer_installation_id": None,
+                            "private_expires_at": None,
                         }
                     ]
                 )
@@ -663,6 +793,8 @@ def test_exchange_token_rejects_second_operation_even_for_same_recipient(
 
 
 def test_claim_accepts_native_ydb_json_document(card: PersonCard) -> None:
+    legacy_card = card.model_copy(update={"meetingPlace": "Legacy room"})
+
     def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
         if "FROM operations" in query:
             return [ResultSet([])]
@@ -674,9 +806,12 @@ def test_claim_accepts_native_ydb_json_document(card: PersonCard) -> None:
                             "issuer_installation_id": "installation-owner",
                             "expires_at": datetime.now(UTC) + timedelta(minutes=5),
                             "claimed_by_installation_id": None,
+                            "method": "qr",
                             "version": 1,
-                            "card_json": card.model_dump(mode="json"),
+                            "card_json": legacy_card.model_dump(mode="json"),
                             "fields_json": None,
+                            "private_issuer_installation_id": None,
+                            "private_expires_at": None,
                         }
                     ]
                 )
@@ -693,7 +828,7 @@ def test_claim_accepts_native_ydb_json_document(card: PersonCard) -> None:
     )
 
     assert person.installationID == "installation-owner"
-    assert person.card == card
+    assert person.card == card.model_copy(update={"phone": "", "meetingPlace": None})
 
 
 def test_claim_exchange_copies_private_fields_only_to_claimant_direction(
@@ -701,6 +836,7 @@ def test_claim_exchange_copies_private_fields_only_to_claimant_direction(
 ) -> None:
     raw_token = "claim-private-token"
     public_card = card.model_copy(update={"phone": ""})
+    claim_expiry = datetime.now(UTC) + timedelta(minutes=5)
 
     def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
         if "FROM operations" in query:
@@ -711,11 +847,14 @@ def test_claim_exchange_copies_private_fields_only_to_claimant_direction(
                     [
                         {
                             "issuer_installation_id": "installation-owner",
-                            "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+                            "expires_at": claim_expiry,
                             "claimed_by_installation_id": None,
+                            "method": "bluetooth",
                             "version": 3,
                             "card_json": public_card.model_dump(mode="json"),
                             "fields_json": {"phone": card.phone},
+                            "private_issuer_installation_id": "installation-owner",
+                            "private_expires_at": claim_expiry,
                         }
                     ]
                 )
@@ -753,6 +892,110 @@ def test_claim_exchange_copies_private_fields_only_to_claimant_direction(
     }
 
 
+@pytest.mark.parametrize(
+    ("method", "fields_json"),
+    [
+        ("qr", {"phone": "+79990000000"}),
+        ("photo", {"phone": "+79990000000"}),
+        ("unsupported", None),
+    ],
+)
+def test_claim_exchange_rejects_corrupt_private_method_state(
+    card: PersonCard,
+    method: str,
+    fields_json: object,
+) -> None:
+    claim_expiry = datetime.now(UTC) + timedelta(minutes=5)
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "FROM exchange_claims AS claim" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "issuer_installation_id": "installation-owner",
+                            "expires_at": claim_expiry,
+                            "claimed_by_installation_id": None,
+                            "method": method,
+                            "version": 1,
+                            "card_json": card.model_dump(mode="json"),
+                            "fields_json": fields_json,
+                            "private_issuer_installation_id": (
+                                "installation-owner" if fields_json is not None else None
+                            ),
+                            "private_expires_at": (
+                                claim_expiry if fields_json is not None else None
+                            ),
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    with pytest.raises(StorageIntegrityError):
+        store.claim_exchange("installation-peer", "op-claim-method", "raw-token")
+
+    assert not any("UPDATE exchange_claims" in query for query, _ in pool.transaction_calls)
+
+
+@pytest.mark.parametrize("mismatch", ["issuer", "expiry"])
+def test_claim_exchange_rejects_private_issuer_or_expiry_mismatch(
+    card: PersonCard,
+    mismatch: str,
+) -> None:
+    claim_expiry = datetime.now(UTC) + timedelta(minutes=5)
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "FROM exchange_claims AS claim" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "issuer_installation_id": "installation-owner",
+                            "method": "manual",
+                            "expires_at": claim_expiry,
+                            "claimed_by_installation_id": None,
+                            "version": 1,
+                            "card_json": card.model_dump(mode="json"),
+                            "fields_json": {"phone": card.phone},
+                            "private_issuer_installation_id": (
+                                "installation-other"
+                                if mismatch == "issuer"
+                                else "installation-owner"
+                            ),
+                            "private_expires_at": (
+                                claim_expiry + timedelta(seconds=1)
+                                if mismatch == "expiry"
+                                else claim_expiry
+                            ),
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    with pytest.raises(StorageIntegrityError):
+        store.claim_exchange("installation-peer", "op-claim-mismatch", "raw-token")
+
+    assert not any("UPDATE exchange_claims" in query for query, _ in pool.transaction_calls)
+    claim_query = next(
+        query for query, _ in pool.transaction_calls if "FROM exchange_claims AS claim" in query
+    )
+    assert "claim.method AS method" in claim_query
+    assert "exchange_fields.issuer_installation_id" in claim_query
+    assert "exchange_fields.expires_at AS private_expires_at" in claim_query
+
+
 def test_claim_exchange_replay_loads_current_public_card_and_directional_grant(
     card: PersonCard,
 ) -> None:
@@ -762,7 +1005,7 @@ def test_claim_exchange_replay_loads_current_public_card_and_directional_grant(
         "tokenHash": sha256(raw_token.encode()).hexdigest(),
     }
     updated_public_card = card.model_copy(
-        update={"phone": "", "name": "Updated Owner"}
+        update={"phone": "+71111111111", "meetingPlace": "Legacy room", "name": "Updated Owner"}
     )
 
     def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
@@ -803,6 +1046,7 @@ def test_claim_exchange_replay_loads_current_public_card_and_directional_grant(
     assert person.version == 8
     assert person.card.name == "Updated Owner"
     assert person.card.phone == card.phone
+    assert person.card.meetingPlace is None
     assert not any("FROM exchange_claims AS claim" in query for query, _ in pool.transaction_calls)
 
 
@@ -856,14 +1100,18 @@ def test_refresh_private_or_claim_private_rejects_malformed_or_unknown_fields(
     path: str,
 ) -> None:
     public_card = card.model_copy(update={"phone": ""})
+    claim_expiry = datetime.now(UTC) + timedelta(minutes=5)
     row = {
         "installation_id": "installation-owner",
         "issuer_installation_id": "installation-owner",
-        "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+        "expires_at": claim_expiry,
         "claimed_by_installation_id": None,
+        "method": "manual",
         "version": 1,
         "card_json": public_card.model_dump(mode="json"),
         "fields_json": fields_json,
+        "private_issuer_installation_id": "installation-owner",
+        "private_expires_at": claim_expiry,
     }
 
     if path == "refresh":
@@ -1287,11 +1535,14 @@ def test_committed_delete_blocks_delayed_publish_and_claim(card: PersonCard) -> 
                     [
                         {
                             "issuer_installation_id": "installation-owner",
+                            "method": "qr",
                             "expires_at": datetime.now(UTC) + timedelta(minutes=5),
                             "claimed_by_installation_id": None,
                             "version": 1,
                             "card_json": json.dumps(card.model_dump(mode="json")),
                             "fields_json": None,
+                            "private_issuer_installation_id": None,
+                            "private_expires_at": None,
                         }
                     ]
                 )
@@ -1628,6 +1879,7 @@ def test_schema_v2_describes_private_field_tables_and_applies_all_nine() -> None
     assert EXPECTED_TABLES["exchange_private_fields"].primary_key == ("token_hash",)
     assert EXPECTED_TABLES["exchange_private_fields"].columns == (
         ("token_hash", ydb.PrimitiveType.String),
+        ("issuer_installation_id", ydb.PrimitiveType.Utf8),
         ("fields_json", ydb.PrimitiveType.JsonDocument),
         ("expires_at", ydb.PrimitiveType.Timestamp),
     )

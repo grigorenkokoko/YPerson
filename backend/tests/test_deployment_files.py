@@ -402,6 +402,7 @@ def test_schema_v2_is_additive_and_preserves_v1_ddl_byte_for_byte() -> None:
         """
     CREATE TABLE IF NOT EXISTS exchange_private_fields (
         token_hash String NOT NULL,
+        issuer_installation_id Utf8 NOT NULL,
         fields_json JsonDocument NOT NULL,
         expires_at Timestamp NOT NULL,
         PRIMARY KEY (token_hash)
