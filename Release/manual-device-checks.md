@@ -69,5 +69,5 @@
 - [ ] Опубликовать privacy policy, support и moderation contacts; проверить ссылки из приложения и metadata App Store Connect.
 - [ ] Заполнить App Privacy, ATT, возрастной рейтинг, export compliance и review notes строго по `AppPrivacy.yml` и фактическому privacy report архива.
 - [ ] Сверить семь подготовленных 1320×2868 JPEG в `Release/app-store-metadata/screenshots/` с финальной подписанной конфигурацией и повторно снять любой экран, где изменился UI/брендинг/production-статус.
-- [ ] Отсканировать `Release/reviewer-assets/test-qr.png` финальной физической сборкой и подтвердить payload `yperson:card:person-anna:review-token`, preview и отдельное подтверждение сохранения.
+- [ ] Отсканировать `Release/reviewer-assets/test-qr.png` финальной физической сборкой и подтвердить canonical `yperson:v2:` payload из `Release/reviewer-assets/offline-public-qr-payload.txt`, публичный preview Алексея Морозова, пометку офлайн-импорта и отдельное подтверждение локального сохранения без cloud connection.
 - [ ] Создать подписанный архив, просмотреть Organizer privacy report, embedded extensions, entitlements, symbols и validation warnings; загрузку и изменение App Store Connect выполнять только после нового явного утверждения непосредственно перед внешним действием.
