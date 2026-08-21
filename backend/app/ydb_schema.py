@@ -16,9 +16,16 @@ class SchemaMismatch(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class DateTypeTTL:
+    column_name: str
+    expire_after_seconds: int
+
+
+@dataclass(frozen=True, slots=True)
 class TableSchema:
     columns: tuple[tuple[str, object], ...]
     primary_key: tuple[str, ...]
+    ttl_settings: DateTypeTTL | None = None
 
 
 _UTF8_OPTIONAL = ydb.OptionalType(ydb.PrimitiveType.Utf8)
@@ -68,6 +75,7 @@ EXPECTED_TABLES: Final[dict[str, TableSchema]] = {
             ("claimed_by_installation_id", _UTF8_OPTIONAL),
         ),
         primary_key=("token_hash",),
+        ttl_settings=DateTypeTTL(column_name="expires_at", expire_after_seconds=0),
     ),
     "media_assets": TableSchema(
         columns=(
@@ -116,6 +124,7 @@ EXPECTED_TABLES: Final[dict[str, TableSchema]] = {
             ("expires_at", ydb.PrimitiveType.Timestamp),
         ),
         primary_key=("token_hash",),
+        ttl_settings=DateTypeTTL(column_name="expires_at", expire_after_seconds=0),
     ),
     "connection_private_fields": TableSchema(
         columns=(
@@ -255,9 +264,37 @@ def _verify_schema(describe_table: Callable[[str], object]) -> None:
         }
         expected_columns = dict(expected.columns)
         primary_key = tuple(getattr(description, "primary_key", ()))
+        ttl_settings = getattr(description, "ttl_settings", _MISSING)
         if (
             actual_columns.keys() != expected_columns.keys()
             or any(actual_columns[name] != column_type for name, column_type in expected.columns)
             or primary_key != expected.primary_key
+            or not _ttl_matches(ttl_settings, expected.ttl_settings)
         ):
             raise SchemaMismatch(f"incompatible YDB schema version {SCHEMA_VERSION}: {table_name}")
+
+
+_MISSING = object()
+
+
+def _ttl_matches(actual: object, expected: DateTypeTTL | None) -> bool:
+    if actual is _MISSING:
+        return False
+    if expected is None:
+        return actual is None
+    if actual is None:
+        return False
+    date_type_column = getattr(actual, "date_type_column", _MISSING)
+    value_since_unix_epoch = getattr(actual, "value_since_unix_epoch", _MISSING)
+    if (
+        date_type_column is _MISSING
+        or date_type_column is None
+        or value_since_unix_epoch is _MISSING
+        or value_since_unix_epoch is not None
+    ):
+        return False
+    return (
+        getattr(date_type_column, "column_name", _MISSING) == expected.column_name
+        and getattr(date_type_column, "expire_after_seconds", _MISSING)
+        == expected.expire_after_seconds
+    )

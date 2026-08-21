@@ -34,7 +34,7 @@ WHERE asset_id = $asset_id
 """
 
 _EXCHANGE_METHODS = frozenset({"qr", "bluetooth", "photo", "manual"})
-_PRIVATE_EXCHANGE_METHODS = frozenset({"bluetooth", "manual"})
+_PRIVATE_EXCHANGE_METHODS = frozenset({"manual"})
 
 
 class YDBSyncStore:
@@ -477,6 +477,9 @@ class YDBSyncStore:
         INNER JOIN connections AS reverse
             ON reverse.owner_installation_id = connection.peer_installation_id
            AND reverse.peer_installation_id = connection.owner_installation_id
+        INNER JOIN installations AS peer_installation
+            ON peer_installation.installation_id = connection.peer_installation_id
+           AND peer_installation.deleted_at IS NULL
         INNER JOIN cards AS peer
             ON peer.installation_id = connection.peer_installation_id
         LEFT JOIN connection_private_fields AS grant_fields
@@ -700,6 +703,9 @@ class YDBSyncStore:
                            AS private_issuer_installation_id,
                        exchange_fields.expires_at AS private_expires_at
                 FROM exchange_claims AS claim
+                INNER JOIN installations AS issuer
+                    ON issuer.installation_id = claim.issuer_installation_id
+                   AND issuer.deleted_at IS NULL
                 INNER JOIN cards AS card
                     ON card.installation_id = claim.issuer_installation_id
                 LEFT JOIN exchange_private_fields AS exchange_fields
@@ -811,10 +817,21 @@ class YDBSyncStore:
                    card.card_json AS card_json,
                    grant_fields.fields_json AS fields_json
             FROM cards AS card
+            INNER JOIN installations AS issuer
+                ON issuer.installation_id = card.installation_id
+            INNER JOIN connections AS connection
+                ON connection.owner_installation_id = $installation_id
+               AND connection.peer_installation_id = $issuer_id
+            INNER JOIN connections AS reverse
+                ON reverse.owner_installation_id = $issuer_id
+               AND reverse.peer_installation_id = $installation_id
             LEFT JOIN connection_private_fields AS grant_fields
                 ON grant_fields.owner_installation_id = $installation_id
                AND grant_fields.peer_installation_id = card.installation_id
-            WHERE card.installation_id = $issuer_id;
+            WHERE card.installation_id = $issuer_id
+              AND issuer.deleted_at IS NULL
+              AND connection.status = "confirmed"u
+              AND reverse.status = "confirmed"u;
             """,
             {
                 "$installation_id": _utf8(installation_id),

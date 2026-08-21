@@ -344,7 +344,7 @@ def test_published_card_survives_refresh(
     adapter.prepare_exchange(
         "installation-owner",
         "op-exchange-1",
-        "bluetooth",
+        "manual",
         public_card,
         private_fields,
         "raw-exchange-token",
@@ -353,7 +353,7 @@ def test_published_card_survives_refresh(
     adapter.prepare_exchange(
         "installation-owner",
         "op-exchange-1",
-        "bluetooth",
+        "manual",
         public_card,
         private_fields,
         "raw-exchange-token",
@@ -463,7 +463,7 @@ def test_prepare_exchange_atomically_persists_public_card_private_fields_and_exp
     result = store.prepare_exchange(
         "installation-owner",
         "op-prepare-private",
-        "bluetooth",
+        "manual",
         public_card,
         private_fields,
         raw_credential,
@@ -575,7 +575,7 @@ def test_prepare_exchange_replay_returns_original_version_and_expiry() -> None:
         )
 
 
-@pytest.mark.parametrize("method", ["qr", "photo"])
+@pytest.mark.parametrize("method", ["qr", "bluetooth", "photo"])
 def test_prepare_exchange_rejects_private_fields_for_nondisclosing_methods(
     card: PersonCard,
     method: str,
@@ -792,6 +792,85 @@ def test_exchange_token_rejects_second_operation_even_for_same_recipient(
     assert not any("UPDATE exchange_claims" in query for query, _ in pool.transaction_calls)
 
 
+@pytest.mark.parametrize("issuer_state", ["missing", "deleted"])
+def test_fresh_claim_requires_an_active_issuer_installation(
+    card: PersonCard,
+    issuer_state: str,
+) -> None:
+    claim_row = {
+        "issuer_installation_id": "installation-owner",
+        "method": "qr",
+        "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+        "claimed_by_installation_id": None,
+        "version": 1,
+        "card_json": card.model_dump(mode="json"),
+        "fields_json": None,
+        "private_issuer_installation_id": None,
+        "private_expires_at": None,
+    }
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "FROM exchange_claims AS claim" in query:
+            has_active_issuer_join = all(
+                fragment in query
+                for fragment in (
+                    "INNER JOIN installations AS issuer",
+                    "issuer.installation_id = claim.issuer_installation_id",
+                    "issuer.deleted_at IS NULL",
+                )
+            )
+            rows = [] if has_active_issuer_join and issuer_state != "active" else [claim_row]
+            return [ResultSet(rows)]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    with pytest.raises(StorageConflict):
+        store.claim_exchange("installation-peer", "op-claim-inactive-issuer", "raw-token")
+
+    assert not any("UPDATE exchange_claims" in query for query, _ in pool.transaction_calls)
+
+
+def test_fresh_claim_does_not_require_preexisting_connections(card: PersonCard) -> None:
+    claim_row = {
+        "issuer_installation_id": "installation-owner",
+        "method": "qr",
+        "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+        "claimed_by_installation_id": None,
+        "version": 1,
+        "card_json": card.model_dump(mode="json"),
+        "fields_json": None,
+        "private_issuer_installation_id": None,
+        "private_expires_at": None,
+    }
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "FROM exchange_claims AS claim" in query:
+            return [ResultSet([] if "JOIN connections AS" in query else [claim_row])]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    person = store.claim_exchange(
+        "installation-peer",
+        "op-claim-first-connection",
+        "raw-token",
+    )
+
+    assert person.installationID == "installation-owner"
+    claim_query = next(
+        query for query, _ in pool.transaction_calls if "FROM exchange_claims AS claim" in query
+    )
+    assert "INNER JOIN installations AS issuer" in claim_query
+    assert "JOIN connections AS" not in claim_query
+
+
 def test_claim_accepts_native_ydb_json_document(card: PersonCard) -> None:
     legacy_card = card.model_copy(update={"meetingPlace": "Legacy room"})
 
@@ -849,7 +928,7 @@ def test_claim_exchange_copies_private_fields_only_to_claimant_direction(
                             "issuer_installation_id": "installation-owner",
                             "expires_at": claim_expiry,
                             "claimed_by_installation_id": None,
-                            "method": "bluetooth",
+                            "method": "manual",
                             "version": 3,
                             "card_json": public_card.model_dump(mode="json"),
                             "fields_json": {"phone": card.phone},
@@ -894,6 +973,7 @@ def test_claim_exchange_copies_private_fields_only_to_claimant_direction(
     ("method", "fields_json"),
     [
         ("qr", {"phone": "+79990000000"}),
+        ("bluetooth", {"phone": "+79990000000"}),
         ("photo", {"phone": "+79990000000"}),
         ("unsupported", None),
     ],
@@ -1048,6 +1128,132 @@ def test_claim_exchange_replay_loads_current_public_card_and_directional_grant(
     assert not any("FROM exchange_claims AS claim" in query for query, _ in pool.transaction_calls)
 
 
+@pytest.mark.parametrize(
+    ("issuer_state", "forward_state", "reverse_state"),
+    [
+        ("missing", "confirmed", "confirmed"),
+        ("deleted", "confirmed", "confirmed"),
+        ("active", "missing", "confirmed"),
+        ("active", "confirmed", "missing"),
+        ("active", "pending", "confirmed"),
+        ("active", "confirmed", "blocked"),
+        ("active", "mismatched", "confirmed"),
+    ],
+    ids=(
+        "missing-issuer",
+        "deleted-issuer",
+        "missing-forward-connection",
+        "missing-reverse-connection",
+        "nonconfirmed-forward-connection",
+        "nonconfirmed-reverse-connection",
+        "mismatched-connection",
+    ),
+)
+def test_claim_replay_rejects_inactive_issuer_or_invalid_reciprocal_connection(
+    card: PersonCard,
+    issuer_state: str,
+    forward_state: str,
+    reverse_state: str,
+) -> None:
+    raw_token = "replayed-invalid-state-token"
+    previous_result = {
+        "issuerInstallationID": "installation-owner",
+        "tokenHash": sha256(raw_token.encode()).hexdigest(),
+    }
+    replay_row = {
+        "version": 8,
+        "card_json": card.model_copy(update={"phone": ""}).model_dump(mode="json"),
+        "fields_json": None,
+    }
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "operation_type": "claimExchange",
+                            "result_json": json.dumps(previous_result),
+                        }
+                    ]
+                )
+            ]
+        if "FROM cards AS card" in query:
+            has_integrity_joins = all(
+                fragment in query
+                for fragment in (
+                    "INNER JOIN installations AS issuer",
+                    "issuer.installation_id = card.installation_id",
+                    "issuer.deleted_at IS NULL",
+                    "INNER JOIN connections AS connection",
+                    "connection.owner_installation_id = $installation_id",
+                    "connection.peer_installation_id = $issuer_id",
+                    'connection.status = "confirmed"u',
+                    "INNER JOIN connections AS reverse",
+                    "reverse.owner_installation_id = $issuer_id",
+                    "reverse.peer_installation_id = $installation_id",
+                    'reverse.status = "confirmed"u',
+                )
+            )
+            invalid_state = (
+                issuer_state != "active"
+                or forward_state != "confirmed"
+                or reverse_state != "confirmed"
+            )
+            return [ResultSet([] if has_integrity_joins and invalid_state else [replay_row])]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    with pytest.raises(StorageIntegrityError):
+        store.claim_exchange("installation-peer", "op-claim-replayed", raw_token)
+
+
+def test_claim_replay_rejects_an_orphan_private_grant(card: PersonCard) -> None:
+    raw_token = "replayed-orphan-grant-token"
+    previous_result = {
+        "issuerInstallationID": "installation-owner",
+        "tokenHash": sha256(raw_token.encode()).hexdigest(),
+    }
+    orphan_grant_row = {
+        "version": 8,
+        "card_json": card.model_copy(update={"phone": ""}).model_dump(mode="json"),
+        "fields_json": {"phone": "+70000000000"},
+    }
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "operation_type": "claimExchange",
+                            "result_json": json.dumps(previous_result),
+                        }
+                    ]
+                )
+            ]
+        if "FROM cards AS card" in query:
+            requires_reciprocal_connections = all(
+                fragment in query
+                for fragment in (
+                    "INNER JOIN connections AS connection",
+                    "INNER JOIN connections AS reverse",
+                    'connection.status = "confirmed"u',
+                    'reverse.status = "confirmed"u',
+                )
+            )
+            return [ResultSet([] if requires_reciprocal_connections else [orphan_grant_row])]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    with pytest.raises(StorageIntegrityError):
+        store.claim_exchange("installation-peer", "op-claim-orphan", raw_token)
+
+
 def test_refresh_private_fields_overlay_only_for_the_requester(
     card: PersonCard,
 ) -> None:
@@ -1088,6 +1294,75 @@ def test_refresh_private_fields_overlay_only_for_the_requester(
         and "grant_fields.peer_installation_id = connection.peer_installation_id" in query
         for query, _ in pool.read_calls
     )
+
+
+@pytest.mark.parametrize(
+    ("peer_state", "forward_state", "reverse_state"),
+    [
+        ("missing", "confirmed", "confirmed"),
+        ("deleted", "confirmed", "confirmed"),
+        ("active", "missing", "confirmed"),
+        ("active", "confirmed", "missing"),
+        ("active", "pending", "confirmed"),
+        ("active", "confirmed", "blocked"),
+    ],
+    ids=(
+        "missing-peer",
+        "deleted-peer",
+        "missing-forward-connection",
+        "missing-reverse-connection",
+        "nonconfirmed-forward-connection",
+        "nonconfirmed-reverse-connection",
+    ),
+)
+def test_refresh_omits_inactive_peers_and_invalid_connection_state(
+    card: PersonCard,
+    peer_state: str,
+    forward_state: str,
+    reverse_state: str,
+) -> None:
+    peer_row = {
+        "installation_id": "installation-owner",
+        "version": 4,
+        "card_json": card.model_copy(update={"phone": ""}).model_dump(mode="json"),
+        "fields_json": {"phone": "+70000000000"},
+    }
+
+    def read_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        has_active_peer_join = all(
+            fragment in query
+            for fragment in (
+                "INNER JOIN installations AS peer_installation",
+                "peer_installation.installation_id = connection.peer_installation_id",
+                "peer_installation.deleted_at IS NULL",
+            )
+        )
+        has_reciprocal_connection_joins = all(
+            fragment in query
+            for fragment in (
+                "INNER JOIN connections AS reverse",
+                'connection.status = "confirmed"u',
+                'reverse.status = "confirmed"u',
+            )
+        )
+        visible = True
+        if has_active_peer_join and peer_state != "active":
+            visible = False
+        if has_reciprocal_connection_joins and (
+            forward_state != "confirmed" or reverse_state != "confirmed"
+        ):
+            visible = False
+        return [ResultSet([]), ResultSet([peer_row] if visible else []), ResultSet([])]
+
+    pool = ScriptedPool(
+        transaction_handler=lambda _query, _parameters: [],
+        read_handler=read_handler,
+    )
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    snapshot = store.refresh("installation-peer", None)
+
+    assert snapshot.people == ()
 
 
 @pytest.mark.parametrize("fields_json", [b"{", {"phone": "+79990000000", "email": "x"}])
@@ -1827,9 +2102,15 @@ def test_schema_rejects_an_incompatible_existing_table() -> None:
             assert retry_settings.idempotent
 
     class Description:
-        def __init__(self, columns: list[ydb.Column], primary_key: list[str]) -> None:
+        def __init__(
+            self,
+            columns: list[ydb.Column],
+            primary_key: list[str],
+            ttl_settings: ydb.TtlSettings | None,
+        ) -> None:
             self.columns = columns
             self.primary_key = primary_key
+            self.ttl_settings = ttl_settings
 
     def describe_table(table_name: str) -> Description:
         table = EXPECTED_TABLES[table_name]
@@ -1842,14 +2123,19 @@ def test_schema_rejects_an_incompatible_existing_table() -> None:
                 )
                 for column in columns
             ]
-        return Description(columns, list(table.primary_key))
+        ttl_settings = (
+            ydb.TtlSettings().with_date_type_column("expires_at", 0)
+            if table_name in {"exchange_claims", "exchange_private_fields"}
+            else None
+        )
+        return Description(columns, list(table.primary_key), ttl_settings)
 
     with pytest.raises(SchemaMismatch, match="schema version 2"):
         apply_schema(SchemaPool(), describe_table)  # type: ignore[arg-type]
 
 
 def test_schema_v2_describes_private_field_tables_and_applies_all_nine() -> None:
-    from app.ydb_schema import EXPECTED_TABLES, SCHEMA_VERSION, apply_schema
+    from app.ydb_schema import EXPECTED_TABLES, SCHEMA_VERSION, DateTypeTTL, apply_schema
 
     applied: list[str] = []
 
@@ -1864,15 +2150,26 @@ def test_schema_v2_describes_private_field_tables_and_applies_all_nine() -> None
             applied.append(query)
 
     class Description:
-        def __init__(self, columns: list[ydb.Column], primary_key: list[str]) -> None:
+        def __init__(
+            self,
+            columns: list[ydb.Column],
+            primary_key: list[str],
+            ttl_settings: ydb.TtlSettings | None,
+        ) -> None:
             self.columns = columns
             self.primary_key = primary_key
+            self.ttl_settings = ttl_settings
 
     def describe_table(table_name: str) -> Description:
         table = EXPECTED_TABLES[table_name]
         return Description(
             [ydb.Column(name, column_type) for name, column_type in table.columns],
             list(table.primary_key),
+            (
+                ydb.TtlSettings().with_date_type_column("expires_at", 0)
+                if table_name in {"exchange_claims", "exchange_private_fields"}
+                else None
+            ),
         )
 
     assert SCHEMA_VERSION == 2
@@ -1893,5 +2190,91 @@ def test_schema_v2_describes_private_field_tables_and_applies_all_nine() -> None
         ("fields_json", ydb.PrimitiveType.JsonDocument),
         ("updated_at", ydb.PrimitiveType.Timestamp),
     )
+    expected_ttl = DateTypeTTL(column_name="expires_at", expire_after_seconds=0)
+    assert EXPECTED_TABLES["exchange_claims"].ttl_settings == expected_ttl
+    assert EXPECTED_TABLES["exchange_private_fields"].ttl_settings == expected_ttl
+    assert all(
+        table.ttl_settings is None
+        for name, table in EXPECTED_TABLES.items()
+        if name not in {"exchange_claims", "exchange_private_fields"}
+    )
     assert apply_schema(SchemaPool(), describe_table) == 9  # type: ignore[arg-type]
     assert len(applied) == 9
+
+
+@pytest.mark.parametrize(
+    ("table_name", "ttl_settings"),
+    [
+        ("exchange_claims", None),
+        (
+            "exchange_private_fields",
+            ydb.TtlSettings().with_date_type_column("wrong_expiry", 0),
+        ),
+        (
+            "exchange_claims",
+            ydb.TtlSettings().with_date_type_column("expires_at", 60),
+        ),
+        (
+            "exchange_private_fields",
+            ydb.TtlSettings().with_value_since_unix_epoch(
+                "expires_at",
+                ydb.ColumnUnit.UNIT_SECONDS,
+                0,
+            ),
+        ),
+        (
+            "cards",
+            ydb.TtlSettings().with_date_type_column("updated_at", 0),
+        ),
+    ],
+    ids=(
+        "missing",
+        "wrong-column",
+        "wrong-interval",
+        "wrong-mode",
+        "unexpected-on-non-ttl-table",
+    ),
+)
+def test_schema_rejects_incompatible_ttl_metadata(
+    table_name: str,
+    ttl_settings: ydb.TtlSettings | None,
+) -> None:
+    from app.ydb_schema import EXPECTED_TABLES, SchemaMismatch, apply_schema
+
+    class SchemaPool:
+        def execute_with_retries(
+            self,
+            _query: str,
+            *,
+            retry_settings: ydb.RetrySettings,
+        ) -> None:
+            assert retry_settings.idempotent
+
+    class Description:
+        def __init__(
+            self,
+            columns: list[ydb.Column],
+            primary_key: list[str],
+            actual_ttl: ydb.TtlSettings | None,
+        ) -> None:
+            self.columns = columns
+            self.primary_key = primary_key
+            self.ttl_settings = actual_ttl
+
+    def describe_table(actual_table_name: str) -> Description:
+        table = EXPECTED_TABLES[actual_table_name]
+        actual_ttl = (
+            ydb.TtlSettings().with_date_type_column("expires_at", 0)
+            if actual_table_name in {"exchange_claims", "exchange_private_fields"}
+            else None
+        )
+        if actual_table_name == table_name:
+            actual_ttl = ttl_settings
+        return Description(
+            [ydb.Column(name, column_type) for name, column_type in table.columns],
+            list(table.primary_key),
+            actual_ttl,
+        )
+
+    with pytest.raises(SchemaMismatch, match=table_name):
+        apply_schema(SchemaPool(), describe_table)  # type: ignore[arg-type]
