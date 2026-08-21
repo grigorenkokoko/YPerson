@@ -134,7 +134,7 @@ class SyncService:
             )
         )
         expires_at = self._clock() + EXCHANGE_TOKEN_LIFETIME
-        version = self._store.prepare_exchange(
+        result = self._store.prepare_exchange(
             request.installationID,
             request.operationID,
             method,
@@ -146,10 +146,10 @@ class SyncService:
         return _response(
             "exchange prepared",
             update_count=1,
-            ownCardVersion=version,
+            ownCardVersion=result.card_version,
             exchangeToken=raw_credential if method != "manual" else None,
             exchangeCode=raw_credential if method == "manual" else None,
-            exchangeExpiresAt=expires_at,
+            exchangeExpiresAt=result.expires_at,
         )
 
     def _claim_exchange(self, request: SyncRequest) -> SyncResponse:

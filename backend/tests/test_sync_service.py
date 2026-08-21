@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from hmac import compare_digest
 from types import SimpleNamespace
@@ -17,7 +17,13 @@ from app.main import create_app
 from app.observability import JsonRequestFormatter, request_logger
 from app.schemas import PersonCard, PrivateCardFields, SyncedPerson
 from app.settings import Settings
-from app.storage import InvalidCredential, StorageConflict, StorageIntegrityError, SyncSnapshot
+from app.storage import (
+    InvalidCredential,
+    PreparedExchangeResult,
+    StorageConflict,
+    StorageIntegrityError,
+    SyncSnapshot,
+)
 from app.sync_service import (
     SyncService,
     derive_exchange_code,
@@ -118,7 +124,7 @@ class MemoryStore:
         private_fields: PrivateCardFields | None,
         raw_credential: str,
         expires_at: datetime,
-    ) -> int:
+    ) -> PreparedExchangeResult:
         operation_key = (installation_id, operation_id)
         credential_hash = sha256(raw_credential.encode()).digest()
         result = self.operation_results.get(operation_key)
@@ -129,9 +135,10 @@ class MemoryStore:
             ):
                 raise StorageConflict("operation identifier already used")
             version = result.get("card_version")
-            if not isinstance(version, int):
+            stored_expiry = result.get("expires_at")
+            if not isinstance(version, int) or not isinstance(stored_expiry, datetime):
                 raise StorageIntegrityError
-            return version
+            return PreparedExchangeResult(card_version=version, expires_at=stored_expiry)
 
         previous = self.claims.get(raw_credential)
         if previous is not None and previous[0] != installation_id:
@@ -151,9 +158,10 @@ class MemoryStore:
             "operation": "prepareExchange",
             "credential_hash": credential_hash,
             "card_version": version,
+            "expires_at": expires_at,
             "method": method,
         }
-        return version
+        return PreparedExchangeResult(card_version=version, expires_at=expires_at)
 
     def claim_exchange(
         self,
@@ -467,6 +475,37 @@ def test_prepare_replay_returns_stable_credential_expiry_and_card_version() -> N
     assert first.json() == replay.json()
     assert first.json()["ownCardVersion"] == 1
     assert len(store.claims) == 1
+
+
+def test_prepare_replay_returns_original_expiry_after_clock_advances() -> None:
+    store = MemoryStore()
+    clock_values = iter([NOW, NOW + timedelta(minutes=5)])
+    service = SyncService(store, clock=lambda: next(clock_values))
+    with TestClient(create_app(Settings(_env_file=None), sync_service=service)) as client:
+        post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-time-replay")
+        payload = {
+            "card": card("card-owner", "Owner").model_dump(mode="json"),
+            "exchangeMethod": "manual",
+        }
+        first = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-time-replay",
+            **payload,
+        )
+        replay = post_sync(
+            client,
+            OWNER,
+            "prepareExchange",
+            operation_id="prepare-time-replay",
+            **payload,
+        )
+
+    assert first.status_code == replay.status_code == 200
+    assert first.json()["exchangeExpiresAt"] == "2026-08-20T12:10:00Z"
+    assert replay.json()["exchangeExpiresAt"] == first.json()["exchangeExpiresAt"]
+    assert store.claims[first.json()["exchangeCode"]][1] == NOW + timedelta(minutes=10)
 
 
 def test_legacy_code_in_exchange_token_can_claim_manual_exchange() -> None:

@@ -44,6 +44,14 @@ class SyncSnapshot:
     next_cursor: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedExchangeResult:
+    """Persisted preparation values that must remain stable on replay."""
+
+    card_version: int
+    expires_at: datetime
+
+
 class SyncStore(Protocol):
     """Installation-scoped persistence consumed by the sync service."""
 
@@ -74,7 +82,7 @@ class SyncStore(Protocol):
         private_fields: PrivateCardFields | None,
         raw_credential: str,
         expires_at: datetime,
-    ) -> int:
+    ) -> PreparedExchangeResult:
         """Atomically publish a public card and prepare a one-time exchange."""
 
     def claim_exchange(
