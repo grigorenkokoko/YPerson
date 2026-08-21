@@ -58,12 +58,19 @@ YC_HEALTH_URL
 YPERSON_CONFIG_VERSION
 YPERSON_PRIVACY_URL
 YPERSON_SUPPORT_URL
+YPERSON_APP_STORE_ID
+YPERSON_APPLE_APPLICATION_IDENTIFIER
 YDB_ENDPOINT
 YDB_DATABASE
 YPERSON_OBJECT_BUCKET
 YPERSON_S3_LOCKBOX_SECRET_ID
 YPERSON_S3_LOCKBOX_VERSION_ID
 ```
+
+До появления листинга оставьте `YPERSON_APP_STORE_ID` пустым: backend тогда
+намеренно не публикует Smart App Banner. После выдачи числового ID в App Store
+Connect заполните значение. `YPERSON_APPLE_APPLICATION_IDENTIFIER` должен быть
+равен `Q7A52Z2TS2.com.yperson.app`, чтобы AASA совпадал с подписанным приложением.
 
 Значения S3 access key и secret key в GitHub не добавляются. Ревизия получает
 их напрямую из одной явно версионированной записи Lockbox. Runtime также
@@ -85,12 +92,24 @@ YPERSON_S3_LOCKBOX_VERSION_ID
 Bearer, подписанные URL, APNs token и JSON-тела никогда не печатаются. При
 неуспехе cleanup повторяется до отката.
 
+Deployment-логи и operator notes также не должны содержать raw public token или
+поля контакта. Для диагностики используйте только route template, status code и
+редактированные идентификаторы запроса.
+
 ## API Gateway
 
 Спецификация [`api-gateway.yaml`](api-gateway.yaml) направляет `/health`,
-`/config`, `/privacy`, `/support` и `/sync` в один приватный контейнер через
-`yperson-gateway`. Для `/sync` документированы статусы `200`, `400`, `401`,
-`409`, `413`, `415` и `503`.
+`/config`, `/privacy`, `/support`, `/sync`, прямой
+`GET /.well-known/apple-app-site-association`, а также `GET /p/{token}`,
+`GET /p/{token}/card.json`, `GET /p/{token}/contact.vcf` и
+`POST /p/{token}/replies` в один приватный контейнер через `yperson-gateway`.
+AASA и public-card routes передаются без redirect и rewrite. Для `/sync`
+документированы статусы `200`, `400`, `401`, `409`, `413`, `415` и `503`.
+
+Версионированную схему YDB необходимо применить до выкладки кода, который к ней
+обращается. Пока схема и новая ревизия не выкачены в таком порядке, production
+AASA, Universal Link, vCard, reply и revoke проверки остаются блокерами и не
+могут считаться пройденными по локальной сборке.
 
 После merge/push в `main` workflow запускается автоматически; вручную:
 

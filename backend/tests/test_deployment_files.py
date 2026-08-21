@@ -308,3 +308,42 @@ def test_dotenv_example_is_complete_and_uses_safe_development_values() -> None:
         "YPERSON_ANALYTICS_KILL_SWITCH": "false",
         "GRACEFUL_SHUTDOWN_SECONDS": "15",
     }
+
+
+def test_public_sharing_gateway_and_apple_configuration_are_deployable() -> None:
+    """Omitting a public route or the associated-domain ID breaks one-URL sharing."""
+
+    gateway_path = ROOT / "deploy/yandex/serverless/api-gateway.yaml"
+    gateway = gateway_path.read_text()
+    gateway_spec = yaml.safe_load(gateway)
+    example_env_path = ROOT / "deploy/yandex/serverless/config.example.env"
+    example_env = example_env_path.read_text()
+    environment = dotenv(example_env_path)
+
+    assert "/.well-known/apple-app-site-association" in gateway
+    assert "/p/{token}" in gateway
+    assert "YPERSON_APP_STORE_ID" in example_env
+    assert "YPERSON_APPLE_APPLICATION_IDENTIFIER" in example_env
+
+    expected_operations = {
+        "/.well-known/apple-app-site-association": ("get", "200"),
+        "/p/{token}": ("get", "200"),
+        "/p/{token}/card.json": ("get", "200"),
+        "/p/{token}/contact.vcf": ("get", "200"),
+        "/p/{token}/replies": ("post", "200"),
+    }
+    for path, (method, success_status) in expected_operations.items():
+        route = gateway_spec["paths"][path]
+        operation = route[method]
+        assert success_status in operation["responses"]
+        assert operation["x-yc-apigateway-integration"] == {
+            "type": "serverless_containers",
+            "container_id": "${YC_HTTP_CONTAINER_ID}",
+            "service_account_id": "${YC_GATEWAY_SA_ID}",
+        }
+
+    assert environment["YPERSON_APP_STORE_ID"] == ""
+    assert (
+        environment["YPERSON_APPLE_APPLICATION_IDENTIFIER"]
+        == "Q7A52Z2TS2.com.yperson.app"
+    )

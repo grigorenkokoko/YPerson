@@ -45,6 +45,88 @@ paths:
         type: serverless_containers
         container_id: ${YC_HTTP_CONTAINER_ID}
         service_account_id: ${YC_GATEWAY_SA_ID}
+  /.well-known/apple-app-site-association:
+    get:
+      operationId: appleAppSiteAssociation
+      responses:
+        "200":
+          description: Apple universal-link association document
+      x-yc-apigateway-integration:
+        type: serverless_containers
+        container_id: ${YC_HTTP_CONTAINER_ID}
+        service_account_id: ${YC_GATEWAY_SA_ID}
+  /p/{token}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: publicCard
+      responses:
+        "200":
+          description: Mobile public card
+        "404":
+          description: Public card is unavailable
+      x-yc-apigateway-integration:
+        type: serverless_containers
+        container_id: ${YC_HTTP_CONTAINER_ID}
+        service_account_id: ${YC_GATEWAY_SA_ID}
+  /p/{token}/card.json:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: publicCardJson
+      responses:
+        "200":
+          description: Public card JSON
+        "404":
+          description: Public card is unavailable
+      x-yc-apigateway-integration:
+        type: serverless_containers
+        container_id: ${YC_HTTP_CONTAINER_ID}
+        service_account_id: ${YC_GATEWAY_SA_ID}
+  /p/{token}/contact.vcf:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: publicCardVcard
+      responses:
+        "200":
+          description: Public card vCard download
+        "404":
+          description: Public card is unavailable
+      x-yc-apigateway-integration:
+        type: serverless_containers
+        container_id: ${YC_HTTP_CONTAINER_ID}
+        service_account_id: ${YC_GATEWAY_SA_ID}
+  /p/{token}/replies:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: publicCardReply
+      responses:
+        "200":
+          description: Contact reply accepted
+        "404":
+          description: Public card is unavailable
+      x-yc-apigateway-integration:
+        type: serverless_containers
+        container_id: ${YC_HTTP_CONTAINER_ID}
+        service_account_id: ${YC_GATEWAY_SA_ID}
   /sync:
     post:
       operationId: sync
