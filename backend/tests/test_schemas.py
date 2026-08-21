@@ -1,3 +1,6 @@
+from datetime import UTC, datetime
+from uuid import uuid4
+
 import pytest
 from pydantic import ValidationError
 
@@ -6,6 +9,7 @@ from app.schemas import (
     AudioUpload,
     PersonCard,
     PublicConfigResponse,
+    PublicContactReply,
     SyncOperation,
     SyncRequest,
     SyncResponse,
@@ -18,6 +22,20 @@ def valid_request() -> dict[str, object]:
         "operationID": "op-12345678",
         "installationID": "ios-installation-123",
         "operation": "refresh",
+    }
+
+
+def person_card_payload() -> dict[str, object]:
+    return {
+        "id": "card-owner",
+        "name": "Owner",
+        "role": "Designer",
+        "company": "YPerson",
+        "phone": "+79990000000",
+        "email": "owner@example.invalid",
+        "tagline": "Hello",
+        "hasAudioGreeting": False,
+        "isBlocked": False,
     }
 
 
@@ -61,7 +79,130 @@ def test_all_existing_operations_remain_supported() -> None:
         "deleteProfile",
         "report",
         "block",
+        "activatePublicLink",
+        "revokePublicLink",
+        "dismissPublicReply",
     }
+
+
+def test_activate_public_link_requires_card_and_canonical_token() -> None:
+    payload = valid_request() | {"operation": "activatePublicLink"}
+    with pytest.raises(ValidationError):
+        SyncRequest.model_validate(payload)
+
+    payload["card"] = person_card_payload()
+    payload["publicLinkToken"] = "A" * 43
+    request = SyncRequest.model_validate(payload)
+    assert request.publicLinkToken == "A" * 43
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "A" * 42,
+        "A" * 43 + "=",
+        "A" * 42 + "+",
+        "_" * 43,
+    ],
+)
+def test_activate_public_link_rejects_noncanonical_tokens(token: str) -> None:
+    with pytest.raises(ValidationError):
+        SyncRequest.model_validate(
+            valid_request()
+            | {
+                "operation": "activatePublicLink",
+                "card": person_card_payload(),
+                "publicLinkToken": token,
+            }
+        )
+
+
+def test_dismiss_public_reply_requires_canonical_uuid() -> None:
+    reply_id = str(uuid4())
+    request = SyncRequest.model_validate(
+        valid_request()
+        | {
+            "operation": "dismissPublicReply",
+            "publicReplyID": reply_id,
+        }
+    )
+    assert request.publicReplyID == reply_id
+
+    for invalid in (None, reply_id.upper(), f"{{{reply_id}}}", "not-a-uuid"):
+        payload = valid_request() | {"operation": "dismissPublicReply"}
+        if invalid is not None:
+            payload["publicReplyID"] = invalid
+        with pytest.raises(ValidationError):
+            SyncRequest.model_validate(payload)
+
+
+@pytest.mark.parametrize("operation", ["refresh", "publishCard", "revokePublicLink"])
+@pytest.mark.parametrize("field", ["publicLinkToken", "publicReplyID"])
+def test_public_request_fields_are_rejected_by_unrelated_operations(
+    operation: str,
+    field: str,
+) -> None:
+    value = "A" * 43 if field == "publicLinkToken" else str(uuid4())
+    payload = valid_request() | {"operation": operation, field: value}
+    if operation == "publishCard":
+        payload["card"] = person_card_payload()
+    with pytest.raises(ValidationError, match=f"{operation} does not accept {field}"):
+        SyncRequest.model_validate(payload)
+
+
+def test_public_reply_requires_exactly_one_contact_method() -> None:
+    common = {
+        "id": str(uuid4()),
+        "name": "Анна",
+        "createdAt": datetime.now(UTC),
+    }
+    with pytest.raises(ValidationError, match="exactly one"):
+        PublicContactReply(**common, email=None, phone=None)
+    with pytest.raises(ValidationError, match="exactly one"):
+        PublicContactReply(**common, email="anna@example.invalid", phone="+79990000000")
+
+
+def test_public_reply_trims_and_limits_contact_fields() -> None:
+    reply = PublicContactReply(
+        id=str(uuid4()),
+        name="  Анна  ",
+        email="  anna@example.invalid  ",
+        phone="   ",
+        createdAt=datetime.now(UTC),
+    )
+    assert reply.name == "Анна"
+    assert reply.email == "anna@example.invalid"
+    assert reply.phone is None
+
+    with pytest.raises(ValidationError):
+        PublicContactReply(
+            id=str(uuid4()),
+            name="я" * 81,
+            email="anna@example.invalid",
+            phone=None,
+            createdAt=datetime.now(UTC),
+        )
+    with pytest.raises(ValidationError):
+        PublicContactReply(
+            id=str(uuid4()),
+            name="Анна",
+            email="a" * 257,
+            phone=None,
+            createdAt=datetime.now(UTC),
+        )
+
+
+def test_sync_response_defaults_public_fields_for_older_payloads() -> None:
+    response = SyncResponse.model_validate(
+        {
+            "accepted": True,
+            "serverVersion": "2",
+            "updateCount": 0,
+            "message": "refreshed",
+        }
+    )
+    assert response.publicLinkActive is None
+    assert response.publicReplies == []
 
 
 def test_cancel_exchange_requires_only_the_exchange_token() -> None:

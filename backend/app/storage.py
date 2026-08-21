@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Protocol
+from typing import Final, Protocol
 
 from .schemas import PersonCard, SyncedPerson
+
+MAX_PENDING_PUBLIC_REPLIES: Final = 20
 
 
 class InvalidCredential(Exception):
@@ -34,6 +37,25 @@ class InstallationRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class PublicCardRecord:
+    """A public card resolved without exposing its stored token digest."""
+
+    owner_installation_id: str
+    card: PersonCard
+
+
+@dataclass(frozen=True, slots=True)
+class PublicContactReplyRecord:
+    """An owner-scoped pending response submitted through a public card."""
+
+    id: str
+    name: str
+    email: str | None
+    phone: str | None
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class SyncSnapshot:
     """The durable state needed to build a refresh response."""
 
@@ -42,6 +64,8 @@ class SyncSnapshot:
     people: tuple[SyncedPerson, ...] = field(default_factory=tuple)
     revoked_card_ids: tuple[str, ...] = field(default_factory=tuple)
     next_cursor: str | None = None
+    public_link_active: bool = False
+    public_replies: Sequence[PublicContactReplyRecord] = field(default_factory=tuple)
 
 
 class SyncStore(Protocol):
@@ -111,6 +135,40 @@ class SyncStore(Protocol):
 
     def delete_profile(self, installation_id: str, operation_id: str) -> list[str]:
         """Remove active profile state and return private object keys to delete."""
+
+    def activate_public_link(
+        self,
+        installation_id: str,
+        operation_id: str,
+        raw_token: str,
+        card: PersonCard,
+    ) -> None:
+        """Replace the owner's public link using a digest of the supplied token."""
+
+    def revoke_public_link(self, installation_id: str, operation_id: str) -> None:
+        """Remove the owner's public link idempotently."""
+
+    def resolve_public_card(self, raw_token: str) -> PublicCardRecord | None:
+        """Resolve an active public card by hashing the supplied token immediately."""
+
+    def create_public_reply(
+        self,
+        raw_token: str,
+        reply_id: str,
+        name: str,
+        email: str | None,
+        phone: str | None,
+        expires_at: datetime,
+    ) -> None:
+        """Persist a pending owner reply when the public link remains active."""
+
+    def dismiss_public_reply(
+        self,
+        installation_id: str,
+        operation_id: str,
+        reply_id: str,
+    ) -> None:
+        """Idempotently delete one reply scoped to its owning installation."""
 
     def replay_deleted_profile(
         self,

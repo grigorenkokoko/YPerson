@@ -13,8 +13,11 @@ import ydb
 
 from app.schemas import PersonCard, SyncResponse
 from app.storage import (
+    MAX_PENDING_PUBLIC_REPLIES,
     InstallationRecord,
     InvalidCredential,
+    PublicCardRecord,
+    PublicContactReplyRecord,
     StorageConflict,
     StorageIntegrityError,
     SyncSnapshot,
@@ -129,7 +132,13 @@ class RecordingPool:
             own_rows = []
             if stored is not None:
                 own_rows = [{"version": stored[0], "card_json": stored[1]}]
-            return [ResultSet(own_rows), ResultSet([]), ResultSet([])]
+            return [
+                ResultSet(own_rows),
+                ResultSet([]),
+                ResultSet([]),
+                ResultSet([]),
+                ResultSet([]),
+            ]
         raise AssertionError("unexpected read query")
 
     def retry_tx_sync(
@@ -188,7 +197,10 @@ class ScriptedPool:
     ) -> list[ResultSet]:
         assert retry_settings.idempotent
         self.read_calls.append((query, parameters))
-        return self.read_handler(query, parameters)
+        result_sets = self.read_handler(query, parameters)
+        if "ORDER BY created_at, reply_id" in query and len(result_sets) == 3:
+            result_sets.extend((ResultSet([]), ResultSet([])))
+        return result_sets
 
     def retry_tx_sync(
         self,
@@ -980,6 +992,31 @@ def test_every_other_mutation_uses_the_same_active_installation_guard() -> None:
             "installation-deleted",
             "op-delete-delayed",
         ),
+        lambda store: store.activate_public_link(
+            "installation-deleted",
+            "op-link-delayed",
+            "A" * 43,
+            PersonCard(
+                id="card-owner",
+                name="Owner",
+                role="Designer",
+                company="YPerson",
+                phone="+79990000000",
+                email="owner@example.invalid",
+                tagline="Hello",
+                hasAudioGreeting=False,
+                isBlocked=False,
+            ),
+        ),
+        lambda store: store.revoke_public_link(
+            "installation-deleted",
+            "op-revoke-link-delayed",
+        ),
+        lambda store: store.dismiss_public_reply(
+            "installation-deleted",
+            "op-dismiss-delayed",
+            "123e4567-e89b-12d3-a456-426614174000",
+        ),
     )
     for action in actions:
         pool = ScriptedPool(transaction_handler=transaction_handler, active=False)
@@ -1204,5 +1241,293 @@ def test_schema_rejects_an_incompatible_existing_table() -> None:
             ]
         return Description(columns, list(table.primary_key))
 
-    with pytest.raises(SchemaMismatch, match="schema version 1"):
+    with pytest.raises(SchemaMismatch, match="schema version 2"):
         apply_schema(SchemaPool(), describe_table)  # type: ignore[arg-type]
+
+
+def test_schema_v2_defines_public_link_and_reply_tables() -> None:
+    from app.ydb_schema import EXPECTED_TABLES, SCHEMA_VERSION, TABLE_DDL
+
+    assert SCHEMA_VERSION == 2
+    assert EXPECTED_TABLES["public_links"].primary_key == ("owner_installation_id",)
+    assert EXPECTED_TABLES["public_replies"].primary_key == (
+        "owner_installation_id",
+        "reply_id",
+    )
+    ddl = "\n".join(TABLE_DDL)
+    assert "INDEX by_token GLOBAL ON (token_hash)" in ddl
+    assert 'TTL = Interval("PT0S") ON expires_at' in ddl
+
+
+def test_public_link_activation_replaces_owner_token_and_resolves_only_digest(
+    card: PersonCard,
+) -> None:
+    links: dict[str, tuple[bytes, str]] = {}
+    operations: dict[tuple[str, str], str] = {}
+
+    def transaction_handler(query: str, parameters: dict[str, Any]) -> list[ResultSet]:
+        owner = str(_parameter(parameters, "$installation_id"))
+        operation_id = str(_parameter(parameters, "$operation_id"))
+        if "FROM operations" in query:
+            operation_type = operations.get((owner, operation_id))
+            rows = (
+                [{"operation_type": operation_type, "result_json": "{}"}]
+                if operation_type is not None
+                else []
+            )
+            return [ResultSet(rows)]
+        if "UPSERT INTO public_links" in query:
+            links[owner] = (
+                _parameter(parameters, "$token_hash"),
+                str(_parameter(parameters, "$card_json")),
+            )
+            operations[(owner, operation_id)] = "activatePublicLink"
+        return []
+
+    def read_handler(_query: str, parameters: dict[str, Any]) -> list[ResultSet]:
+        token_hash = _parameter(parameters, "$token_hash")
+        rows = [
+            {
+                "owner_installation_id": owner,
+                "card_json": card_json,
+            }
+            for owner, (stored_hash, card_json) in links.items()
+            if stored_hash == token_hash
+        ]
+        return [ResultSet(rows)]
+
+    pool = ScriptedPool(transaction_handler=transaction_handler, read_handler=read_handler)
+    adapter = YDBSyncStore(pool)  # type: ignore[arg-type]
+    old_token = "old-public-token"
+    new_token = "new-public-token"
+
+    adapter.activate_public_link("installation-owner", "op-link-1", old_token, card)
+    assert adapter.resolve_public_card(old_token) == PublicCardRecord(
+        owner_installation_id="installation-owner",
+        card=card,
+    )
+    adapter.activate_public_link("installation-owner", "op-link-2", new_token, card)
+
+    assert adapter.resolve_public_card(old_token) is None
+    assert adapter.resolve_public_card(new_token) == PublicCardRecord(
+        owner_installation_id="installation-owner",
+        card=card,
+    )
+    assert links["installation-owner"][0] == sha256(new_token.encode()).digest()
+    assert json.loads(links["installation-owner"][1]) == card.model_dump(mode="json")
+    all_calls = repr(pool.transaction_calls + pool.read_calls)
+    assert old_token not in all_calls
+    assert new_token not in all_calls
+
+
+def test_revoked_public_link_does_not_resolve_or_accept_reply(card: PersonCard) -> None:
+    token_hash = sha256(b"public-token").digest()
+    link_active = True
+    operations: set[tuple[str, str, str]] = set()
+
+    def transaction_handler(query: str, parameters: dict[str, Any]) -> list[ResultSet]:
+        nonlocal link_active
+        owner = str(_parameter(parameters, "$installation_id"))
+        operation_id = str(_parameter(parameters, "$operation_id"))
+        if "FROM operations" in query:
+            matching = [item for item in operations if item[:2] == (owner, operation_id)]
+            return [
+                ResultSet(
+                    [
+                        {"operation_type": matching[0][2], "result_json": "{}"}
+                    ]
+                    if matching
+                    else []
+                )
+            ]
+        if "DELETE FROM public_links" in query:
+            link_active = False
+            operations.add((owner, operation_id, "revokePublicLink"))
+        if "FROM public_links VIEW by_token" in query:
+            rows = (
+                [{"owner_installation_id": "installation-owner", "token_hash": token_hash}]
+                if link_active
+                else []
+            )
+            return [ResultSet(rows)]
+        return []
+
+    def read_handler(_query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        rows = (
+            [
+                {
+                    "owner_installation_id": "installation-owner",
+                    "card_json": card.model_dump_json(),
+                }
+            ]
+            if link_active
+            else []
+        )
+        return [ResultSet(rows)]
+
+    pool = ScriptedPool(transaction_handler=transaction_handler, read_handler=read_handler)
+    adapter = YDBSyncStore(pool)  # type: ignore[arg-type]
+    adapter.revoke_public_link("installation-owner", "op-revoke-link")
+    adapter.revoke_public_link("installation-owner", "op-revoke-link")
+
+    assert adapter.resolve_public_card("public-token") is None
+    with pytest.raises(StorageConflict, match="public link unavailable"):
+        adapter.create_public_reply(
+            "public-token",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "Anna",
+            "anna@example.invalid",
+            None,
+            datetime.now(UTC) + timedelta(days=30),
+        )
+    assert not any("UPSERT INTO public_replies" in query for query, _ in pool.transaction_calls)
+
+
+@pytest.mark.parametrize(
+    ("reply_count", "raises"),
+    [(MAX_PENDING_PUBLIC_REPLIES - 1, False), (MAX_PENDING_PUBLIC_REPLIES, True)],
+)
+def test_public_reply_limit_is_enforced_in_insert_transaction(
+    reply_count: int,
+    raises: bool,
+) -> None:
+    token_hash = sha256(b"public-token").digest()
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM public_links VIEW by_token" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "owner_installation_id": "installation-owner",
+                            "token_hash": token_hash,
+                        }
+                    ]
+                ),
+            ]
+        if "SELECT COUNT(*) AS reply_count" in query:
+            return [ResultSet([{"reply_count": reply_count}]), ResultSet([])]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    adapter = YDBSyncStore(pool)  # type: ignore[arg-type]
+    call = lambda: adapter.create_public_reply(
+        "public-token",
+        "123e4567-e89b-12d3-a456-426614174000",
+        "Anna",
+        "anna@example.invalid",
+        None,
+        datetime.now(UTC) + timedelta(days=30),
+    )
+    if raises:
+        with pytest.raises(StorageConflict, match="reply limit reached"):
+            call()
+    else:
+        call()
+
+    insert_calls = [
+        (query, parameters)
+        for query, parameters in pool.transaction_calls
+        if "UPSERT INTO public_replies" in query
+    ]
+    assert len(insert_calls) == (0 if raises else 1)
+    assert "public-token" not in repr(pool.transaction_calls)
+
+
+def test_dismiss_public_reply_is_owner_scoped_and_idempotent() -> None:
+    operations: set[tuple[str, str]] = set()
+
+    def transaction_handler(query: str, parameters: dict[str, Any]) -> list[ResultSet]:
+        owner = str(_parameter(parameters, "$installation_id"))
+        operation_id = str(_parameter(parameters, "$operation_id"))
+        if "FROM operations" in query:
+            rows = (
+                [{"operation_type": "dismissPublicReply", "result_json": "{}"}]
+                if (owner, operation_id) in operations
+                else []
+            )
+            return [ResultSet(rows)]
+        if "DELETE FROM public_replies" in query:
+            operations.add((owner, operation_id))
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    adapter = YDBSyncStore(pool)  # type: ignore[arg-type]
+    reply_id = "123e4567-e89b-12d3-a456-426614174000"
+    adapter.dismiss_public_reply("installation-owner", "op-dismiss-1", reply_id)
+    adapter.dismiss_public_reply("installation-owner", "op-dismiss-1", reply_id)
+
+    delete_calls = [
+        (query, parameters)
+        for query, parameters in pool.transaction_calls
+        if "DELETE FROM public_replies" in query
+    ]
+    assert len(delete_calls) == 1
+    query, parameters = delete_calls[0]
+    assert "owner_installation_id = $installation_id" in query
+    assert "reply_id = $reply_id" in query
+    assert _parameter(parameters, "$installation_id") == "installation-owner"
+    assert _parameter(parameters, "$reply_id") == reply_id
+
+
+def test_refresh_returns_public_state_and_replies_in_stable_order(card: PersonCard) -> None:
+    created_at = datetime.now(UTC)
+
+    def read_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        assert "ORDER BY created_at, reply_id" in query
+        return [
+            ResultSet([]),
+            ResultSet([]),
+            ResultSet([]),
+            ResultSet([{"owner_installation_id": "installation-owner"}]),
+            ResultSet(
+                [
+                    {
+                        "reply_id": "123e4567-e89b-12d3-a456-426614174000",
+                        "name": "Anna",
+                        "email": "anna@example.invalid",
+                        "phone": None,
+                        "created_at": created_at,
+                    }
+                ]
+            ),
+        ]
+
+    pool = ScriptedPool(transaction_handler=lambda _query, _parameters: [], read_handler=read_handler)
+    snapshot = YDBSyncStore(pool).refresh("installation-owner", None)  # type: ignore[arg-type]
+    assert snapshot.public_link_active is True
+    assert snapshot.public_replies == (
+        PublicContactReplyRecord(
+            id="123e4567-e89b-12d3-a456-426614174000",
+            name="Anna",
+            email="anna@example.invalid",
+            phone=None,
+            created_at=created_at,
+        ),
+    )
+
+
+def test_delete_profile_cleans_up_public_link_and_replies(card: PersonCard) -> None:
+    credential_hash = sha256(b"owner-secret").digest()
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "SELECT credential_hash" in query:
+            return [ResultSet([{"credential_hash": credential_hash}])]
+        if "SELECT object_key" in query:
+            return [ResultSet([])]
+        if "SELECT card_id FROM cards" in query:
+            return [ResultSet([{"card_id": card.id}])]
+        if "SELECT owner_installation_id, peer_installation_id" in query:
+            return [ResultSet([])]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    adapter = YDBSyncStore(pool)  # type: ignore[arg-type]
+    adapter.delete_profile("installation-owner", "op-delete-public")
+    cleanup_query = next(
+        query for query, _ in pool.transaction_calls if "DELETE FROM installations" in query
+    )
+    assert "DELETE FROM public_links" in cleanup_query
+    assert "DELETE FROM public_replies" in cleanup_query

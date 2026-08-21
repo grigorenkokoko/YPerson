@@ -8,7 +8,7 @@ from typing import Final
 
 import ydb
 
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
 
 
 class SchemaMismatch(RuntimeError):
@@ -19,6 +19,7 @@ class SchemaMismatch(RuntimeError):
 class TableSchema:
     columns: tuple[tuple[str, object], ...]
     primary_key: tuple[str, ...]
+    indexes: tuple[str, ...] = ()
 
 
 _UTF8_OPTIONAL = ydb.OptionalType(ydb.PrimitiveType.Utf8)
@@ -108,6 +109,30 @@ EXPECTED_TABLES: Final[dict[str, TableSchema]] = {
         ),
         primary_key=("installation_id", "operation_id"),
     ),
+    "public_links": TableSchema(
+        columns=(
+            ("owner_installation_id", ydb.PrimitiveType.Utf8),
+            ("token_hash", ydb.PrimitiveType.String),
+            ("card_json", ydb.PrimitiveType.JsonDocument),
+            ("created_at", ydb.PrimitiveType.Timestamp),
+            ("updated_at", ydb.PrimitiveType.Timestamp),
+        ),
+        primary_key=("owner_installation_id",),
+        indexes=("by_token",),
+    ),
+    "public_replies": TableSchema(
+        columns=(
+            ("owner_installation_id", ydb.PrimitiveType.Utf8),
+            ("reply_id", ydb.PrimitiveType.Utf8),
+            ("public_token_hash", ydb.PrimitiveType.String),
+            ("name", ydb.PrimitiveType.Utf8),
+            ("email", _UTF8_OPTIONAL),
+            ("phone", _UTF8_OPTIONAL),
+            ("created_at", ydb.PrimitiveType.Timestamp),
+            ("expires_at", ydb.PrimitiveType.Timestamp),
+        ),
+        primary_key=("owner_installation_id", "reply_id"),
+    ),
 }
 
 TABLE_DDL: Final[tuple[str, ...]] = (
@@ -191,6 +216,32 @@ TABLE_DDL: Final[tuple[str, ...]] = (
         PRIMARY KEY (installation_id, operation_id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS public_links (
+        owner_installation_id Utf8 NOT NULL,
+        token_hash String NOT NULL,
+        card_json JsonDocument NOT NULL,
+        created_at Timestamp NOT NULL,
+        updated_at Timestamp NOT NULL,
+        PRIMARY KEY (owner_installation_id),
+        INDEX by_token GLOBAL ON (token_hash)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS public_replies (
+        owner_installation_id Utf8 NOT NULL,
+        reply_id Utf8 NOT NULL,
+        public_token_hash String NOT NULL,
+        name Utf8 NOT NULL,
+        email Utf8,
+        phone Utf8,
+        created_at Timestamp NOT NULL,
+        expires_at Timestamp NOT NULL,
+        PRIMARY KEY (owner_installation_id, reply_id)
+    ) WITH (
+        TTL = Interval("PT0S") ON expires_at
+    )
+    """,
 )
 
 
@@ -198,7 +249,7 @@ def apply_schema(
     pool: ydb.QuerySessionPool,
     describe_table: Callable[[str], object],
 ) -> int:
-    """Apply schema version 1 and verify every table's exact structure."""
+    """Apply schema version 2 and verify every table's exact structure."""
 
     completed = 0
     retry_settings = ydb.RetrySettings(idempotent=True)
@@ -217,9 +268,11 @@ def _verify_schema(describe_table: Callable[[str], object]) -> None:
         }
         expected_columns = dict(expected.columns)
         primary_key = tuple(getattr(description, "primary_key", ()))
+        index_names = tuple(index.name for index in getattr(description, "indexes", ()))
         if (
             actual_columns.keys() != expected_columns.keys()
             or any(actual_columns[name] != column_type for name, column_type in expected.columns)
             or primary_key != expected.primary_key
+            or any(index_name not in index_names for index_name in expected.indexes)
         ):
             raise SchemaMismatch(f"incompatible YDB schema version {SCHEMA_VERSION}: {table_name}")
