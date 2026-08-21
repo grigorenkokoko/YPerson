@@ -300,6 +300,8 @@ class MemoryStore:
             for (candidate_installation_id, _), candidate in self.deleted.items()
             if candidate_installation_id == installation_id
         ]
+        if len(candidates) > 1:
+            raise StorageIntegrityError
         if installation_id in self.installations:
             if candidates:
                 raise StorageIntegrityError
@@ -307,8 +309,6 @@ class MemoryStore:
         if deleted is None:
             if (installation_id, operation_id) in self.operation_results:
                 raise StorageConflict("operation identifier already used")
-            if len(candidates) > 1:
-                raise StorageIntegrityError
             if not candidates:
                 return None
             deleted = candidates[0]
@@ -965,6 +965,57 @@ def test_delete_profile_with_new_operation_replays_a_lost_prior_deletion() -> No
         ["private/post-ack-window.m4a"],
         ["private/post-ack-window.m4a"],
     ]
+
+
+def test_delete_profile_reprobes_after_a_concurrent_delete_wins_authentication() -> None:
+    class ConcurrentlyDeletedStore(MemoryStore):
+        def authenticate(self, installation_id: str, bearer: str) -> None:
+            self.delete_profile(installation_id, "delete-op-concurrent-winner")
+            super().authenticate(installation_id, bearer)
+
+    store = ConcurrentlyDeletedStore()
+    cleaned: list[list[str]] = []
+    store.object_keys[OWNER[0]] = ["private/concurrent-delete.m4a"]
+    with make_client(store, cleaned=cleaned) as client:
+        bootstrap = post_sync(client, OWNER, "refresh", operation_id="owner-bootstrap-race")
+        response = post_sync(
+            client,
+            OWNER,
+            "deleteProfile",
+            operation_id="delete-op-racing-client",
+        )
+        wrong_bearer = post_sync(
+            client,
+            (OWNER[0], "wrong-bearer-secret-00000000000000000000000"),
+            "deleteProfile",
+            operation_id="delete-op-racing-client",
+        )
+
+    assert bootstrap.status_code == response.status_code == 200
+    assert wrong_bearer.status_code == 401
+    assert cleaned == [["private/concurrent-delete.m4a"]]
+
+
+def test_delete_rejects_whitespace_operation_id_before_store_access() -> None:
+    store = MemoryStore()
+    with make_client(store) as client:
+        response = post_sync(client, OWNER, "deleteProfile", operation_id="        ")
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_request"
+    assert store.auth_calls == []
+    assert store.installations == {}
+    assert store.deleted == {}
+
+
+def test_memory_store_rejects_ambiguous_tombstones_even_for_an_exact_replay() -> None:
+    store = MemoryStore()
+    credential_hash = sha256(OWNER[1].encode()).digest()
+    store.deleted[(OWNER[0], "delete-op-exact")] = (credential_hash, [])
+    store.deleted[(OWNER[0], "delete-op-other")] = (credential_hash, [])
+
+    with pytest.raises(StorageIntegrityError):
+        store.replay_deleted_profile(OWNER[0], "delete-op-exact", OWNER[1])
 
 
 def test_delete_with_private_objects_fails_closed_without_cleanup_service() -> None:

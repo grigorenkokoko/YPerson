@@ -2323,6 +2323,35 @@ def test_delete_recovery_rejects_an_operation_id_used_by_another_type() -> None:
         )
 
 
+def test_delete_recovery_authenticates_before_revealing_an_operation_type_collision() -> None:
+    exact = {
+        "operation_id": "delete-op-recreated",
+        "operation_type": "publishCard",
+        "result_json": json.dumps({"version": 1}),
+    }
+    prior = {
+        "operation_id": "delete-op-original",
+        "operation_type": "deleteProfile",
+        "result_json": json.dumps(
+            {"credentialHash": sha256(b"owner-secret").hexdigest(), "objectKeys": []}
+        ),
+    }
+
+    def read_handler(_query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        return [ResultSet([]), ResultSet([exact]), ResultSet([prior])]
+
+    store = YDBSyncStore(  # type: ignore[arg-type]
+        ScriptedPool(transaction_handler=lambda _query, _parameters: [], read_handler=read_handler)
+    )
+
+    with pytest.raises(InvalidCredential):
+        store.replay_deleted_profile(
+            "installation-owner",
+            "delete-op-recreated",
+            "wrong-owner-secret",
+        )
+
+
 @pytest.mark.parametrize("failure", ["malformed", "malformed-operation-id", "ambiguous"])
 def test_delete_recovery_rejects_malformed_or_ambiguous_tombstones(failure: str) -> None:
     valid = {

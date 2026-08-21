@@ -1292,29 +1292,39 @@ class YDBSyncStore:
                 raise StorageIntegrityError
             return None
 
-        if exact_rows:
-            exact = exact_rows[0]
-            if _stored_text(exact, "operation_type") != "deleteProfile":
-                raise StorageConflict("operation identifier already used")
-            if not deletion_rows:
+        if not deletion_rows:
+            if exact_rows and _stored_text(exact_rows[0], "operation_type") == "deleteProfile":
                 raise StorageIntegrityError
-            deletion = deletion_rows[0]
-            if _stored_text(deletion, "operation_id") != _stored_text(exact, "operation_id"):
-                raise StorageIntegrityError
-        elif deletion_rows:
-            deletion = deletion_rows[0]
-        else:
             return None
 
-        if not _stored_text(deletion, "operation_id").strip():
+        deletion = deletion_rows[0]
+        deletion_operation_id = _stored_text(deletion, "operation_id")
+        if not deletion_operation_id.strip():
             raise StorageIntegrityError
         if _stored_text(deletion, "operation_type") != "deleteProfile":
             raise StorageIntegrityError
         result = _stored_json(deletion, "result_json")
         stored_hash = _stored_digest(result, "credentialHash")
+        object_keys = _object_keys(result)
+
+        exact_operation_type: str | None = None
+        if exact_rows:
+            exact = exact_rows[0]
+            exact_operation_id = _stored_text(exact, "operation_id")
+            exact_operation_type = _stored_text(exact, "operation_type")
+            if exact_operation_id != operation_id or not exact_operation_type.strip():
+                raise StorageIntegrityError
+            if (
+                exact_operation_type == "deleteProfile"
+                and exact_operation_id != deletion_operation_id
+            ):
+                raise StorageIntegrityError
+
         if not compare_digest(stored_hash, _digest(bearer)):
             raise InvalidCredential
-        return _object_keys(result)
+        if exact_operation_type is not None and exact_operation_type != "deleteProfile":
+            raise StorageConflict("operation identifier already used")
+        return object_keys
 
     def debug_installation(self, installation_id: str) -> InstallationRecord | None:
         """Return secret-safe adapter state for deterministic injected-pool tests."""

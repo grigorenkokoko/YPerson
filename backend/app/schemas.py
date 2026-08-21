@@ -75,7 +75,11 @@ class SyncRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     contractVersion: Literal[2] = 2
-    operationID: str = Field(min_length=8, max_length=128)
+    operationID: str = Field(
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$",
+    )
     installationID: str = Field(min_length=16, max_length=128)
     apnsToken: str | None = Field(default=None, max_length=256)
     operation: SyncOperation

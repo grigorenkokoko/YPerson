@@ -334,6 +334,27 @@ def test_sync_request_enforces_identifier_and_token_length_limits(field: str, va
         SyncRequest.model_validate(valid_request() | {field: value})
 
 
+@pytest.mark.parametrize("operation_id", ["        ", "delete op", "delete/op", "удаление-01"])
+def test_sync_request_rejects_unsafe_operation_identifiers(operation_id: str) -> None:
+    with pytest.raises(ValidationError):
+        SyncRequest.model_validate(valid_request() | {"operationID": operation_id})
+
+
+@pytest.mark.parametrize(
+    "operation_id",
+    [
+        "67ba0e22-6e66-4d6f-a327-1666413185f7",
+        "bc0b18c013556bad4a5c38c7b2382ae8689dd30c888636d4cdd3c04f41564fdc",
+        "legacy.operation_id:0001",
+    ],
+)
+def test_sync_request_accepts_established_safe_operation_identifiers(operation_id: str) -> None:
+    assert (
+        SyncRequest.model_validate(valid_request() | {"operationID": operation_id}).operationID
+        == operation_id
+    )
+
+
 def test_sync_request_rejects_unknown_moderation_categories() -> None:
     with pytest.raises(ValidationError):
         SyncRequest.model_validate(valid_request() | {"moderationCategory": "harassment"})

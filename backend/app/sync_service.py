@@ -10,7 +10,7 @@ from hashlib import sha256
 
 from .media_service import MediaInvalid, MediaService
 from .schemas import PersonCard, SyncedPerson, SyncOperation, SyncRequest, SyncResponse
-from .storage import StorageConflict, SyncSnapshot, SyncStore
+from .storage import InvalidCredential, StorageConflict, SyncSnapshot, SyncStore
 
 EXCHANGE_TOKEN_LIFETIME = timedelta(minutes=10)
 EXCHANGE_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -60,10 +60,23 @@ class SyncService:
                 self._object_cleanup(replayed_keys)
                 return _response("profile deleted")
 
-        if request.operation in {SyncOperation.refresh, SyncOperation.publish_card}:
-            self._store.authenticate_or_create(request.installationID, bearer)
-        else:
-            self._store.authenticate(request.installationID, bearer)
+        try:
+            if request.operation in {SyncOperation.refresh, SyncOperation.publish_card}:
+                self._store.authenticate_or_create(request.installationID, bearer)
+            else:
+                self._store.authenticate(request.installationID, bearer)
+        except InvalidCredential:
+            if request.operation is not SyncOperation.delete_profile:
+                raise
+            replayed_keys = self._store.replay_deleted_profile(
+                request.installationID,
+                request.operationID,
+                bearer,
+            )
+            if replayed_keys is None:
+                raise
+            self._object_cleanup(replayed_keys)
+            return _response("profile deleted")
 
         match request.operation:
             case SyncOperation.refresh:
