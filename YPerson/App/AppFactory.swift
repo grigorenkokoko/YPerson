@@ -26,7 +26,16 @@ final class YPersonExperienceBuilder {
         sessionConfiguration.timeoutIntervalForResource = 20
         sessionConfiguration.waitsForConnectivity = true
         self.session = URLSession(configuration: sessionConfiguration)
-        let store = AppGroupSnapshotStore(appGroupIdentifier: configuration.appGroupIdentifier)
+        let store: AppGroupSnapshotStore?
+#if DEBUG
+        if ProcessInfo.processInfo.environment["YP_SCREENSHOT_STATE"] != nil {
+            store = AppGroupSnapshotStore.inMemory()
+        } else {
+            store = AppGroupSnapshotStore(appGroupIdentifier: configuration.appGroupIdentifier)
+        }
+#else
+        store = AppGroupSnapshotStore(appGroupIdentifier: configuration.appGroupIdentifier)
+#endif
         self.snapshotStore = store
         let credentialStore = InstallationCredentialStore(service: "\(configuration.appGroupIdentifier).installation")
         self.credentialStore = credentialStore

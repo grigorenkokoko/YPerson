@@ -152,13 +152,17 @@ enum ContactReconciliationPlanner {
     static func validate(
         _ plan: ContactReconciliationPlan,
         card: ContactCardProjection,
-        contacts: [ContactProjection]
+        contacts: [ContactProjection],
+        currentScope: ContactReconciliationScope
     ) throws {
+        guard currentScope == plan.scope else {
+            throw ContactReconciliationPlannerError.stalePlan
+        }
         do {
             let current = try reconcile(
                 card: card,
                 contacts: contacts,
-                scope: plan.scope,
+                scope: currentScope,
                 choosing: plan.candidate?.identifier
             )
             guard case .plan(let currentPlan) = current, currentPlan == plan else {
@@ -223,15 +227,17 @@ enum ContactReconciliationPlanner {
             .map(trimmed)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+        let matchedPhone = contact.phones.first(where: { ContactMatchPolicy.phoneMatches(card.phone, $0) })
+        let matchedEmail = contact.emails.first(where: { ContactMatchPolicy.emailMatches(card.email, $0) })
         var evidence: [String] = []
-        if contact.phones.contains(where: { ContactMatchPolicy.phoneMatches(card.phone, $0) }) { evidence.append("телефон") }
-        if contact.emails.contains(where: { ContactMatchPolicy.emailMatches(card.email, $0) }) { evidence.append("email") }
+        if matchedPhone != nil { evidence.append("телефон") }
+        if matchedEmail != nil { evidence.append("email") }
         return ContactReconciliationCandidate(
             identifier: contact.identifier,
             name: name.isEmpty ? (trimmed(contact.company).isEmpty ? "Без имени" : trimmed(contact.company)) : name,
             company: trimmed(contact.company),
-            maskedPhone: contact.phones.first.flatMap(ContactIdentityFormatter.maskedPhone),
-            maskedEmail: contact.emails.first.flatMap(ContactIdentityFormatter.maskedEmail),
+            maskedPhone: matchedPhone.flatMap(ContactIdentityFormatter.maskedPhone),
+            maskedEmail: matchedEmail.flatMap(ContactIdentityFormatter.maskedEmail),
             matchEvidence: evidence
         )
     }

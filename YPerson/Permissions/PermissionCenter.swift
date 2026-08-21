@@ -80,8 +80,14 @@ final class PermissionCenter: NSObject, CLLocationManagerDelegate {
         contactQueue.async { [weak self] in
             guard let self else { return }
             let result = Result<ContactReconciliationAction, Error> {
+                let currentScope = try self.currentContactScope()
                 let contacts = try self.contactProjections()
-                try ContactReconciliationPlanner.validate(plan, card: cardProjection, contacts: contacts)
+                try ContactReconciliationPlanner.validate(
+                    plan,
+                    card: cardProjection,
+                    contacts: contacts,
+                    currentScope: currentScope
+                )
 
                 let request = CNSaveRequest()
                 switch plan.action {
@@ -120,6 +126,17 @@ final class PermissionCenter: NSObject, CLLocationManagerDelegate {
             CNContactPhoneNumbersKey,
             CNContactEmailAddressesKey
         ] as [CNKeyDescriptor]
+    }
+
+    private func currentContactScope() throws -> ContactReconciliationScope {
+        switch contactsState() {
+        case .authorized:
+            return .complete
+        case .limited:
+            return .limited
+        default:
+            throw ContactReconciliationPlannerError.stalePlan
+        }
     }
 
     private func contactProjections() throws -> [ContactProjection] {

@@ -64,7 +64,7 @@
       "backend/Dockerfile"
     ],
     "implementationStatus": "implemented locally; external YDB/Object Storage deployment not yet verified",
-    "containerVerification": "Task 5 verified the backend suite (173 passed), Ruff, private signed-audio behavior, and Debug/Release simulator builds. No new Serverless Container revision, YDB schema application, bucket mutation, or external API Gateway smoke is claimed.",
+    "containerVerification": "Final integrated local verification ran the complete backend suite (146 passed with the one existing Starlette/httpx warning), Ruff check and format check, focused contract harnesses, and a fresh Release simulator build. No new Serverless Container revision, YDB schema application, bucket mutation, or external API Gateway smoke is claimed.",
     "endpoints": [
       "GET /health",
       "GET /config",
@@ -151,11 +151,11 @@
     },
     "xcodegen": "generated the shared project during the 2026-08-18 verification",
     "debugBuild": "passed with warnings treated as errors on 2026-08-18T12:07:30Z; generic iOS Simulator, CODE_SIGNING_ALLOWED=NO; full compile BUILD SUCCEEDED in 39.978s and corrected repeat exited 0 in 5.18s",
-      "releaseSimulatorBuild": "passed with warnings treated as errors on 2026-08-20T11:59:42Z; generic iOS Simulator, CODE_SIGNING_ALLOWED=NO, BUILD SUCCEEDED in 75.426s",
+    "releaseSimulatorBuild": "passed on 2026-08-21T06:06:34Z; xcodebuild -quiet, Release, generic iOS Simulator, fresh /tmp/yperson-final-fix-derived-20260821d, local pinned package cache with automatic resolution disabled, CODE_SIGNING_ALLOWED=NO, exit 0; produced app, widget, notification service, and notification content products",
     "simulator": "iPhone 16 Pro, iOS 18.5",
     "cleanInstallReleaseSimulator": "passed: empty create-card state with no profile, people, counters, or sync claims",
     "ordinaryDebugState": "passed: matches clean Release state without YP_SCREENSHOT_STATE",
-    "explicitDebugReviewerState": "passed: YP_SCREENSHOT_STATE=S1 shows deterministic fixture card without persistence",
+    "explicitDebugReviewerState": "passed by Foundation/UI contracts: any explicit YP_SCREENSHOT_STATE selects a per-launch in-memory snapshot store before app services are created; fixture writes remain usable only within that launch and cannot contaminate a later ordinary Debug launch",
     "releaseFixtureBinaryScan": "passed: Debug-only identity literals and symbols absent",
     "purposeStringsExact": "9/9 Info.plist strings plus push pre-prompt",
     "appOwnedPrivacyManifestDataTypes": 12,
@@ -177,11 +177,30 @@
       "unavailableDurableStorage": 503
     },
     "backendVerification": {
-      "recordedAtUTC": "2026-08-20T18:27:01Z",
-      "pytest": "Post-merge full backend suite: 140 passed; one existing Starlette TestClient deprecation warning",
-      "ruff": "Post-merge check passed",
+      "recordedAtUTC": "2026-08-21T06:06:34Z",
+      "pytest": "/Users/grigornkokoko/YPerson/backend/.venv/bin/pytest -q backend/tests: 146 passed, 1 existing Starlette TestClient/httpx deprecation warning in 10.97s",
+      "ruff": "/Users/grigornkokoko/YPerson/backend/.venv/bin/ruff check backend: All checks passed; ruff format --check backend: 27 files already formatted",
       "persistence": "YDB adapter tests cover authenticated persistence, reciprocal connections, revocations, APNs, media ownership and transactional idempotent profile deletion; private Object Storage behavior uses deterministic fake storage",
       "externalDeployment": "not yet verified"
+      },
+      "focusedHarnesses": {
+        "contacts": [
+          "contact-matched-identity-pass",
+          "contact-live-scope-pass",
+          "contact-ui-lifecycle-pass"
+        ],
+        "fixturePersistence": [
+          "fixture-persistence-pass",
+          "fixture-persistence-ui-contract-pass"
+        ],
+        "vCard": [
+          "vcard-contract-pass"
+        ],
+        "templates": [
+          "template-contract-pass",
+          "template-ui-contract-pass",
+          "template-doc-contract-pass"
+        ]
       },
       "historicalDockerCompose": "Historical PostgreSQL/Compose evidence predates the approved YDB/Object Storage architecture and is not production-deployment evidence.",
       "skillValidation": "11 mutation tests passed; custom validator passed; system quick_validate passed on 2026-08-18T12:08:59Z",
@@ -201,6 +220,7 @@
     "Complete physical-device permission, iOS 15, widget, accessibility, QR, and offline-deletion checks from Release/manual-device-checks.md.",
     "Finalize moderation operations and App Store Connect privacy/ATT/export-compliance/age-rating answers.",
     "Provide final owner metadata: SKU, copyright holder, review contact, content-rights attestation, categories, and availability.",
+    "Resolve the mismatch between local-only third-party vCard imports and required confirmed photo/scanned payload synchronization by approving backend ownership, retention, deletion, and update semantics or explicitly re-approving the local-only AppSpec/AppPrivacy behavior.",
     "Create, inspect, and validate the signed archive after signing and production configuration become available; obtain new approval immediately before any upload or App Store Connect mutation."
   ]
 }

@@ -2,7 +2,7 @@ import ContactsUI
 import SwiftUI
 import UIKit
 
-final class ContactReconciliationPresenter {
+final class ContactReconciliationPresenter: NSObject, CNContactViewControllerDelegate {
     private weak var host: YPBaseViewController?
     private let permissions: PermissionCenter
     private let analytics: AppMetricaAnalyticsClient
@@ -13,6 +13,7 @@ final class ContactReconciliationPresenter {
         self.host = host
         self.permissions = permissions
         self.analytics = analytics
+        super.init()
     }
 
     func start(for card: PersonCard) {
@@ -193,10 +194,24 @@ final class ContactReconciliationPresenter {
     private func presentSystemContactForm(for card: PersonCard) {
         guard let host else { return }
         let controller = CNContactViewController(forNewContact: permissions.makeContact(card))
+        controller.delegate = self
         if let navigationController = host.navigationController {
             navigationController.pushViewController(controller, animated: true)
         } else {
             host.present(UINavigationController(rootViewController: controller), animated: true)
+        }
+    }
+
+    func contactViewController(_ viewController: CNContactViewController, didCompleteWith contact: CNContact?) {
+        guard let navigationController = viewController.navigationController else {
+            viewController.dismiss(animated: true)
+            return
+        }
+        if navigationController.viewControllers.first === viewController,
+           navigationController.presentingViewController != nil {
+            navigationController.dismiss(animated: true)
+        } else {
+            navigationController.popViewController(animated: true)
         }
     }
 
