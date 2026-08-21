@@ -27,6 +27,7 @@ final class SyncCoordinator {
     private let mediaTransfer: MediaTransferClient
     private var apiClient: APIClient?
     private var bootstrapped = false
+    private var profileOperationEpoch = ProfileOperationEpoch()
 
     var installationID: String? { apiClient?.installationID }
     var onPeopleChanged: (() -> Void)?
@@ -68,7 +69,10 @@ final class SyncCoordinator {
         snapshotStore?.purgeNonDurablePendingOperations()
         guard snapshotStore?.profileTerminallyDeleted != true else { return }
         if snapshotStore?.profileDeletionPending == true {
-            if apiClient == nil {
+            let hasPendingDeletion = snapshotStore?.pendingOperations.contains {
+                $0.request.operation == .deleteProfile
+            } == true
+            if apiClient == nil || !hasPendingDeletion {
                 do {
                     try finishDeletion(operationID: nil)
                 } catch {
@@ -79,21 +83,27 @@ final class SyncCoordinator {
             }
             return
         }
-        guard let apiClient else { return }
+        guard !syncSuppressed, let apiClient else { return }
+        let operationEpoch = profileOperationEpoch.capture()
         do {
             let response = try await apiClient.sync(
                 SyncRequest(operation: .refresh, cursor: snapshotStore?.syncCursor)
             )
+            try requireCurrentProfileOperation(operationEpoch)
             try apply(response)
             bootstrapped = true
             await retryPendingOperations()
+            guard isCurrentProfileOperation(operationEpoch) else { return }
             await retryPushToken()
+            guard isCurrentProfileOperation(operationEpoch) else { return }
         } catch {
             // Durable local state remains visible; only non-sensitive work stays queued.
         }
     }
 
     func publish(_ card: PersonCard, greeting: RecordedGreeting? = nil) async -> SyncResponse? {
+        guard !syncSuppressed else { return nil }
+        let operationEpoch = profileOperationEpoch.capture()
         do {
             let client = try explicitProfileClient()
             var cloudCard = card.exchangeCopy
@@ -101,6 +111,7 @@ final class SyncCoordinator {
             if let greeting {
                 if !bootstrapped {
                     let bootstrap = try await client.sync(SyncRequest(operation: .refresh))
+                    try requireCurrentProfileOperation(operationEpoch)
                     try apply(bootstrap)
                     bootstrapped = true
                 }
@@ -109,10 +120,12 @@ final class SyncCoordinator {
                     audioSizeBytes: greeting.sizeBytes,
                     audioDurationMS: min(10_000, Int((greeting.duration * 1_000).rounded()))
                 ))
+                try requireCurrentProfileOperation(operationEpoch)
                 guard let upload = prepared.audioUpload else {
                     throw APIClient.ClientError.invalidResponse
                 }
                 try await mediaTransfer.upload(greeting, to: upload.uploadURL)
+                try requireCurrentProfileOperation(operationEpoch)
                 audioAssetID = upload.assetID
                 cloudCard.hasAudioGreeting = true
             }
@@ -123,6 +136,7 @@ final class SyncCoordinator {
             )
             snapshotStore?.enqueue(PendingSyncOperation(request: request, expiresAt: nil, localCardID: nil))
             let response = try await client.sync(request)
+            try requireCurrentProfileOperation(operationEpoch)
             snapshotStore?.removePendingOperation(id: request.operationID)
             bootstrapped = true
             if let version = response.ownCardVersion {
@@ -132,6 +146,7 @@ final class SyncCoordinator {
                 onOwnCardChanged?(published)
             }
             await retryPushToken()
+            try requireCurrentProfileOperation(operationEpoch)
             return response
         } catch {
             return nil
@@ -147,9 +162,11 @@ final class SyncCoordinator {
         guard !syncSuppressed else {
             throw CoordinatorError.deletionInProgress
         }
-        if let greeting,
-           await publish(card, greeting: greeting) == nil {
-            throw CoordinatorError.ownCardNotPublished
+        let operationEpoch = profileOperationEpoch.capture()
+        if let greeting {
+            let publication = await publish(card, greeting: greeting)
+            try requireCurrentProfileOperation(operationEpoch)
+            guard publication != nil else { throw CoordinatorError.ownCardNotPublished }
         }
         guard let apiClient else { throw CoordinatorError.noProfile }
         let response = try await apiClient.sync(
@@ -160,6 +177,7 @@ final class SyncCoordinator {
                 exchangeMethod: method
             )
         )
+        try requireCurrentProfileOperation(operationEpoch)
         do {
             return try PreparedExchange.resolve(
                 method: method,
@@ -177,12 +195,15 @@ final class SyncCoordinator {
         method: String,
         greeting: RecordedGreeting? = nil
     ) async throws -> String {
+        guard !syncSuppressed else { throw CoordinatorError.deletionInProgress }
+        let operationEpoch = profileOperationEpoch.capture()
         let prepared = try await prepareExchange(
             card: card,
             method: method,
             privateFields: nil,
             greeting: greeting
         )
+        try requireCurrentProfileOperation(operationEpoch)
         guard let token = prepared.credential.exchangeToken else {
             throw APIClient.ClientError.invalidResponse
         }
@@ -217,7 +238,10 @@ final class SyncCoordinator {
         greeting: RecordedGreeting?
     ) async throws -> SyncResponse {
         guard !syncSuppressed else { throw CoordinatorError.deletionInProgress }
-        guard await publish(ownCard, greeting: greeting) != nil else {
+        let operationEpoch = profileOperationEpoch.capture()
+        let publication = await publish(ownCard, greeting: greeting)
+        try requireCurrentProfileOperation(operationEpoch)
+        guard publication != nil else {
             throw CoordinatorError.ownCardNotPublished
         }
         guard let apiClient else { throw CoordinatorError.noProfile }
@@ -237,9 +261,11 @@ final class SyncCoordinator {
         }
         do {
             let response = try await apiClient.sync(request)
+            try requireCurrentProfileOperation(operationEpoch)
             try apply(response)
             return response
         } catch APIClient.ClientError.status(let status, _) where status == 409 {
+            try requireCurrentProfileOperation(operationEpoch)
             try markExpired(pending)
             throw CoordinatorError.expiredExchange
         }
@@ -252,13 +278,17 @@ final class SyncCoordinator {
         ownCard: PersonCard,
         greeting: RecordedGreeting?
     ) async throws -> SyncResponse {
-        try await claimExchange(
+        guard !syncSuppressed else { throw CoordinatorError.deletionInProgress }
+        let operationEpoch = profileOperationEpoch.capture()
+        let response = try await claimExchange(
             credential: .token(token),
             expiresAt: expiresAt,
             localCardID: localCardID,
             ownCard: ownCard,
             greeting: greeting
         )
+        try requireCurrentProfileOperation(operationEpoch)
+        return response
     }
 
     func submitModeration(
@@ -267,6 +297,7 @@ final class SyncCoordinator {
         category: String?
     ) async throws {
         guard !syncSuppressed else { throw CoordinatorError.deletionInProgress }
+        let operationEpoch = profileOperationEpoch.capture()
         guard let apiClient else { throw CoordinatorError.noProfile }
         let request = SyncRequest(
             operation: operation,
@@ -275,15 +306,18 @@ final class SyncCoordinator {
         )
         snapshotStore?.enqueue(PendingSyncOperation(request: request, expiresAt: nil, localCardID: nil))
         _ = try await apiClient.sync(request)
+        try requireCurrentProfileOperation(operationEpoch)
         snapshotStore?.removePendingOperation(id: request.operationID)
     }
 
     func audioAsset(for peerInstallationID: String) async throws -> AudioAsset {
         guard !syncSuppressed else { throw CoordinatorError.deletionInProgress }
+        let operationEpoch = profileOperationEpoch.capture()
         guard let apiClient else { throw CoordinatorError.noProfile }
         let response = try await apiClient.sync(
             SyncRequest(operation: .refresh, cursor: snapshotStore?.syncCursor)
         )
+        try requireCurrentProfileOperation(operationEpoch)
         try apply(response)
         guard let audio = response.people.first(where: {
             $0.installationID == peerInstallationID
@@ -293,6 +327,7 @@ final class SyncCoordinator {
 
     func updatePushToken(_ token: String?) async {
         guard !syncSuppressed else { return }
+        let operationEpoch = profileOperationEpoch.capture()
         if snapshotStore?.pendingAPNSToken != token
             || snapshotStore?.pendingAPNSRemoval != (token == nil) {
             snapshotStore?.clearPendingOperationID(for: "apns-token")
@@ -300,10 +335,12 @@ final class SyncCoordinator {
         snapshotStore?.pendingAPNSToken = token
         snapshotStore?.pendingAPNSRemoval = token == nil
         await retryPushToken()
+        guard isCurrentProfileOperation(operationEpoch) else { return }
     }
 
     func deleteProfile() async -> Bool {
-        guard snapshotStore?.profileDeletionPending != true else { return false }
+        guard !syncSuppressed else { return false }
+        profileOperationEpoch.invalidate()
         snapshotStore?.clearUserData()
         snapshotStore?.profileDeletionPending = true
         onProfileDeleted?()
@@ -315,10 +352,12 @@ final class SyncCoordinator {
                 return false
             }
         }
+        let deletionEpoch = profileOperationEpoch.capture()
         let request = SyncRequest(operation: .deleteProfile)
         snapshotStore?.enqueue(PendingSyncOperation(request: request, expiresAt: nil, localCardID: nil))
         do {
             _ = try await apiClient.sync(request)
+            guard profileOperationEpoch.isCurrent(deletionEpoch) else { return false }
             try finishDeletion(operationID: request.operationID)
             return true
         } catch {
@@ -327,7 +366,7 @@ final class SyncCoordinator {
     }
 
     private func explicitProfileClient() throws -> APIClient {
-        if snapshotStore?.profileDeletionPending == true { throw CoordinatorError.deletionInProgress }
+        guard !syncSuppressed else { throw CoordinatorError.deletionInProgress }
         if let apiClient { return apiClient }
         let credential = try credentialStore.createCredential()
         let client = APIClient(
@@ -341,6 +380,18 @@ final class SyncCoordinator {
         return client
     }
 
+    private func isCurrentProfileOperation(_ epoch: ProfileOperationEpoch.Snapshot) -> Bool {
+        !syncSuppressed && profileOperationEpoch.isCurrent(epoch)
+    }
+
+    private func requireCurrentProfileOperation(
+        _ epoch: ProfileOperationEpoch.Snapshot
+    ) throws {
+        guard isCurrentProfileOperation(epoch) else {
+            throw CoordinatorError.deletionInProgress
+        }
+    }
+
     private var syncSuppressed: Bool {
         snapshotStore?.profileDeletionPending == true
             || snapshotStore?.profileTerminallyDeleted == true
@@ -348,8 +399,10 @@ final class SyncCoordinator {
 
     private func retryPendingOperations() async {
         guard let apiClient, snapshotStore?.profileTerminallyDeleted != true else { return }
+        let retryEpoch = profileOperationEpoch.capture()
         let pending = snapshotStore?.pendingOperations ?? []
         for operation in pending {
+            guard profileOperationEpoch.isCurrent(retryEpoch) else { return }
             guard PendingSyncOperationPersistencePolicy.allowsDurablePersistence(
                 operation.request.operation
             ) else {
@@ -367,18 +420,14 @@ final class SyncCoordinator {
             do {
                 let request = retrySafeRequest(operation.request)
                 let response = try await apiClient.sync(request)
-                try apply(response)
-                if operation.request.operation == .publishCard { bootstrapped = true }
+                guard profileOperationEpoch.isCurrent(retryEpoch) else { return }
                 if operation.request.operation == .deleteProfile {
                     try finishDeletion(operationID: operation.id)
                     return
                 }
-                snapshotStore?.removePendingOperation(id: operation.id)
-            } catch APIClient.ClientError.status(let status, _)
-                where operation.request.operation == .claimExchange && status == 409 {
-                try? markExpired(operation)
-            } catch APIClient.ClientError.status(let status, _)
-                where operation.request.operation == .cancelExchange && status == 409 {
+                guard !syncSuppressed else { return }
+                try apply(response)
+                if operation.request.operation == .publishCard { bootstrapped = true }
                 snapshotStore?.removePendingOperation(id: operation.id)
             } catch {
                 continue
@@ -391,6 +440,7 @@ final class SyncCoordinator {
               snapshotStore?.profileDeletionPending != true,
               snapshotStore?.profileTerminallyDeleted != true,
               let apiClient else { return }
+        let operationEpoch = profileOperationEpoch.capture()
         let removal = snapshotStore?.pendingAPNSRemoval == true
         guard removal || snapshotStore?.pendingAPNSToken != nil else { return }
         let operationID = snapshotStore?.pendingOperationID(
@@ -404,6 +454,7 @@ final class SyncCoordinator {
         )
         do {
             _ = try await apiClient.sync(request)
+            guard isCurrentProfileOperation(operationEpoch) else { return }
             snapshotStore?.pendingAPNSToken = nil
             snapshotStore?.pendingAPNSRemoval = false
             snapshotStore?.clearPendingOperationID(for: "apns-token")
@@ -448,8 +499,9 @@ final class SyncCoordinator {
     }
 
     private func finishDeletion(operationID: String?) throws {
-        try credentialStore.deleteCredential()
         if let operationID { snapshotStore?.removePendingOperation(id: operationID) }
+        snapshotStore?.clearUserData()
+        try credentialStore.deleteCredential()
         snapshotStore?.profileDeletionPending = false
         snapshotStore?.profileTerminallyDeleted = true
         apiClient = nil

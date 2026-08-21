@@ -48,6 +48,26 @@ enum PendingSyncOperationPersistencePolicy {
     }
 }
 
+struct ProfileOperationEpoch {
+    struct Snapshot: Equatable {
+        fileprivate let value: UInt64
+    }
+
+    private var value: UInt64 = 0
+
+    func capture() -> Snapshot {
+        Snapshot(value: value)
+    }
+
+    func isCurrent(_ snapshot: Snapshot) -> Bool {
+        snapshot.value == value
+    }
+
+    mutating func invalidate() {
+        value &+= 1
+    }
+}
+
 enum ManualExchangeCode {
     private static let alphabet = Set("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
 

@@ -1,6 +1,6 @@
 import Foundation
 
-private let harnessVersion = 2
+private let harnessVersion = 3
 
 private func require(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() { fatalError(message) }
@@ -132,6 +132,27 @@ require(
     "empty phone unexpectedly produced private fields"
 )
 require(!consent.isAuthorized, "failed private-field projection left authorization reusable")
+
+var profileEpoch = ProfileOperationEpoch()
+let firstProfileOperation = profileEpoch.capture()
+require(
+    profileEpoch.isCurrent(firstProfileOperation),
+    "a newly captured profile operation epoch was not current"
+)
+profileEpoch.invalidate()
+require(
+    !profileEpoch.isCurrent(firstProfileOperation),
+    "profile deletion did not invalidate an older operation epoch"
+)
+let replacementProfileOperation = profileEpoch.capture()
+require(
+    profileEpoch.isCurrent(replacementProfileOperation),
+    "a post-invalidation profile operation epoch was not current"
+)
+require(
+    replacementProfileOperation != firstProfileOperation,
+    "profile epoch invalidation reused the stale snapshot"
+)
 
 require(
     !PendingSyncOperationPersistencePolicy.allowsDurablePersistence(.claimExchange),

@@ -350,7 +350,7 @@ final class ExchangeViewController: YPBaseViewController, PHPickerViewController
     }
 
     private func confirmNearby(token: String) {
-        let alert = UIAlertController(title: "Человек найден", message: "Подтвердите обмен на обоих iPhone. До подтверждения карточка и токен не отправляются на сервер.", preferredStyle: .alert)
+        let alert = UIAlertController(title: "Человек найден", message: "Публичная карточка и короткоживущий токен уже подготовлены на сервере. Подтвердите обмен на обоих iPhone, чтобы получить карточку найденного человека и сохранить связь.", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Подтвердить обмен", style: .default) { [weak self] _ in self?.claimNearby(token: token) })
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel) { [weak self] _ in
             self?.cancelNearbyExchange()

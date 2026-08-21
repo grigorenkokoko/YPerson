@@ -91,7 +91,7 @@ permissions:
       - ephemeral_ble_token
       - exchange_token
     storage: ephemeral BLE state on device; exchange token on backend for at most 10 minutes
-    transmission: public exchange token to the BLE peer and YPerson backend only after confirmation; private phone over Bluetooth is deferred until a recipient-bound mutual pairing protocol exists
+    transmission: the public card and short-lived exchange token are sent to the YPerson backend when search starts; only the ephemeral token is advertised to the BLE peer; confirmation claims the peer token and saves the connection; private phone over Bluetooth is deferred until a recipient-bound mutual pairing protocol exists
     app_store_privacy_implication: exchange token is pseudonymous app-functionality data; no device name or hardware address is retained
 
   camera:
