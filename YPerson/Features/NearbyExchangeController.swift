@@ -12,9 +12,11 @@ final class NearbyExchangeController: NSObject, CBCentralManagerDelegate, CBPeri
     private var resultHandler: ((String) -> Void)?
     private var stateHandler: ((AuthorizationState) -> Void)?
     private var isActive = false
+    private var handshake = NearbyExchangeHandshake()
 
     func start(exchangeToken: String, onState: @escaping (AuthorizationState) -> Void, onToken: @escaping (String) -> Void) {
         stop()
+        handshake = NearbyExchangeHandshake()
         token = exchangeToken
         stateHandler = onState
         resultHandler = onToken
@@ -34,6 +36,7 @@ final class NearbyExchangeController: NSObject, CBCentralManagerDelegate, CBPeri
         peripheralManager = nil
         token = nil
         isActive = false
+        handshake = NearbyExchangeHandshake()
         resultHandler = nil
         stateHandler = nil
     }
@@ -56,7 +59,7 @@ final class NearbyExchangeController: NSObject, CBCentralManagerDelegate, CBPeri
     }
 
     private func updateOperations() {
-        guard let central, let peripheralManager, let token else { return }
+        guard let central, let peripheralManager, token != nil else { return }
         guard central.state != .unknown, peripheralManager.state != .unknown else { return }
         guard central.state == .poweredOn, peripheralManager.state == .poweredOn else {
             let denied = CBManager.authorization == .denied
@@ -70,7 +73,7 @@ final class NearbyExchangeController: NSObject, CBCentralManagerDelegate, CBPeri
         let characteristic = CBMutableCharacteristic(
             type: Self.tokenCharacteristicUUID,
             properties: [.read],
-            value: Data(token.utf8),
+            value: nil,
             permissions: [.readable]
         )
         let service = CBMutableService(type: Self.serviceUUID, primary: true)
@@ -139,9 +142,34 @@ final class NearbyExchangeController: NSObject, CBCentralManagerDelegate, CBPeri
             finish(with: .unavailable("Получен некорректный токен обмена"))
             return
         }
-        let handler = resultHandler
+        if let completedPeerToken = handshake.recordPeerToken(peerToken) {
+            completeExchange(with: completedPeerToken)
+        }
+    }
+
+    func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
+        guard request.characteristic.uuid == Self.tokenCharacteristicUUID,
+              let token else {
+            peripheral.respond(to: request, withResult: .requestNotSupported)
+            return
+        }
+        let data = Data(token.utf8)
+        guard request.offset <= data.count else {
+            peripheral.respond(to: request, withResult: .invalidOffset)
+            return
+        }
+        request.value = data.subdata(in: request.offset..<data.count)
+        peripheral.respond(to: request, withResult: .success)
+        guard let completedPeerToken = handshake.recordOwnTokenServed() else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.completeExchange(with: completedPeerToken)
+        }
+    }
+
+    private func completeExchange(with peerToken: String) {
+        guard let handler = resultHandler else { return }
         stop()
-        handler?(peerToken)
+        handler(peerToken)
     }
 
     private func finish(with state: AuthorizationState) {

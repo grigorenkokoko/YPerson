@@ -9,7 +9,7 @@ final class CardViewController: YPBaseViewController {
     private let syncCoordinator: SyncCoordinator
     private let analytics: AppMetricaAnalyticsClient
     private let snapshotStore: AppGroupSnapshotStore?
-    private let makeEditor: (PersonCard?, @escaping (PersonCard) -> Void) -> UIViewController
+    private let makeEditor: (PersonCard?, @escaping (PersonCard) throws -> Void) -> UIViewController
     private let cardContent = YPStyle.stack(spacing: 16)
     private var card: PersonCard?
     private var cardView: CardSummaryView?
@@ -31,7 +31,7 @@ final class CardViewController: YPBaseViewController {
         render()
     }
 
-    init(card: PersonCard?, persistsChanges: Bool, permissions: PermissionCenter, audio: AudioGreetingController, imageSaver: CardImageSaver, syncCoordinator: SyncCoordinator, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, makeEditor: @escaping (PersonCard?, @escaping (PersonCard) -> Void) -> UIViewController) {
+    init(card: PersonCard?, persistsChanges: Bool, permissions: PermissionCenter, audio: AudioGreetingController, imageSaver: CardImageSaver, syncCoordinator: SyncCoordinator, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, makeEditor: @escaping (PersonCard?, @escaping (PersonCard) throws -> Void) -> UIViewController) {
         self.card = card
         self.persistsChanges = persistsChanges
         self.permissions = permissions
@@ -151,7 +151,11 @@ final class CardViewController: YPBaseViewController {
                 }
             }
             do {
-                let token = try await self.syncCoordinator.prepareExchange(card: card, method: "qr")
+                let token = try await self.syncCoordinator.prepareExchange(
+                    card: card,
+                    method: "qr",
+                    greeting: self.audio.savedGreeting()
+                )
                 guard !Task.isCancelled, self.viewIfLoaded?.window != nil else {
                     await self.syncCoordinator.cancelExchange(token: token)
                     return
@@ -227,9 +231,14 @@ final class CardViewController: YPBaseViewController {
         let editor = makeEditor(card) { [weak self] updatedCard in
             guard let self else { return }
             let isNew = self.card == nil
+            if self.persistsChanges {
+                guard let snapshotStore = self.snapshotStore else {
+                    throw CardSaveError.localStorageUnavailable
+                }
+                try snapshotStore.writeOwnCard(updatedCard)
+            }
             self.card = updatedCard
             self.showsPrivateFields = false
-            if self.persistsChanges { try? self.snapshotStore?.writeOwnCard(updatedCard) }
             if isNew { self.analytics.report(.cardCreated) }
             self.render()
             guard self.persistsChanges else { return }
@@ -238,12 +247,25 @@ final class CardViewController: YPBaseViewController {
                 guard let response = await self.syncCoordinator.publish(
                     updatedCard,
                     greeting: self.audio.savedGreeting()
-                ),
-                      let version = response.ownCardVersion else { return }
+                ) else {
+                    self.showMessage(
+                        "Карточка сохранена на iPhone",
+                        "Онлайн-версия пока не обновлена. Повторите сохранение позже."
+                    )
+                    return
+                }
+                guard let version = response.ownCardVersion else { return }
                 var published = updatedCard
                 published.version = version
                 self.card = published
-                try? self.snapshotStore?.writeOwnCard(published)
+                do {
+                    try self.snapshotStore?.writeOwnCard(published)
+                } catch {
+                    self.showMessage(
+                        "Онлайн-версия обновлена",
+                        "Не удалось сохранить её номер на iPhone. Повторите сохранение карточки."
+                    )
+                }
             }
         }
         navigationController?.pushViewController(editor, animated: true)
@@ -287,6 +309,10 @@ final class CardViewController: YPBaseViewController {
         let coordinator = syncCoordinator
         Task { @MainActor in await coordinator.cancelExchange(token: token) }
     }
+}
+
+private enum CardSaveError: Error {
+    case localStorageUnavailable
 }
 
 private final class QRExchangeViewController: UIViewController {
