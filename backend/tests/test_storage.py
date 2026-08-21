@@ -522,6 +522,43 @@ def test_prepare_without_private_fields_deletes_orphaned_digest_before_reuse(
     assert "UPSERT INTO exchange_private_fields" not in mutation_query
 
 
+def test_legacy_prepare_persists_a_public_only_opaque_claim(card: PersonCard) -> None:
+    raw_token = "legacy-opaque-token"
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query or "FROM exchange_claims" in query:
+            return [ResultSet([])]
+        if "SELECT version FROM cards" in query:
+            return [ResultSet([])]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    result = store.prepare_exchange(
+        "installation-owner",
+        "op-prepare-legacy",
+        "legacy",
+        card,
+        None,
+        raw_token,
+        datetime.now(UTC) + timedelta(minutes=5),
+    )
+
+    assert result.card_version == 1
+    mutation_query, parameters = next(
+        (query, parameters)
+        for query, parameters in pool.transaction_calls
+        if "UPSERT INTO exchange_claims" in query
+    )
+    assert _parameter(parameters, "$method") == "legacy"
+    assert _parameter(parameters, "$token_hash") == sha256(raw_token.encode()).digest()
+    assert json.loads(_parameter(parameters, "$card_json"))["phone"] == ""
+    assert "$fields_json" not in parameters
+    assert "UPSERT INTO exchange_private_fields" not in mutation_query
+    assert raw_token not in repr(pool.transaction_calls)
+
+
 def test_prepare_exchange_replay_returns_original_version_and_expiry() -> None:
     raw_credential = "original-credential"
     original_expiry = datetime(2026, 8, 21, 12, 30, tzinfo=UTC)
@@ -575,7 +612,7 @@ def test_prepare_exchange_replay_returns_original_version_and_expiry() -> None:
         )
 
 
-@pytest.mark.parametrize("method", ["qr", "bluetooth", "photo"])
+@pytest.mark.parametrize("method", ["qr", "bluetooth", "photo", "legacy"])
 def test_prepare_exchange_rejects_private_fields_for_nondisclosing_methods(
     card: PersonCard,
     method: str,
@@ -910,6 +947,55 @@ def test_claim_accepts_native_ydb_json_document(card: PersonCard) -> None:
     assert person.card == card.model_copy(update={"phone": "", "meetingPlace": None})
 
 
+def test_claim_accepts_a_public_only_legacy_opaque_token(card: PersonCard) -> None:
+    raw_token = "legacy-opaque-token"
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "FROM exchange_claims AS claim" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "issuer_installation_id": "installation-owner",
+                            "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+                            "claimed_by_installation_id": None,
+                            "method": "legacy",
+                            "version": 1,
+                            "card_json": card.model_dump(mode="json"),
+                            "fields_json": None,
+                            "private_issuer_installation_id": None,
+                            "private_expires_at": None,
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    person = store.claim_exchange(
+        "installation-peer",
+        "op-claim-legacy",
+        raw_token,
+    )
+
+    assert person.installationID == "installation-owner"
+    assert person.card.phone == ""
+    mutation_parameters = next(
+        parameters
+        for query, parameters in pool.transaction_calls
+        if "UPDATE exchange_claims" in query
+    )
+    assert json.loads(_parameter(mutation_parameters, "$result_json")) == {
+        "issuerInstallationID": "installation-owner",
+        "tokenHash": sha256(raw_token.encode()).hexdigest(),
+    }
+    assert raw_token not in repr(pool.transaction_calls)
+
+
 def test_claim_exchange_copies_private_fields_only_to_claimant_direction(
     card: PersonCard,
 ) -> None:
@@ -975,6 +1061,7 @@ def test_claim_exchange_copies_private_fields_only_to_claimant_direction(
         ("qr", {"phone": "+79990000000"}),
         ("bluetooth", {"phone": "+79990000000"}),
         ("photo", {"phone": "+79990000000"}),
+        ("legacy", {"phone": "+79990000000"}),
         ("unsupported", None),
     ],
 )

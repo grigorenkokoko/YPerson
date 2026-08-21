@@ -33,7 +33,7 @@ WHERE asset_id = $asset_id
   AND owner_installation_id = $installation_id;
 """
 
-_EXCHANGE_METHODS = frozenset({"qr", "bluetooth", "photo", "manual"})
+_EXCHANGE_METHODS = frozenset({"qr", "bluetooth", "photo", "manual", "legacy"})
 _PRIVATE_EXCHANGE_METHODS = frozenset({"manual"})
 
 
