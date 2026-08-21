@@ -181,6 +181,9 @@ enum SyncOperation: String, Codable {
     case deleteProfile
     case report
     case block
+    case activatePublicLink
+    case revokePublicLink
+    case dismissPublicReply
 }
 
 struct SyncRequest: Codable, Equatable {
@@ -197,6 +200,8 @@ struct SyncRequest: Codable, Equatable {
     let audioDurationMS: Int?
     let moderationCategory: String?
     let subjectInstallationID: String?
+    let publicLinkToken: String?
+    let publicReplyID: String?
 
     init(
         apnsToken: String? = nil,
@@ -210,7 +215,9 @@ struct SyncRequest: Codable, Equatable {
         audioSizeBytes: Int? = nil,
         audioDurationMS: Int? = nil,
         moderationCategory: String? = nil,
-        subjectInstallationID: String? = nil
+        subjectInstallationID: String? = nil,
+        publicLinkToken: String? = nil,
+        publicReplyID: String? = nil
     ) {
         self.contractVersion = 2
         self.apnsToken = apnsToken
@@ -225,6 +232,8 @@ struct SyncRequest: Codable, Equatable {
         self.audioDurationMS = audioDurationMS
         self.moderationCategory = moderationCategory
         self.subjectInstallationID = subjectInstallationID
+        self.publicLinkToken = publicLinkToken
+        self.publicReplyID = publicReplyID
     }
 
     var isMutation: Bool { operation != .refresh }
@@ -250,6 +259,47 @@ struct SyncResponse: Codable {
     let exchangeToken: String?
     let audioUpload: AudioUpload?
     let notificationConfiguration: [String: Bool]?
+    let publicLinkActive: Bool?
+    let publicReplies: [PublicContactReply]
+
+    private enum CodingKeys: String, CodingKey {
+        case accepted
+        case serverVersion
+        case updateCount
+        case message
+        case nextCursor
+        case ownCardVersion
+        case people
+        case revokedCardIDs
+        case exchangeToken
+        case audioUpload
+        case notificationConfiguration
+        case publicLinkActive
+        case publicReplies
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        accepted = try container.decode(Bool.self, forKey: .accepted)
+        serverVersion = try container.decode(String.self, forKey: .serverVersion)
+        updateCount = try container.decode(Int.self, forKey: .updateCount)
+        message = try container.decode(String.self, forKey: .message)
+        nextCursor = try container.decodeIfPresent(String.self, forKey: .nextCursor)
+        ownCardVersion = try container.decodeIfPresent(Int.self, forKey: .ownCardVersion)
+        people = try container.decode([SyncedPerson].self, forKey: .people)
+        revokedCardIDs = try container.decode([String].self, forKey: .revokedCardIDs)
+        exchangeToken = try container.decodeIfPresent(String.self, forKey: .exchangeToken)
+        audioUpload = try container.decodeIfPresent(AudioUpload.self, forKey: .audioUpload)
+        notificationConfiguration = try container.decodeIfPresent(
+            [String: Bool].self,
+            forKey: .notificationConfiguration
+        )
+        publicLinkActive = try container.decodeIfPresent(Bool.self, forKey: .publicLinkActive)
+        publicReplies = try container.decodeIfPresent(
+            [PublicContactReply].self,
+            forKey: .publicReplies
+        ) ?? []
+    }
 }
 
 struct AudioAsset: Codable, Equatable {
@@ -393,6 +443,8 @@ struct SyncWireRequest: Encodable {
     let audioDurationMS: Int?
     let moderationCategory: String?
     let subjectInstallationID: String?
+    let publicLinkToken: String?
+    let publicReplyID: String?
 }
 
 struct SyncWirePersonCard: Codable {

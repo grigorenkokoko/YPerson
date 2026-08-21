@@ -15,6 +15,8 @@ final class AppGroupSnapshotStore {
         static let pendingAPNSToken = "yperson.v2.pending_apns_token"
         static let pendingAPNSRemoval = "yperson.v2.pending_apns_removal"
         static let profileTerminallyDeleted = "yperson.v2.profile_terminally_deleted"
+        static let publicLinkToken = "yperson.v2.public_link_token"
+        static let publicLinkActive = "yperson.v2.public_link_active"
 
         enum Legacy {
             static let ownCard = "own_card"
@@ -181,6 +183,19 @@ final class AppGroupSnapshotStore {
         set { defaults.set(newValue, forKey: Key.profileTerminallyDeleted) }
     }
 
+    var publicLinkToken: String? {
+        get { defaults.string(forKey: Key.publicLinkToken) }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Key.publicLinkToken) }
+            else { defaults.removeObject(forKey: Key.publicLinkToken) }
+        }
+    }
+
+    var publicLinkActive: Bool {
+        get { defaults.bool(forKey: Key.publicLinkActive) }
+        set { defaults.set(newValue, forKey: Key.publicLinkActive) }
+    }
+
     func clearUserData() {
         let removableKeys = [
             Key.ownCard,
@@ -194,6 +209,8 @@ final class AppGroupSnapshotStore {
             Key.pendingOperations,
             Key.pendingAPNSToken,
             Key.pendingAPNSRemoval,
+            Key.publicLinkToken,
+            Key.publicLinkActive,
             Key.Legacy.ownCard,
             Key.Legacy.obsoleteWidgetSnapshot,
             Key.Legacy.remoteConfiguration,

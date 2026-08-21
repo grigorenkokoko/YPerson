@@ -8,6 +8,7 @@ final class SyncCoordinator {
         case deletionInProgress
         case expiredExchange
         case noAudio
+        case localStorageUnavailable
 
         var errorDescription: String? {
             switch self {
@@ -16,6 +17,7 @@ final class SyncCoordinator {
             case .deletionInProgress: return "Дождитесь завершения удаления профиля."
             case .expiredExchange: return "Код обмена уже истёк. Карточка сохранена только на iPhone."
             case .noAudio: return "У этой визитки нет доступного аудиоприветствия."
+            case .localStorageUnavailable: return "Не удалось сохранить данные ссылки на этом iPhone."
             }
         }
     }
@@ -33,6 +35,7 @@ final class SyncCoordinator {
     var onOwnCardChanged: ((PersonCard) -> Void)?
     var onProfileDeleted: (() -> Void)?
     var onAudioInvalidated: (() -> Void)?
+    var onPublicRepliesChanged: (([PublicContactReply]) -> Void)?
 
     init(
         baseURL: URL,
@@ -85,6 +88,7 @@ final class SyncCoordinator {
             )
             try apply(response)
             bootstrapped = true
+            await replaceUnrecoverablePublicLinkIfNeeded(response)
             await retryPendingOperations()
             await retryPushToken()
         } catch {
@@ -238,6 +242,68 @@ final class SyncCoordinator {
         return audio
     }
 
+    func activatePublicLink(card: PersonCard) async throws -> URL {
+        guard !syncSuppressed else { throw CoordinatorError.deletionInProgress }
+        guard let snapshotStore else { throw CoordinatorError.localStorageUnavailable }
+        let client = try explicitProfileClient()
+        let token: String
+        if let stored = snapshotStore.publicLinkToken, PublicLinkToken.isValid(stored) {
+            token = stored
+        } else {
+            token = try PublicLinkToken.generate()
+            snapshotStore.publicLinkToken = token
+        }
+        let request = SyncRequest(
+            operation: .activatePublicLink,
+            card: card.exchangeCopy,
+            publicLinkToken: token
+        )
+        snapshotStore.enqueue(
+            PendingSyncOperation(request: request, expiresAt: nil, localCardID: nil)
+        )
+        let response = try await client.sync(request)
+        guard response.accepted else { throw APIClient.ClientError.invalidResponse }
+        try apply(response)
+        snapshotStore.publicLinkActive = true
+        snapshotStore.removePendingOperation(id: request.operationID)
+        return try PublicCardRoute.url(baseURL: baseURL, token: token)
+    }
+
+    func revokePublicLink() async -> Bool {
+        guard !syncSuppressed, let apiClient else { return false }
+        let request = SyncRequest(operation: .revokePublicLink)
+        snapshotStore?.enqueue(
+            PendingSyncOperation(request: request, expiresAt: nil, localCardID: nil)
+        )
+        do {
+            let response = try await apiClient.sync(request)
+            guard response.accepted else { return false }
+            try apply(response)
+            snapshotStore?.publicLinkActive = false
+            snapshotStore?.removePendingOperation(id: request.operationID)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func fetchPublicCard(token: String) async throws -> PersonCard {
+        try await APIClient.fetchPublicCard(baseURL: baseURL, session: session, token: token)
+    }
+
+    func dismissPublicReply(id: String) async throws {
+        guard !syncSuppressed else { throw CoordinatorError.deletionInProgress }
+        guard let apiClient else { throw CoordinatorError.noProfile }
+        let request = SyncRequest(operation: .dismissPublicReply, publicReplyID: id)
+        snapshotStore?.enqueue(
+            PendingSyncOperation(request: request, expiresAt: nil, localCardID: nil)
+        )
+        let response = try await apiClient.sync(request)
+        guard response.accepted else { throw APIClient.ClientError.invalidResponse }
+        try apply(response)
+        snapshotStore?.removePendingOperation(id: request.operationID)
+    }
+
     func updatePushToken(_ token: String?) async {
         guard !syncSuppressed else { return }
         if snapshotStore?.pendingAPNSToken != token
@@ -308,8 +374,20 @@ final class SyncCoordinator {
             do {
                 let request = retrySafeRequest(operation.request)
                 let response = try await apiClient.sync(request)
+                if [.activatePublicLink, .revokePublicLink, .dismissPublicReply]
+                    .contains(operation.request.operation),
+                   !response.accepted {
+                    continue
+                }
                 try apply(response)
                 if operation.request.operation == .publishCard { bootstrapped = true }
+                if operation.request.operation == .activatePublicLink {
+                    snapshotStore?.publicLinkToken = operation.request.publicLinkToken
+                    snapshotStore?.publicLinkActive = true
+                }
+                if operation.request.operation == .revokePublicLink {
+                    snapshotStore?.publicLinkActive = false
+                }
                 if operation.request.operation == .deleteProfile {
                     try finishDeletion(operationID: operation.id)
                     return
@@ -371,8 +449,22 @@ final class SyncCoordinator {
         try snapshotStore?.replacePeople(people)
         for id in response.revokedCardIDs { try snapshotStore?.removePerson(id: id) }
         snapshotStore?.syncCursor = response.nextCursor ?? snapshotStore?.syncCursor
+        if let active = response.publicLinkActive {
+            snapshotStore?.publicLinkActive = active
+                && PublicLinkToken.isValid(snapshotStore?.publicLinkToken ?? "")
+        }
         if !people.isEmpty || !response.revokedCardIDs.isEmpty { onPeopleChanged?() }
         if audioMayHaveChanged { onAudioInvalidated?() }
+        onPublicRepliesChanged?(response.publicReplies)
+    }
+
+    private func replaceUnrecoverablePublicLinkIfNeeded(_ response: SyncResponse) async {
+        guard response.publicLinkActive == true,
+              !PublicLinkToken.isValid(snapshotStore?.publicLinkToken ?? ""),
+              let card = snapshotStore?.readOwnCard() else {
+            return
+        }
+        _ = try? await activatePublicLink(card: card)
     }
 
     private func retrySafeRequest(_ request: SyncRequest) -> SyncRequest {

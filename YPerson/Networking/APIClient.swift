@@ -94,6 +94,29 @@ final class APIClient {
         }
     }
 
+    static func fetchPublicCard(
+        baseURL: URL,
+        session: URLSession,
+        token: String
+    ) async throws -> PersonCard {
+        let cardURL = try PublicCardRoute.url(baseURL: baseURL, token: token)
+            .appendingPathComponent("card.json")
+        var request = URLRequest(
+            url: cardURL,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: 12
+        )
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
+        guard http.statusCode == 200 else {
+            throw ClientError.status(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
+        return try makeDecoder().decode(PublicCardPayload.self, from: data).personCard
+    }
+
     func sync(_ payload: SyncRequest) async throws -> SyncResponse {
         let wire = makeWireRequest(payload, operationID: payload.operationID)
         var request = URLRequest(url: baseURL.appendingPathComponent("sync"), timeoutInterval: 12)
@@ -125,7 +148,9 @@ final class APIClient {
             audioSizeBytes: payload.audioSizeBytes,
             audioDurationMS: payload.audioDurationMS,
             moderationCategory: payload.moderationCategory,
-            subjectInstallationID: payload.subjectInstallationID
+            subjectInstallationID: payload.subjectInstallationID,
+            publicLinkToken: payload.publicLinkToken,
+            publicReplyID: payload.publicReplyID
         )
     }
 
@@ -150,5 +175,30 @@ final class APIClient {
                 throw ClientError.unexpectedConfigurationField("sponsoredTemplates.\(key)")
             }
         }
+    }
+}
+
+private struct PublicCardPayload: Decodable {
+    let name: String
+    let role: String
+    let company: String
+    let email: String
+    let tagline: String
+    let templateID: String
+
+    var personCard: PersonCard {
+        PersonCard(
+            id: UUID().uuidString.lowercased(),
+            name: name,
+            role: role,
+            company: company,
+            phone: "",
+            email: email,
+            tagline: tagline,
+            hasAudioGreeting: false,
+            meetingPlace: nil,
+            isBlocked: false,
+            templateID: templateID
+        )
     }
 }
