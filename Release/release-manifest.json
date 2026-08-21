@@ -167,7 +167,7 @@
       "backend/tests/test_sync_service.py",
       "backend/tests/test_storage.py",
       "YPerson/Domain/ExchangeContract.swift",
-      "YPerson/Services/SyncCoordinator.swift",
+      "YPerson/Networking/SyncCoordinator.swift",
       "YPerson/UI/ExchangeViewController.swift",
       "YPerson/UI/ShortCodeViewController.swift",
       "deploy/yandex/serverless/deploy.sh",
@@ -237,7 +237,7 @@
       "sanitizedInternalError": 500,
       "unavailableDurableStorage": 503
     },
-    "privateExchangeDeploymentContract": "backend/tests/test_serverless_deployment.py plus backend/tests/test_deployment_files.py: 10 passed; smoke preserves QR exchangeToken and independently prepares/claims manual exchangeCode, validates exchangeExpiresAt for both, and clears credential variables before cleanup",
+    "privateExchangeDeploymentContract": "backend/tests/test_serverless_deployment.py plus backend/tests/test_deployment_files.py: 12 passed; exact ordered smoke blocks bind QR prepare/response/expiry/claim to exchangeToken and manual prepare/response/expiry/claim to exchangeCode; a real fail-fast bash -x execution proves inherited tracing is disabled before deployment environment inspection, and credential variables are cleared before cleanup",
     "backendVerification": {
       "recordedAtUTC": "2026-08-21T06:06:34Z",
       "pytest": "/Users/grigornkokoko/YPerson/backend/.venv/bin/pytest -q backend/tests: 146 passed, 1 existing Starlette TestClient/httpx deprecation warning in 10.97s",
