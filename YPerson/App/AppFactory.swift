@@ -10,8 +10,9 @@ final class YPersonExperienceBuilder {
     private let syncCoordinator: SyncCoordinator
     private let analytics: AppMetricaAnalyticsClient
     private let permissions: PermissionCenter
-    private let credentialStore: InstallationCredentialStore
+    private let credentialStore: any InstallationCredentialStoring
     private let mediaTransfer: MediaTransferClient
+    private let usesReviewFixtures: Bool
     private let nearby = NearbyExchangeController()
     private let photoScanner = PhotoCardScanner()
     private let audio = AudioGreetingController()
@@ -21,14 +22,21 @@ final class YPersonExperienceBuilder {
 
     init(configuration: AppConfiguration) throws {
         self.configuration = configuration
+        let usesReviewFixtures = ReviewFixtureIsolationPolicy.isEnabled()
+        self.usesReviewFixtures = usesReviewFixtures
         let sessionConfiguration = URLSessionConfiguration.ephemeral
         sessionConfiguration.timeoutIntervalForRequest = 12
         sessionConfiguration.timeoutIntervalForResource = 20
         sessionConfiguration.waitsForConnectivity = true
+#if DEBUG
+        if usesReviewFixtures {
+            ReviewFixtureIsolationPolicy.isolate(sessionConfiguration)
+        }
+#endif
         self.session = URLSession(configuration: sessionConfiguration)
         let store: AppGroupSnapshotStore?
 #if DEBUG
-        if ProcessInfo.processInfo.environment["YP_SCREENSHOT_STATE"] != nil {
+        if usesReviewFixtures {
             store = AppGroupSnapshotStore.inMemory()
         } else {
             store = AppGroupSnapshotStore(appGroupIdentifier: configuration.appGroupIdentifier)
@@ -37,7 +45,22 @@ final class YPersonExperienceBuilder {
         store = AppGroupSnapshotStore(appGroupIdentifier: configuration.appGroupIdentifier)
 #endif
         self.snapshotStore = store
-        let credentialStore = InstallationCredentialStore(service: "\(configuration.appGroupIdentifier).installation")
+        let credentialStore: any InstallationCredentialStoring
+#if DEBUG
+        if usesReviewFixtures {
+            credentialStore = EphemeralInstallationCredentialStore(
+                seed: ReviewFixtureIsolationPolicy.credential
+            )
+        } else {
+            credentialStore = InstallationCredentialStore(
+                service: "\(configuration.appGroupIdentifier).installation"
+            )
+        }
+#else
+        credentialStore = InstallationCredentialStore(
+            service: "\(configuration.appGroupIdentifier).installation"
+        )
+#endif
         self.credentialStore = credentialStore
         let mediaTransfer = MediaTransferClient(session: session)
         self.mediaTransfer = mediaTransfer
@@ -61,12 +84,10 @@ final class YPersonExperienceBuilder {
         _ = analytics.activateIfConsented()
         var ownCard = snapshotStore?.readOwnCard()
         var savedPeople = snapshotStore?.readPeople() ?? []
-        var usesReviewFixtures = false
 #if DEBUG
-        if ProcessInfo.processInfo.environment["YP_SCREENSHOT_STATE"] != nil {
+        if usesReviewFixtures {
             ownCard = .reviewOwn
             savedPeople = [.reviewAlexey, .reviewMaria]
-            usesReviewFixtures = true
         }
 #endif
         let makeAppearance = { [permissions, analytics]

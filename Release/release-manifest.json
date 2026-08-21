@@ -150,13 +150,13 @@
       "uvicorn": "0.52.3"
     },
     "xcodegen": "generated the shared project during the 2026-08-18 verification",
-    "debugBuild": "passed with warnings treated as errors on 2026-08-18T12:07:30Z; generic iOS Simulator, CODE_SIGNING_ALLOWED=NO; full compile BUILD SUCCEEDED in 39.978s and corrected repeat exited 0 in 5.18s",
-    "releaseSimulatorBuild": "passed on 2026-08-21T06:06:34Z; xcodebuild -quiet, Release, generic iOS Simulator, fresh /tmp/yperson-final-fix-derived-20260821d, local pinned package cache with automatic resolution disabled, CODE_SIGNING_ALLOWED=NO, exit 0; produced app, widget, notification service, and notification content products",
+    "debugBuild": "passed again on 2026-08-21T06:32:55Z after reviewer-fixture isolation; generic iOS Simulator, fresh /tmp/yperson-fixture-isolation-debug-20260821b, local pinned package cache with automatic resolution disabled, CODE_SIGNING_ALLOWED=NO, exit 0",
+    "releaseSimulatorBuild": "passed again on 2026-08-21T06:32:55Z after reviewer-fixture isolation; xcodebuild -quiet, Release, generic iOS Simulator, fresh /tmp/yperson-fixture-isolation-release-20260821a, local pinned package cache with automatic resolution disabled, CODE_SIGNING_ALLOWED=NO, exit 0; produced app, widget, notification service, and notification content products",
     "simulator": "iPhone 16 Pro, iOS 18.5",
     "cleanInstallReleaseSimulator": "passed: empty create-card state with no profile, people, counters, or sync claims",
     "ordinaryDebugState": "passed: matches clean Release state without YP_SCREENSHOT_STATE",
-    "explicitDebugReviewerState": "passed by Foundation/UI contracts: any explicit YP_SCREENSHOT_STATE selects a per-launch in-memory snapshot store before app services are created; fixture writes remain usable only within that launch and cannot contaminate a later ordinary Debug launch",
-    "releaseFixtureBinaryScan": "passed: Debug-only identity literals and symbols absent",
+    "explicitDebugReviewerState": "passed by Foundation/UI contracts and fresh Debug build: any explicit YP_SCREENSHOT_STATE selects a per-launch in-memory snapshot store and credential before app services are created, and injects a URL protocol that locally rejects every fixture request; fixture writes and identity remain launch-local and fixture actions cannot reach the ordinary Debug backend",
+    "releaseFixtureBinaryScan": "passed after the isolation fix: YP_SCREENSHOT_STATE, Debug-only credential, fixture URL protocol, and fixture identity literals are absent",
     "purposeStringsExact": "9/9 Info.plist strings plus push pre-prompt",
     "appOwnedPrivacyManifestDataTypes": 12,
     "backendSmoke": {
@@ -192,6 +192,10 @@
         "fixturePersistence": [
           "fixture-persistence-pass",
           "fixture-persistence-ui-contract-pass"
+        ],
+        "fixtureIsolation": [
+          "fixture-isolation-pass",
+          "fixture-release-isolation-pass"
         ],
         "vCard": [
           "vcard-contract-pass"
