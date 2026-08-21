@@ -8,7 +8,7 @@ from typing import Final
 
 import ydb
 
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
 
 
 class SchemaMismatch(RuntimeError):
@@ -108,6 +108,23 @@ EXPECTED_TABLES: Final[dict[str, TableSchema]] = {
         ),
         primary_key=("installation_id", "operation_id"),
     ),
+    "exchange_private_fields": TableSchema(
+        columns=(
+            ("token_hash", ydb.PrimitiveType.String),
+            ("fields_json", ydb.PrimitiveType.JsonDocument),
+            ("expires_at", ydb.PrimitiveType.Timestamp),
+        ),
+        primary_key=("token_hash",),
+    ),
+    "connection_private_fields": TableSchema(
+        columns=(
+            ("owner_installation_id", ydb.PrimitiveType.Utf8),
+            ("peer_installation_id", ydb.PrimitiveType.Utf8),
+            ("fields_json", ydb.PrimitiveType.JsonDocument),
+            ("updated_at", ydb.PrimitiveType.Timestamp),
+        ),
+        primary_key=("owner_installation_id", "peer_installation_id"),
+    ),
 }
 
 TABLE_DDL: Final[tuple[str, ...]] = (
@@ -191,6 +208,25 @@ TABLE_DDL: Final[tuple[str, ...]] = (
         PRIMARY KEY (installation_id, operation_id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS exchange_private_fields (
+        token_hash String NOT NULL,
+        fields_json JsonDocument NOT NULL,
+        expires_at Timestamp NOT NULL,
+        PRIMARY KEY (token_hash)
+    ) WITH (
+        TTL = Interval("PT0S") ON expires_at
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS connection_private_fields (
+        owner_installation_id Utf8 NOT NULL,
+        peer_installation_id Utf8 NOT NULL,
+        fields_json JsonDocument NOT NULL,
+        updated_at Timestamp NOT NULL,
+        PRIMARY KEY (owner_installation_id, peer_installation_id)
+    )
+    """,
 )
 
 
@@ -198,7 +234,7 @@ def apply_schema(
     pool: ydb.QuerySessionPool,
     describe_table: Callable[[str], object],
 ) -> int:
-    """Apply schema version 1 and verify every table's exact structure."""
+    """Apply schema version 2 and verify every table's exact structure."""
 
     completed = 0
     retry_settings = ydb.RetrySettings(idempotent=True)

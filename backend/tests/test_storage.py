@@ -11,10 +11,11 @@ from typing import Any
 import pytest
 import ydb
 
-from app.schemas import PersonCard, SyncResponse
+from app.schemas import PersonCard, PrivateCardFields, SyncResponse
 from app.storage import (
     InstallationRecord,
     InvalidCredential,
+    PreparedExchangeResult,
     StorageConflict,
     StorageIntegrityError,
     SyncSnapshot,
@@ -325,6 +326,8 @@ def test_published_card_survives_refresh(
     styled_card = PersonCard.model_validate(
         card.model_dump(mode="json") | {"templateID": "mint-conference"}
     )
+    public_card = styled_card.model_copy(update={"phone": ""})
+    private_fields = PrivateCardFields(phone=styled_card.phone)
     version = store.publish_card("installation-owner", "op-publish-1", styled_card, None)
     retried_version = store.publish_card("installation-owner", "op-publish-1", styled_card, None)
     snapshot = store.refresh("installation-owner", None)
@@ -342,6 +345,8 @@ def test_published_card_survives_refresh(
         "installation-owner",
         "op-exchange-1",
         "qr",
+        public_card,
+        private_fields,
         "raw-exchange-token",
         datetime.now(UTC) + timedelta(minutes=10),
     )
@@ -349,6 +354,8 @@ def test_published_card_survives_refresh(
         "installation-owner",
         "op-exchange-1",
         "qr",
+        public_card,
+        private_fields,
         "raw-exchange-token",
         datetime.now(UTC) + timedelta(minutes=10),
     )
@@ -368,7 +375,162 @@ def test_published_card_survives_refresh(
     assert "meetingPlace" not in stored_json
 
 
-def test_delete_lost_response_replays_tombstone_without_recreating_installation(
+def test_prepare_exchange_atomically_persists_public_card_private_fields_and_expiry(
+    card: PersonCard,
+) -> None:
+    expires_at = datetime(2026, 8, 21, 12, 30, tzinfo=UTC)
+    raw_credential = "credential-never-persist-me"
+    public_card = card.model_copy(update={"phone": ""})
+    private_fields = PrivateCardFields(phone=card.phone)
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "SELECT token_hash FROM exchange_claims" in query:
+            return [ResultSet([])]
+        if "SELECT version FROM cards" in query:
+            return [ResultSet([{"version": 4}])]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    result = store.prepare_exchange(
+        "installation-owner",
+        "op-prepare-private",
+        "qr",
+        public_card,
+        private_fields,
+        raw_credential,
+        expires_at,
+    )
+
+    assert result == PreparedExchangeResult(card_version=5, expires_at=expires_at)
+    mutation_query, mutation_parameters = next(
+        (query, parameters)
+        for query, parameters in pool.transaction_calls
+        if "UPSERT INTO exchange_claims" in query
+    )
+    assert "UPSERT INTO cards" in mutation_query
+    assert "UPSERT INTO exchange_private_fields" in mutation_query
+    assert mutation_query.count("UPSERT INTO operations") == 1
+    assert json.loads(_parameter(mutation_parameters, "$card_json"))["phone"] == ""
+    assert json.loads(_parameter(mutation_parameters, "$fields_json")) == {
+        "phone": card.phone
+    }
+    assert _parameter(mutation_parameters, "$expires_at") == expires_at
+    assert json.loads(_parameter(mutation_parameters, "$result_json")) == {
+        "expiresAt": expires_at.isoformat(),
+        "tokenHash": sha256(raw_credential.encode()).hexdigest(),
+        "version": 5,
+    }
+    assert raw_credential not in repr(pool.transaction_calls)
+
+
+def test_prepare_exchange_replay_returns_original_version_and_expiry() -> None:
+    raw_credential = "original-credential"
+    original_expiry = datetime(2026, 8, 21, 12, 30, tzinfo=UTC)
+    persisted = json.dumps(
+        {
+            "expiresAt": original_expiry.isoformat(),
+            "tokenHash": sha256(raw_credential.encode()).hexdigest(),
+            "version": 7,
+        }
+    )
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [
+                ResultSet(
+                    [{"operation_type": "prepareExchange", "result_json": persisted}]
+                )
+            ]
+        return []
+
+    store = YDBSyncStore(ScriptedPool(transaction_handler=transaction_handler))  # type: ignore[arg-type]
+    proposed_expiry = original_expiry + timedelta(hours=1)
+    public_card = PersonCard(
+        id="card-owner",
+        name="Owner",
+        role="Designer",
+        company="YPerson",
+        phone="",
+        email="owner@example.invalid",
+        tagline="Hello",
+        hasAudioGreeting=False,
+        isBlocked=False,
+    )
+
+    result = store.prepare_exchange(
+        "installation-owner",
+        "op-prepare-replay",
+        "qr",
+        public_card,
+        PrivateCardFields(phone="+79990000000"),
+        raw_credential,
+        proposed_expiry,
+    )
+
+    assert result == PreparedExchangeResult(card_version=7, expires_at=original_expiry)
+    with pytest.raises(StorageConflict):
+        store.prepare_exchange(
+            "installation-owner",
+            "op-prepare-replay",
+            "qr",
+            public_card,
+            None,
+            "different-credential",
+            proposed_expiry,
+        )
+
+
+@pytest.mark.parametrize(
+    "persisted_result",
+    [
+        {
+            "expiresAt": "not-a-timestamp",
+            "tokenHash": sha256(b"raw-token").hexdigest(),
+            "version": 2,
+        },
+        {
+            "expiresAt": datetime(2026, 8, 21, 12, 30, tzinfo=UTC).isoformat(),
+            "tokenHash": sha256(b"raw-token").hexdigest(),
+            "version": 0,
+        },
+    ],
+)
+def test_prepare_exchange_replay_validates_persisted_result(
+    persisted_result: dict[str, object],
+    card: PersonCard,
+) -> None:
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "operation_type": "prepareExchange",
+                            "result_json": json.dumps(persisted_result),
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    store = YDBSyncStore(ScriptedPool(transaction_handler=transaction_handler))  # type: ignore[arg-type]
+    with pytest.raises(StorageIntegrityError):
+        store.prepare_exchange(
+            "installation-owner",
+            "op-prepare-invalid",
+            "qr",
+            card.model_copy(update={"phone": ""}),
+            None,
+            "raw-token",
+            datetime.now(UTC) + timedelta(minutes=5),
+        )
+
+
+def test_delete_private_state_and_profile_replays_without_recreating_installation(
     card: PersonCard,
 ) -> None:
     credential_hash = sha256(b"owner-secret").digest()
@@ -448,11 +610,15 @@ def test_delete_lost_response_replays_tombstone_without_recreating_installation(
 
     all_queries = "\n".join(query for query, _ in pool.transaction_calls + pool.read_calls)
     assert 'operation_type = "deleteProfile"' in all_queries
-    deletion_parameters = next(
-        parameters
+    deletion_query, deletion_parameters = next(
+        (query, parameters)
         for query, parameters in pool.transaction_calls
         if "DELETE FROM installations" in query
     )
+    assert "DELETE FROM exchange_private_fields" in deletion_query
+    assert """DELETE FROM connection_private_fields
+                WHERE owner_installation_id = $installation_id
+                   OR peer_installation_id = $installation_id;""" in deletion_query
     stored_result = json.loads(_parameter(deletion_parameters, "$result_json"))
     assert stored_result == deletion_result
     assert any(
@@ -478,6 +644,7 @@ def test_exchange_token_rejects_second_operation_even_for_same_recipient(
                             "claimed_by_installation_id": "installation-peer",
                             "version": 1,
                             "card_json": json.dumps(card.model_dump(mode="json")),
+                            "fields_json": None,
                         }
                     ]
                 )
@@ -509,6 +676,7 @@ def test_claim_accepts_native_ydb_json_document(card: PersonCard) -> None:
                             "claimed_by_installation_id": None,
                             "version": 1,
                             "card_json": card.model_dump(mode="json"),
+                            "fields_json": None,
                         }
                     ]
                 )
@@ -528,7 +696,202 @@ def test_claim_accepts_native_ydb_json_document(card: PersonCard) -> None:
     assert person.card == card
 
 
-def test_owner_cancel_deletes_unclaimed_exchange_and_persists_only_token_hash() -> None:
+def test_claim_exchange_copies_private_fields_only_to_claimant_direction(
+    card: PersonCard,
+) -> None:
+    raw_token = "claim-private-token"
+    public_card = card.model_copy(update={"phone": ""})
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [ResultSet([])]
+        if "FROM exchange_claims AS claim" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "issuer_installation_id": "installation-owner",
+                            "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+                            "claimed_by_installation_id": None,
+                            "version": 3,
+                            "card_json": public_card.model_dump(mode="json"),
+                            "fields_json": {"phone": card.phone},
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    person = store.claim_exchange(
+        "installation-peer",
+        "op-claim-private",
+        raw_token,
+    )
+
+    assert person.installationID == "installation-owner"
+    assert person.version == 3
+    assert person.card.phone == card.phone
+    mutation_query, mutation_parameters = next(
+        (query, parameters)
+        for query, parameters in pool.transaction_calls
+        if "UPDATE exchange_claims" in query
+    )
+    assert "UPSERT INTO connection_private_fields" in mutation_query
+    assert "DELETE FROM exchange_private_fields" in mutation_query
+    assert "$installation_id, $issuer_id, $fields_json, $now" in mutation_query
+    assert _parameter(mutation_parameters, "$installation_id") == "installation-peer"
+    assert _parameter(mutation_parameters, "$issuer_id") == "installation-owner"
+    assert json.loads(_parameter(mutation_parameters, "$fields_json")) == {
+        "phone": card.phone
+    }
+    assert json.loads(_parameter(mutation_parameters, "$result_json")) == {
+        "issuerInstallationID": "installation-owner",
+        "tokenHash": sha256(raw_token.encode()).hexdigest(),
+    }
+
+
+def test_claim_exchange_replay_loads_current_public_card_and_directional_grant(
+    card: PersonCard,
+) -> None:
+    raw_token = "replayed-claim-token"
+    previous_result = {
+        "issuerInstallationID": "installation-owner",
+        "tokenHash": sha256(raw_token.encode()).hexdigest(),
+    }
+    updated_public_card = card.model_copy(
+        update={"phone": "", "name": "Updated Owner"}
+    )
+
+    def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+        if "FROM operations" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "operation_type": "claimExchange",
+                            "result_json": json.dumps(previous_result),
+                        }
+                    ]
+                )
+            ]
+        if "FROM cards AS card" in query:
+            return [
+                ResultSet(
+                    [
+                        {
+                            "version": 8,
+                            "card_json": updated_public_card.model_dump(mode="json"),
+                            "fields_json": {"phone": card.phone},
+                        }
+                    ]
+                )
+            ]
+        return []
+
+    pool = ScriptedPool(transaction_handler=transaction_handler)
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    person = store.claim_exchange(
+        "installation-peer",
+        "op-claim-replayed",
+        raw_token,
+    )
+
+    assert person.version == 8
+    assert person.card.name == "Updated Owner"
+    assert person.card.phone == card.phone
+    assert not any("FROM exchange_claims AS claim" in query for query, _ in pool.transaction_calls)
+
+
+def test_refresh_private_fields_overlay_only_for_the_requester(
+    card: PersonCard,
+) -> None:
+    public_card = card.model_copy(update={"phone": ""})
+
+    def read_handler(_query: str, parameters: dict[str, Any]) -> list[ResultSet]:
+        requester = _parameter(parameters, "$installation_id")
+        fields: object = {"phone": card.phone} if requester == "installation-peer" else None
+        return [
+            ResultSet([]),
+            ResultSet(
+                [
+                    {
+                        "installation_id": "installation-owner",
+                        "version": 4,
+                        "card_json": public_card.model_dump(mode="json"),
+                        "fields_json": fields,
+                    }
+                ]
+            ),
+            ResultSet([]),
+        ]
+
+    pool = ScriptedPool(
+        transaction_handler=lambda _query, _parameters: [],
+        read_handler=read_handler,
+    )
+    store = YDBSyncStore(pool)  # type: ignore[arg-type]
+
+    peer = store.refresh("installation-peer", None)
+    other = store.refresh("installation-other", None)
+
+    assert peer.people[0].card.phone == card.phone
+    assert other.people[0].card.phone == ""
+    assert all("connection_private_fields" in query for query, _ in pool.read_calls)
+    assert all(
+        "grant_fields.owner_installation_id = connection.owner_installation_id" in query
+        and "grant_fields.peer_installation_id = connection.peer_installation_id" in query
+        for query, _ in pool.read_calls
+    )
+
+
+@pytest.mark.parametrize("fields_json", [b"{", {"phone": "+79990000000", "email": "x"}])
+@pytest.mark.parametrize("path", ["refresh", "claim"])
+def test_refresh_private_or_claim_private_rejects_malformed_or_unknown_fields(
+    card: PersonCard,
+    fields_json: object,
+    path: str,
+) -> None:
+    public_card = card.model_copy(update={"phone": ""})
+    row = {
+        "installation_id": "installation-owner",
+        "issuer_installation_id": "installation-owner",
+        "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+        "claimed_by_installation_id": None,
+        "version": 1,
+        "card_json": public_card.model_dump(mode="json"),
+        "fields_json": fields_json,
+    }
+
+    if path == "refresh":
+        def read_handler(_query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+            return [ResultSet([]), ResultSet([row]), ResultSet([])]
+
+        store = YDBSyncStore(  # type: ignore[arg-type]
+            ScriptedPool(
+                transaction_handler=lambda _query, _parameters: [],
+                read_handler=read_handler,
+            )
+        )
+        with pytest.raises(StorageIntegrityError):
+            store.refresh("installation-peer", None)
+    else:
+        def transaction_handler(query: str, _parameters: dict[str, Any]) -> list[ResultSet]:
+            if "FROM operations" in query:
+                return [ResultSet([])]
+            if "FROM exchange_claims AS claim" in query:
+                return [ResultSet([row])]
+            return []
+
+        store = YDBSyncStore(ScriptedPool(transaction_handler=transaction_handler))  # type: ignore[arg-type]
+        with pytest.raises(StorageIntegrityError):
+            store.claim_exchange("installation-peer", "op-claim-corrupt", "raw-token")
+
+
+def test_delete_private_exchange_on_cancel_and_persist_only_token_hash() -> None:
     raw_token = "prepared-token-never-persist-me"
     token_hash = sha256(raw_token.encode()).digest()
 
@@ -555,6 +918,7 @@ def test_owner_cancel_deletes_unclaimed_exchange_and_persists_only_token_hash() 
 
     all_queries = "\n".join(query for query, _ in pool.transaction_calls)
     assert "DELETE FROM exchange_claims" in all_queries
+    assert "DELETE FROM exchange_private_fields" in all_queries
     assert raw_token not in repr(pool.transaction_calls)
     assert any(
         _parameter(parameters, "$token_hash") == token_hash
@@ -713,6 +1077,18 @@ def test_noncanonical_persisted_prepare_exchange_digest_is_storage_integrity_fai
             "installation-owner",
             "op-prepare-corrupt",
             "qr",
+            PersonCard(
+                id="card-owner",
+                name="Owner",
+                role="Designer",
+                company="YPerson",
+                phone="",
+                email="owner@example.invalid",
+                tagline="Hello",
+                hasAudioGreeting=False,
+                isBlocked=False,
+            ),
+            None,
             "raw-token",
             datetime.now(UTC) + timedelta(minutes=5),
         )
@@ -915,6 +1291,7 @@ def test_committed_delete_blocks_delayed_publish_and_claim(card: PersonCard) -> 
                             "claimed_by_installation_id": None,
                             "version": 1,
                             "card_json": json.dumps(card.model_dump(mode="json")),
+                            "fields_json": None,
                         }
                     ]
                 )
@@ -956,6 +1333,18 @@ def test_every_other_mutation_uses_the_same_active_installation_guard() -> None:
             "installation-deleted",
             "op-prepare-delayed",
             "qr",
+            PersonCard(
+                id="card-deleted",
+                name="Deleted",
+                role="Designer",
+                company="YPerson",
+                phone="",
+                email="deleted@example.invalid",
+                tagline="Hello",
+                hasAudioGreeting=False,
+                isBlocked=False,
+            ),
+            None,
             "raw-token",
             datetime.now(UTC) + timedelta(minutes=5),
         ),
@@ -1204,5 +1593,53 @@ def test_schema_rejects_an_incompatible_existing_table() -> None:
             ]
         return Description(columns, list(table.primary_key))
 
-    with pytest.raises(SchemaMismatch, match="schema version 1"):
+    with pytest.raises(SchemaMismatch, match="schema version 2"):
         apply_schema(SchemaPool(), describe_table)  # type: ignore[arg-type]
+
+
+def test_schema_v2_describes_private_field_tables_and_applies_all_nine() -> None:
+    from app.ydb_schema import EXPECTED_TABLES, SCHEMA_VERSION, apply_schema
+
+    applied: list[str] = []
+
+    class SchemaPool:
+        def execute_with_retries(
+            self,
+            query: str,
+            *,
+            retry_settings: ydb.RetrySettings,
+        ) -> None:
+            assert retry_settings.idempotent
+            applied.append(query)
+
+    class Description:
+        def __init__(self, columns: list[ydb.Column], primary_key: list[str]) -> None:
+            self.columns = columns
+            self.primary_key = primary_key
+
+    def describe_table(table_name: str) -> Description:
+        table = EXPECTED_TABLES[table_name]
+        return Description(
+            [ydb.Column(name, column_type) for name, column_type in table.columns],
+            list(table.primary_key),
+        )
+
+    assert SCHEMA_VERSION == 2
+    assert EXPECTED_TABLES["exchange_private_fields"].primary_key == ("token_hash",)
+    assert EXPECTED_TABLES["exchange_private_fields"].columns == (
+        ("token_hash", ydb.PrimitiveType.String),
+        ("fields_json", ydb.PrimitiveType.JsonDocument),
+        ("expires_at", ydb.PrimitiveType.Timestamp),
+    )
+    assert EXPECTED_TABLES["connection_private_fields"].primary_key == (
+        "owner_installation_id",
+        "peer_installation_id",
+    )
+    assert EXPECTED_TABLES["connection_private_fields"].columns == (
+        ("owner_installation_id", ydb.PrimitiveType.Utf8),
+        ("peer_installation_id", ydb.PrimitiveType.Utf8),
+        ("fields_json", ydb.PrimitiveType.JsonDocument),
+        ("updated_at", ydb.PrimitiveType.Timestamp),
+    )
+    assert apply_schema(SchemaPool(), describe_table) == 9  # type: ignore[arg-type]
+    assert len(applied) == 9
