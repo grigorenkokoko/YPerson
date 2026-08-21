@@ -1,6 +1,6 @@
 import Foundation
 
-private let harnessVersion = 3
+private let harnessVersion = 4
 
 private func require(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() { fatalError(message) }
@@ -154,6 +154,69 @@ require(
     "profile epoch invalidation reused the stale snapshot"
 )
 
+let deletionRecord = ProfileDeletionRecord(operationID: "stable-delete-operation")
+require(!deletionRecord.serverAcknowledged, "new deletion record started acknowledged")
+let encodedDeletion = try JSONEncoder().encode(deletionRecord)
+let decodedDeletion = try JSONDecoder().decode(ProfileDeletionRecord.self, from: encodedDeletion)
+require(
+    decodedDeletion == deletionRecord,
+    "deletion record did not round-trip"
+)
+
+var activeLifecycle = ProfileLifecycle(
+    deletionRecord: nil,
+    legacyDeletionPending: false,
+    terminallyDeleted: false
+)
+require(activeLifecycle.state == .active, "fresh lifecycle was not active")
+require(!activeLifecycle.suppressesSync, "fresh lifecycle suppressed sync")
+try activeLifecycle.beginDeletion()
+require(activeLifecycle.state == .deleting, "deletion did not suppress the lifecycle")
+require(activeLifecycle.suppressesSync, "deleting lifecycle allowed sync")
+requireThrows("unacknowledged remote deletion became terminal") {
+    try activeLifecycle.finishDeletion(record: deletionRecord, allowLocalOnly: false)
+}
+var acknowledgedDeletion = deletionRecord
+acknowledgedDeletion.markServerAcknowledged()
+try activeLifecycle.finishDeletion(record: acknowledgedDeletion, allowLocalOnly: false)
+require(activeLifecycle.state == .terminal, "acknowledged deletion did not become terminal")
+require(activeLifecycle.suppressesSync, "terminal lifecycle allowed stale sync")
+try activeLifecycle.reactivateForUserCreation()
+require(activeLifecycle.state == .active, "explicit creation did not reactivate lifecycle")
+
+var deletingLifecycle = ProfileLifecycle(
+    deletionRecord: deletionRecord,
+    legacyDeletionPending: false,
+    terminallyDeleted: false
+)
+require(deletingLifecycle.state == .deleting, "durable deletion record was ignored")
+requireThrows("deleting lifecycle allowed profile recreation") {
+    try deletingLifecycle.reactivateForUserCreation()
+}
+try deletingLifecycle.finishDeletion(record: deletionRecord, allowLocalOnly: true)
+require(deletingLifecycle.state == .terminal, "local-only deletion did not become terminal")
+
+let legacyDeletingLifecycle = ProfileLifecycle(
+    deletionRecord: nil,
+    legacyDeletionPending: true,
+    terminallyDeleted: false
+)
+require(legacyDeletingLifecycle.state == .deleting, "legacy pending deletion was not recovered")
+let terminalLifecycle = ProfileLifecycle(
+    deletionRecord: nil,
+    legacyDeletionPending: false,
+    terminallyDeleted: true
+)
+require(terminalLifecycle.state == .terminal, "durable terminal deletion was not restored")
+
+var transferGeneration = ProfileTransferGeneration()
+let transferBeforeDeletion = transferGeneration.capture()
+transferGeneration.invalidate()
+require(
+    !transferGeneration.isCurrent(transferBeforeDeletion),
+    "profile transfer generation allowed a post-deletion cache commit"
+)
+
 require(
     !PendingSyncOperationPersistencePolicy.allowsDurablePersistence(.claimExchange),
     "claim credential was allowed into durable pending storage"
@@ -181,6 +244,20 @@ defer { defaults.removePersistentDomain(forName: suiteName) }
 guard let store = AppGroupSnapshotStore(appGroupIdentifier: suiteName) else {
     fatalError("temporary snapshot store unavailable")
 }
+store.profileDeletionRecord = deletionRecord
+store.profileDeletionPending = true
+store.clearUserData()
+require(
+    store.profileDeletionRecord == deletionRecord,
+    "clearUserData erased the crash-safe deletion record"
+)
+var storedAcknowledgement = deletionRecord
+storedAcknowledgement.markServerAcknowledged()
+store.profileDeletionRecord = storedAcknowledgement
+require(
+    store.profileDeletionRecord?.serverAcknowledged == true,
+    "server acknowledgement was not durably recorded"
+)
 let claim = PendingSyncOperation(
     request: SyncRequest(operation: .claimExchange, exchangeToken: "raw-claim-token"),
     expiresAt: expiry,

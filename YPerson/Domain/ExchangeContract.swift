@@ -68,6 +68,94 @@ struct ProfileOperationEpoch {
     }
 }
 
+struct ProfileDeletionRecord: Codable, Equatable {
+    let operationID: String
+    private(set) var serverAcknowledged: Bool
+
+    init(operationID: String, serverAcknowledged: Bool = false) {
+        self.operationID = operationID
+        self.serverAcknowledged = serverAcknowledged
+    }
+
+    mutating func markServerAcknowledged() {
+        serverAcknowledged = true
+    }
+}
+
+struct ProfileLifecycle {
+    enum State: Equatable {
+        case active
+        case deleting
+        case terminal
+    }
+
+    enum TransitionError: Error {
+        case invalidTransition
+        case deletionNotAcknowledged
+    }
+
+    private(set) var state: State
+
+    init(
+        deletionRecord: ProfileDeletionRecord?,
+        legacyDeletionPending: Bool,
+        terminallyDeleted: Bool
+    ) {
+        if deletionRecord != nil || legacyDeletionPending {
+            state = .deleting
+        } else if terminallyDeleted {
+            state = .terminal
+        } else {
+            state = .active
+        }
+    }
+
+    var suppressesSync: Bool {
+        state != .active
+    }
+
+    mutating func beginDeletion() throws {
+        guard state == .active else { throw TransitionError.invalidTransition }
+        state = .deleting
+    }
+
+    mutating func finishDeletion(
+        record: ProfileDeletionRecord,
+        allowLocalOnly: Bool
+    ) throws {
+        guard state == .deleting else { throw TransitionError.invalidTransition }
+        guard record.serverAcknowledged || allowLocalOnly else {
+            throw TransitionError.deletionNotAcknowledged
+        }
+        state = .terminal
+    }
+
+    mutating func reactivateForUserCreation() throws {
+        guard state == .terminal else { throw TransitionError.invalidTransition }
+        state = .active
+    }
+}
+
+struct ProfileTransferGeneration {
+    struct Snapshot: Equatable {
+        fileprivate let value: UInt64
+    }
+
+    private var value: UInt64 = 0
+
+    func capture() -> Snapshot {
+        Snapshot(value: value)
+    }
+
+    func isCurrent(_ snapshot: Snapshot) -> Bool {
+        snapshot.value == value
+    }
+
+    mutating func invalidate() {
+        value &+= 1
+    }
+}
+
 enum ManualExchangeCode {
     private static let alphabet = Set("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
 

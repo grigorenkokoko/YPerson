@@ -48,7 +48,7 @@ Toolchain observed for this run: Python `3.12.14`; Ruff `0.16.3`.
 
 ### Swift contract harness
 
-The reproducible harness now lives in the repository at `Verification/HonestExchangeContract/`. Version 2 compiles real Foundation production sources and covers public/private projection, manual-code normalization, typed credential exclusivity/routing, public QR, public-only Bluetooth policy, single-use manual consent, App Group persistence policy, legacy sensitive-queue cleanup, and strict UIKit/coordinator source contracts.
+The reproducible harness now lives in the repository at `Verification/HonestExchangeContract/`. Version 4 compiles real Foundation production sources and covers public/private projection, manual-code normalization, typed credential exclusivity/routing, public QR, public-only Bluetooth policy, single-use manual consent, App Group persistence policy, crash-safe deletion-record survival, lifecycle transitions, transfer-generation invalidation, legacy sensitive-queue cleanup, and ordered async commit fences in UIKit/coordinator/media sources.
 
 ```bash
 Verification/HonestExchangeContract/run.sh
@@ -195,7 +195,7 @@ The following remain explicitly unverified and are not implied by any automated 
 
 - Physical-device Face ID success/cancel/lockout and device-passcode fallback.
 - Two-installation manual-code display, normalized entry, one-time claim, cancellation, and real expiry.
-- Mutual public Bluetooth exchange on two physical iPhones; phone absence must be verified even when manual-code consent was authorized. Private Bluetooth remains deferred until recipient-bound mutual pairing exists.
+- Two-way public Bluetooth exchange with an independent local claim on each physical iPhone and no peer-confirmation signal; phone absence must be verified even when manual-code consent was authorized. Private Bluetooth remains deferred until recipient-bound mutual pairing exists.
 - App backgrounding, clipboard inspection, VoiceOver traversal/labels/announcements, Dynamic Type, iOS 15 behavior, APNs, widgets, and the wider permission matrix in `Release/manual-device-checks.md`.
 - Live YDB schema application/query compilation, Object Storage/Lockbox/IAM configuration, Serverless Container deployment, API Gateway routing, external `/health`/`/config`/`/sync` smoke, monitoring, backup/restore, and production AppMetrica traffic.
 - Apple signing identities, final bundle/App Group/provisioning/APNs configuration, signed archive creation/validation, archive privacy report, App Store Connect mutation, or upload.

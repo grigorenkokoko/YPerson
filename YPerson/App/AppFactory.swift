@@ -19,6 +19,7 @@ final class YPersonExperienceBuilder {
     private let imageSaver = CardImageSaver()
     private weak var output: (any YPersonExperienceOutput)?
     private weak var rootViewController: MainTabBarController?
+    private let personControllers = NSHashTable<PersonViewController>.weakObjects()
 
     init(configuration: AppConfiguration) throws {
         self.configuration = configuration
@@ -88,6 +89,10 @@ final class YPersonExperienceBuilder {
         _ = analytics.activateIfConsented()
         var ownCard = snapshotStore?.readOwnCard()
         var savedPeople = snapshotStore?.readPeople() ?? []
+        if !syncCoordinator.isProfileActive {
+            ownCard = nil
+            savedPeople = []
+        }
 #if DEBUG
         if !persistsUserChanges {
             ownCard = .reviewOwn
@@ -108,16 +113,19 @@ final class YPersonExperienceBuilder {
             CardEditorViewController(card: card, permissions: permissions, audio: audio, makeAppearance: makeAppearance, onSave: onSave)
         }
         let card = CardViewController(card: ownCard, persistsChanges: persistsUserChanges, permissions: permissions, audio: audio, imageSaver: imageSaver, syncCoordinator: syncCoordinator, analytics: analytics, snapshotStore: snapshotStore, makeEditor: makeEditor)
-        let person = { [permissions, imageSaver, syncCoordinator, analytics, snapshotStore, mediaTransfer, audio] card in
-            PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, syncCoordinator: syncCoordinator, mediaTransfer: mediaTransfer, audio: audio, analytics: analytics, snapshotStore: snapshotStore)
+        let person = { [weak self, permissions, imageSaver, syncCoordinator, analytics, snapshotStore, mediaTransfer, audio] card in
+            let controller = PersonViewController(card: card, permissions: permissions, imageSaver: imageSaver, syncCoordinator: syncCoordinator, mediaTransfer: mediaTransfer, audio: audio, analytics: analytics, snapshotStore: snapshotStore)
+            self?.personControllers.add(controller)
+            return controller
         }
         let people = PeopleViewController(
             people: savedPeople,
             permissions: permissions,
             analytics: analytics,
             makePerson: person,
-            onContactsImported: { [snapshotStore] cards in
-                guard let snapshotStore else {
+            isProfileActive: { [syncCoordinator] in syncCoordinator.isProfileActive },
+            onContactsImported: { [snapshotStore, syncCoordinator] cards in
+                guard syncCoordinator.isProfileActive, let snapshotStore else {
                     throw NSError(
                         domain: "YPerson.ContactsImport",
                         code: 1,
@@ -137,7 +145,8 @@ final class YPersonExperienceBuilder {
             analytics: analytics,
             snapshotStore: snapshotStore,
             ownCard: { [weak card] in card?.currentCard },
-            onPersonSaved: { [weak people, snapshotStore] _ in
+            onPersonSaved: { [weak people, snapshotStore, syncCoordinator] _ in
+                guard syncCoordinator.isProfileActive else { return }
                 people?.reload(people: snapshotStore?.readPeople() ?? [])
             }
         )
@@ -145,19 +154,23 @@ final class YPersonExperienceBuilder {
         let root = MainTabBarController(card: card, exchange: exchange, people: people, privacy: privacy)
         self.rootViewController = root
         root.route(to: context.entryPoint)
+        syncCoordinator.onProfileDeleted = { [weak self, weak card, weak exchange, weak people, weak privacy, audio, analytics] in
+            audio.delete()
+            analytics.setConsent(false)
+            card?.applyProfileDeletion()
+            exchange?.applyProfileDeletion()
+            privacy?.applyProfileDeletion()
+            self?.personControllers.allObjects.forEach { $0.applyProfileDeletion() }
+            people?.applyProfileDeletion()
+        }
+        syncCoordinator.onAudioInvalidated = { [mediaTransfer] in
+            mediaTransfer.removeAllCachedAudio()
+        }
         if persistsUserChanges {
             syncCoordinator.onPeopleChanged = { [weak people, snapshotStore] in
                 people?.reload(people: snapshotStore?.readPeople() ?? [])
             }
             syncCoordinator.onOwnCardChanged = { [weak card] published in card?.applyPublishedCard(published) }
-            syncCoordinator.onProfileDeleted = { [weak card, weak people, mediaTransfer] in
-                mediaTransfer.removeAllCachedAudio()
-                card?.applyProfileDeletion()
-                people?.reload(people: [])
-            }
-            syncCoordinator.onAudioInvalidated = { [mediaTransfer] in
-                mediaTransfer.removeAllCachedAudio()
-            }
             refreshPeople()
         }
 #if DEBUG

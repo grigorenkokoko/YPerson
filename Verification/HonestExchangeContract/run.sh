@@ -16,3 +16,4 @@ xcrun swiftc \
     -o "$BUILD_DIR/check"
 "$BUILD_DIR/check"
 "$SCRIPT_DIR/verify-source-contracts.sh"
+python3 "$SCRIPT_DIR/verify-lifecycle-order.py"

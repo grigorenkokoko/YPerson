@@ -13,6 +13,8 @@ final class PersonViewController: YPBaseViewController {
     private let placeLabel = YPStyle.label("Место знакомства не добавлено", style: .footnote)
     private var audioButton: UIButton?
     private var audioTask: Task<Void, Never>?
+    private var lifecycleGeneration = UUID()
+    private var profileDeleted = false
     private lazy var contactReconciliation = ContactReconciliationPresenter(host: self, permissions: permissions, analytics: analytics)
 
     init(card: PersonCard, permissions: PermissionCenter, imageSaver: CardImageSaver, syncCoordinator: SyncCoordinator, mediaTransfer: MediaTransferClient, audio: AudioGreetingController, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?) {
@@ -58,24 +60,30 @@ final class PersonViewController: YPBaseViewController {
     @objc private func reviewUpdate() { analytics.report(.cardUpdateOpened); showMessage("Проверка обновлений", "Новых изменений нет. Если владелец обновит визитку, YPerson покажет разницу перед применением.") }
 
     @objc private func addLocation() {
+        guard !profileDeleted else { return }
+        let generation = lifecycleGeneration
         explainPermission(title: "Место знакомства", message: "Геопозиция нужна, чтобы по вашему действию сохранить место знакомства рядом с добавленным человеком.") { [weak self] in
-            self?.permissions.requestCurrentPlace { result in
+            guard let self, self.isCurrentProfileLifecycle(generation) else { return }
+            self.permissions.requestCurrentPlace { [weak self] result in
+                guard let self, self.isCurrentProfileLifecycle(generation) else { return }
                 switch result {
                 case .success(let label):
-                    self?.saveMeetingPlace(label)
+                    self.saveMeetingPlace(label, generation: generation)
                     UIAccessibility.post(notification: .announcement, argument: "Место знакомства добавлено")
-                case .failure: self?.requestManualPlace()
+                case .failure: self.requestManualPlace(generation: generation)
                 }
             }
         }
     }
 
-    private func requestManualPlace() {
+    private func requestManualPlace(generation: UUID) {
+        guard isCurrentProfileLifecycle(generation) else { return }
         let alert = UIAlertController(title: "Введите место вручную", message: "Координаты не требуются и никуда не отправляются.", preferredStyle: .alert)
         alert.addTextField { $0.placeholder = "Например, конференция в Москве" }
         alert.addAction(UIAlertAction(title: "Сохранить", style: .default) { [weak self, weak alert] _ in
+            guard let self, self.isCurrentProfileLifecycle(generation) else { return }
             let text = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !text.isEmpty { self?.saveMeetingPlace(text) }
+            if !text.isEmpty { self.saveMeetingPlace(text, generation: generation) }
         })
         alert.addAction(UIAlertAction(title: "Пропустить", style: .cancel)); present(alert, animated: true)
     }
@@ -87,22 +95,28 @@ final class PersonViewController: YPBaseViewController {
     @objc private func savePhoto() { imageSaver.save(imageSaver.render(summary), from: self) }
 
     @objc private func playAudioGreeting() {
-        guard audioTask == nil, let peerInstallationID = card.sourceInstallationID else { return }
+        guard !profileDeleted,
+              audioTask == nil,
+              let peerInstallationID = card.sourceInstallationID else { return }
+        let generation = lifecycleGeneration
         audioButton?.isEnabled = false
         audioButton?.configuration?.title = "Загрузка…"
         audioTask = Task { [weak self] in
             guard let self else { return }
             defer {
-                self.audioTask = nil
-                self.audioButton?.isEnabled = true
-                self.audioButton?.configuration?.title = "Воспроизвести аудиоприветствие"
+                if self.isCurrentProfileLifecycle(generation) {
+                    self.audioTask = nil
+                    self.audioButton?.isEnabled = true
+                    self.audioButton?.configuration?.title = "Воспроизвести аудиоприветствие"
+                }
             }
             do {
                 let asset = try await self.syncCoordinator.audioAsset(for: peerInstallationID)
+                guard self.isCurrentProfileLifecycle(generation), !Task.isCancelled else { return }
                 let fileURL = try await self.mediaTransfer.cachedAudio(for: asset) {
                     try await self.syncCoordinator.audioAsset(for: peerInstallationID)
                 }
-                guard !Task.isCancelled else { return }
+                guard self.isCurrentProfileLifecycle(generation), !Task.isCancelled else { return }
                 try self.audio.play(fileURL: fileURL)
             } catch where Task.isCancelled {
                 return
@@ -139,19 +153,39 @@ final class PersonViewController: YPBaseViewController {
         }
         Task { [weak self] in
             guard let self else { return }
+            let generation = self.lifecycleGeneration
             do {
                 try await self.syncCoordinator.submitModeration(operation: operation, peerInstallationID: peerInstallationID, category: category)
+                guard self.isCurrentProfileLifecycle(generation) else { return }
                 if operation == .block { self.mediaTransfer.removeAllCachedAudio() }
                 self.showMessage("Отправлено", operation == .report ? "Жалоба принята. Карточку можно сразу заблокировать." : "Человек заблокирован.")
             }
-            catch { self.showMessage("Сохранено локально", "Действие будет отправлено после восстановления сети.") }
+            catch {
+                guard self.isCurrentProfileLifecycle(generation) else { return }
+                self.showMessage("Сохранено локально", "Действие будет отправлено после восстановления сети.")
+            }
         }
     }
 
-    private func saveMeetingPlace(_ place: String) {
+    private func saveMeetingPlace(_ place: String, generation: UUID) {
+        guard isCurrentProfileLifecycle(generation) else { return }
         card.meetingPlace = place
         placeLabel.text = "Место: \(place) · хранится только на iPhone"
         try? snapshotStore?.upsertPerson(card)
+    }
+
+    func applyProfileDeletion() {
+        profileDeleted = true
+        lifecycleGeneration = UUID()
+        audioTask?.cancel()
+        audioTask = nil
+        audio.stopPlayback()
+        audioButton?.isEnabled = false
+        navigationController?.popToRootViewController(animated: false)
+    }
+
+    private func isCurrentProfileLifecycle(_ generation: UUID) -> Bool {
+        !profileDeleted && lifecycleGeneration == generation
     }
 
     deinit { audioTask?.cancel() }

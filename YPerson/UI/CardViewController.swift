@@ -17,18 +17,26 @@ final class CardViewController: YPBaseViewController {
     private var preparedQRToken: String?
     private var prepareQRTask: Task<Void, Never>?
     private var prepareQRGeneration: UUID?
+    private var lifecycleGeneration = UUID()
 
     var currentCard: PersonCard? { card }
 
     func applyPublishedCard(_ published: PersonCard) {
+        guard syncCoordinator.isProfileActive else { return }
         card = published
         render()
     }
 
     func applyProfileDeletion() {
+        lifecycleGeneration = UUID()
+        prepareQRTask?.cancel()
+        prepareQRTask = nil
+        prepareQRGeneration = nil
+        preparedQRToken = nil
         card = nil
         showsPrivateFields = false
         render()
+        navigationController?.popToRootViewController(animated: false)
     }
 
     init(card: PersonCard?, persistsChanges: Bool, permissions: PermissionCenter, audio: AudioGreetingController, imageSaver: CardImageSaver, syncCoordinator: SyncCoordinator, analytics: AppMetricaAnalyticsClient, snapshotStore: AppGroupSnapshotStore?, makeEditor: @escaping (PersonCard?, @escaping (PersonCard) throws -> Void) -> UIViewController) {
@@ -141,6 +149,7 @@ final class CardViewController: YPBaseViewController {
 #endif
         prepareQRTask?.cancel()
         let generation = UUID()
+        let profileGeneration = lifecycleGeneration
         prepareQRGeneration = generation
         prepareQRTask = Task { [weak self] in
             guard let self else { return }
@@ -157,6 +166,7 @@ final class CardViewController: YPBaseViewController {
                     privateFields: nil,
                     greeting: self.audio.savedGreeting()
                 )
+                guard self.lifecycleGeneration == profileGeneration else { return }
                 guard case .token(let token) = prepared.credential else {
                     throw APIClient.ClientError.invalidResponse
                 }
@@ -232,15 +242,25 @@ final class CardViewController: YPBaseViewController {
     }
 
     @objc private func editCard() {
+        let isNew = card == nil
+        let editorGeneration = lifecycleGeneration
         let editor = makeEditor(card) { [weak self] updatedCard in
             guard let self else { return }
-            let isNew = self.card == nil
+            guard self.lifecycleGeneration == editorGeneration else {
+                throw CardSaveError.profileLifecycleChanged
+            }
             if self.persistsChanges {
                 guard let snapshotStore = self.snapshotStore else {
                     throw CardSaveError.localStorageUnavailable
                 }
-                try snapshotStore.writeOwnCard(updatedCard)
+                if isNew {
+                    try self.syncCoordinator.reactivateAndStoreUserCreatedCard(updatedCard)
+                } else {
+                    try snapshotStore.writeOwnCard(updatedCard)
+                }
             }
+            self.lifecycleGeneration = UUID()
+            let profileGeneration = self.lifecycleGeneration
             self.card = updatedCard
             self.showsPrivateFields = false
             if isNew { self.analytics.report(.cardCreated) }
@@ -248,6 +268,7 @@ final class CardViewController: YPBaseViewController {
             guard self.persistsChanges else { return }
             Task { [weak self] in
                 guard let self else { return }
+                guard self.lifecycleGeneration == profileGeneration else { return }
                 guard let response = await self.syncCoordinator.publish(
                     updatedCard,
                     greeting: self.audio.savedGreeting()
@@ -258,6 +279,8 @@ final class CardViewController: YPBaseViewController {
                     )
                     return
                 }
+                guard self.lifecycleGeneration == profileGeneration,
+                      self.syncCoordinator.isProfileActive else { return }
                 guard let version = response.ownCardVersion else { return }
                 var published = updatedCard
                 published.version = version
@@ -317,6 +340,7 @@ final class CardViewController: YPBaseViewController {
 
 private enum CardSaveError: Error {
     case localStorageUnavailable
+    case profileLifecycleChanged
 }
 
 private final class QRExchangeViewController: UIViewController {

@@ -175,6 +175,7 @@
       "Verification/HonestExchangeContract/main.swift",
       "Verification/HonestExchangeContract/run.sh",
       "Verification/HonestExchangeContract/verify-source-contracts.sh",
+      "Verification/HonestExchangeContract/verify-lifecycle-order.py",
       "deploy/yandex/serverless/deploy.sh",
       "backend/tests/test_serverless_deployment.py"
     ]

@@ -8,13 +8,17 @@ final class PeopleViewController: YPBaseViewController, CNContactPickerDelegate 
     private let analytics: AppMetricaAnalyticsClient
     private let makePerson: (PersonCard) -> UIViewController
     private let onContactsImported: ([PersonCard]) throws -> [PersonCard]
+    private let isProfileActive: () -> Bool
+    private var lifecycleGeneration = UUID()
+    private var contactPickerGeneration: UUID?
     private lazy var contactReconciliation = ContactReconciliationPresenter(host: self, permissions: permissions, analytics: analytics)
 
-    init(people: [PersonCard], permissions: PermissionCenter, analytics: AppMetricaAnalyticsClient, makePerson: @escaping (PersonCard) -> UIViewController, onContactsImported: @escaping ([PersonCard]) throws -> [PersonCard]) {
+    init(people: [PersonCard], permissions: PermissionCenter, analytics: AppMetricaAnalyticsClient, makePerson: @escaping (PersonCard) -> UIViewController, isProfileActive: @escaping () -> Bool, onContactsImported: @escaping ([PersonCard]) throws -> [PersonCard]) {
         self.people = people
         self.permissions = permissions
         self.analytics = analytics
         self.makePerson = makePerson
+        self.isProfileActive = isProfileActive
         self.onContactsImported = onContactsImported
         super.init(nibName: nil, bundle: nil)
     }
@@ -70,11 +74,16 @@ final class PeopleViewController: YPBaseViewController, CNContactPickerDelegate 
         }
     }
 
-    @objc private func openExchange() { tabBarController?.selectedIndex = 1 }
+    @objc private func openExchange() {
+        guard isProfileActive() else { return }
+        tabBarController?.selectedIndex = 1
+    }
 
     @objc private func openContactPicker() {
+        guard isProfileActive() else { return }
         let picker = CNContactPickerViewController()
         picker.delegate = self
+        contactPickerGeneration = lifecycleGeneration
         picker.displayedPropertyKeys = [
             CNContactGivenNameKey,
             CNContactMiddleNameKey,
@@ -88,6 +97,10 @@ final class PeopleViewController: YPBaseViewController, CNContactPickerDelegate 
     }
 
     func contactPicker(_ picker: CNContactPickerViewController, didSelect contacts: [CNContact]) {
+        guard let generation = contactPickerGeneration,
+              generation == lifecycleGeneration,
+              isProfileActive() else { return }
+        contactPickerGeneration = nil
         guard !contacts.isEmpty else { return }
         let cards = contacts.map(permissions.makePersonCard(from:))
         do {
@@ -104,12 +117,12 @@ final class PeopleViewController: YPBaseViewController, CNContactPickerDelegate 
     }
 
     @objc private func openPerson(_ sender: UIButton) {
-        guard people.indices.contains(sender.tag) else { return }
+        guard isProfileActive(), people.indices.contains(sender.tag) else { return }
         navigationController?.pushViewController(makePerson(people[sender.tag]), animated: true)
     }
 
     @objc private func syncContacts() {
-        guard !people.isEmpty else { return }
+        guard isProfileActive(), !people.isEmpty else { return }
         guard people.count > 1 else {
             contactReconciliation.start(for: people[0])
             return
@@ -129,5 +142,14 @@ final class PeopleViewController: YPBaseViewController, CNContactPickerDelegate 
         }
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
         present(alert, animated: true)
+    }
+
+    func applyProfileDeletion() {
+        lifecycleGeneration = UUID()
+        contactPickerGeneration = nil
+        people = []
+        dismiss(animated: false)
+        navigationController?.popToRootViewController(animated: false)
+        if isViewLoaded { render() }
     }
 }

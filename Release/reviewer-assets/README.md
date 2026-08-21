@@ -16,7 +16,7 @@ All identities and contact details below are fictional.
 
 ## Two-iPhone nearby exchange
 
-Open Exchange → Nearby on two physical iPhones. Start discovery on both, select the test card, and confirm on both devices. The exchange token is short lived and is not claimed before mutual confirmation. If physical BLE setup is unavailable to App Review, use the QR or manual path, which exercises the same receive/confirm UI.
+Open Exchange → Nearby on two physical iPhones. Start search on both; backend public-card and short-lived-token preparation begins before BLE discovery. Each installation independently claims the peer token only after its own local confirmation and saves its own connection. There is no peer-confirmation signal, so do not interpret one device's confirmation as proof that the other user confirmed. The exchanged cards remain public and omit phone. If physical BLE setup is unavailable to App Review, use the QR or manual path, which exercises the same receive/confirm UI.
 
 ## Notification payload shape
 

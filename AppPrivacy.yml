@@ -80,18 +80,18 @@ permissions:
   bluetooth:
     required: true
     usage_key: NSBluetoothAlwaysUsageDescription
-    feature: mutual nearby exchange of a selected digital card using an ephemeral rotating token
+    feature: nearby exchange of a selected digital card using an ephemeral rotating token
     trigger: "Обмен → Рядом по Bluetooth → Начать поиск"
     screen_location: "S2 Обмен"
     purpose_copy: "Bluetooth нужен, чтобы находить поблизости другой iPhone с открытым экраном обмена YPerson и безопасно передавать выбранную визитку."
-    authorized_behavior: both users confirm before the short-lived exchange token is claimed; the current Bluetooth path always prepares and exchanges a public card with privateFields omitted
+    authorized_behavior: backend public-card and short-lived-token preparation starts before discovery; each installation independently claims the peer token only after its own local user confirmation, with no peer-confirmation signal; the current Bluetooth path always omits privateFields
     denial_behavior: QR and manual exchange code remain fully available; no repeated prompt loop
-    reviewer_path: open nearby exchange on two iPhones, start discovery on both, select a public test card, confirm on both devices, and verify that phone remains absent; QR is the fallback
+    reviewer_path: open nearby exchange on two iPhones, start search on both, verify backend preparation precedes discovery, independently confirm the local claim on each device without expecting a peer-confirmation signal, and verify that phone remains absent; QR is the fallback
     data_types:
       - ephemeral_ble_token
       - exchange_token
     storage: ephemeral BLE state on device; exchange token on backend for at most 10 minutes
-    transmission: the public card and short-lived exchange token are sent to the YPerson backend when search starts; only the ephemeral token is advertised to the BLE peer; confirmation claims the peer token and saves the connection; private phone over Bluetooth is deferred until a recipient-bound mutual pairing protocol exists
+    transmission: the public card and short-lived exchange token are sent to the YPerson backend when search starts, before discovery; only the ephemeral token is advertised to the BLE peer; each installation independently claims the peer token after its own local confirmation and saves its connection, while no peer-confirmation signal exists; private phone over Bluetooth is deferred until a recipient-bound mutual pairing protocol exists
     app_store_privacy_implication: exchange token is pseudonymous app-functionality data; no device name or hardware address is retained
 
   camera:
@@ -493,7 +493,7 @@ backend:
   evidence_state:
     implemented_locally: sync v2 authentication, YDB adapter/schema, private signed audio transfer, idempotent profile deletion, non-sensitive iOS durable retry, and immediate non-durable claim/cancel requests
     deployed_externally: false
-    pending_physical_device: production APNs delivery, public mutual Bluetooth exchange on two iPhones, and recipient-specific manual phone sharing
+    pending_physical_device: production APNs delivery, two-way public Bluetooth exchange with independent local claims on two iPhones, and recipient-specific manual phone sharing
   implementation:
     runtime: Python 3.12 with FastAPI and Uvicorn in a Serverless Container behind API Gateway; YDB and private Object Storage are the approved durable-storage target
     wire_format: versioned camelCase sync v2; authentication secret is sent only as an HTTPS Bearer header and is stored server-side only as a hash

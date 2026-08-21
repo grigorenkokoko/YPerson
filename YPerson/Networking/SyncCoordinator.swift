@@ -8,6 +8,7 @@ final class SyncCoordinator {
         case deletionInProgress
         case expiredExchange
         case noAudio
+        case localStorageUnavailable
 
         var errorDescription: String? {
             switch self {
@@ -16,6 +17,7 @@ final class SyncCoordinator {
             case .deletionInProgress: return "Дождитесь завершения удаления профиля."
             case .expiredExchange: return "Код обмена уже истёк. Карточка сохранена только на iPhone."
             case .noAudio: return "У этой визитки нет доступного аудиоприветствия."
+            case .localStorageUnavailable: return "Защищённое локальное хранилище недоступно."
             }
         }
     }
@@ -28,8 +30,12 @@ final class SyncCoordinator {
     private var apiClient: APIClient?
     private var bootstrapped = false
     private var profileOperationEpoch = ProfileOperationEpoch()
+    private var profileLifecycle: ProfileLifecycle
+    private var deletionRecord: ProfileDeletionRecord?
+    private var deletionRequestInFlight = false
 
     var installationID: String? { apiClient?.installationID }
+    var isProfileActive: Bool { profileLifecycle.state == .active }
     var onPeopleChanged: (() -> Void)?
     var onOwnCardChanged: ((PersonCard) -> Void)?
     var onProfileDeleted: (() -> Void)?
@@ -47,7 +53,28 @@ final class SyncCoordinator {
         self.snapshotStore = snapshotStore
         self.credentialStore = credentialStore
         self.mediaTransfer = mediaTransfer
-        if let credential = try credentialStore.existingCredential() {
+        let credential = try credentialStore.existingCredential()
+        var recoveredDeletion = snapshotStore?.profileDeletionRecord
+        if recoveredDeletion == nil, snapshotStore?.profileDeletionPending == true {
+            let legacyOperationID = snapshotStore?.pendingOperations.first {
+                $0.request.operation == .deleteProfile
+            }?.id
+            recoveredDeletion = ProfileDeletionRecord(
+                operationID: legacyOperationID ?? UUID().uuidString.lowercased()
+            )
+            snapshotStore?.profileDeletionRecord = recoveredDeletion
+        }
+        self.deletionRecord = recoveredDeletion
+        self.profileLifecycle = ProfileLifecycle(
+            deletionRecord: recoveredDeletion,
+            legacyDeletionPending: snapshotStore?.profileDeletionPending == true,
+            terminallyDeleted: snapshotStore?.profileTerminallyDeleted == true
+        )
+        for operation in snapshotStore?.pendingOperations ?? []
+            where operation.request.operation == .deleteProfile {
+            snapshotStore?.removePendingOperation(id: operation.id)
+        }
+        if let credential {
             apiClient = APIClient(
                 baseURL: baseURL,
                 session: session,
@@ -67,20 +94,8 @@ final class SyncCoordinator {
 
     func bootstrap() async {
         snapshotStore?.purgeNonDurablePendingOperations()
-        guard snapshotStore?.profileTerminallyDeleted != true else { return }
-        if snapshotStore?.profileDeletionPending == true {
-            let hasPendingDeletion = snapshotStore?.pendingOperations.contains {
-                $0.request.operation == .deleteProfile
-            } == true
-            if apiClient == nil || !hasPendingDeletion {
-                do {
-                    try finishDeletion(operationID: nil)
-                } catch {
-                    // Keep the pending state; foreground retry remains fail-closed.
-                }
-            } else {
-                await retryPendingOperations()
-            }
+        if profileLifecycle.state == .deleting {
+            await resumeDeletionIfNeeded()
             return
         }
         guard !syncSuppressed, let apiClient else { return }
@@ -340,28 +355,60 @@ final class SyncCoordinator {
 
     func deleteProfile() async -> Bool {
         guard !syncSuppressed else { return false }
+        let record = ProfileDeletionRecord(operationID: UUID().uuidString.lowercased())
+        persistDeletionRecord(record)
+        do {
+            try profileLifecycle.beginDeletion()
+        } catch {
+            return false
+        }
+        deletionRequestInFlight = true
+        defer { deletionRequestInFlight = false }
         profileOperationEpoch.invalidate()
         snapshotStore?.clearUserData()
         snapshotStore?.profileDeletionPending = true
         onProfileDeleted?()
-        guard let apiClient else {
-            do {
-                try finishDeletion(operationID: nil)
-                return true
-            } catch {
-                return false
-            }
-        }
         let deletionEpoch = profileOperationEpoch.capture()
-        let request = SyncRequest(operation: .deleteProfile)
-        snapshotStore?.enqueue(PendingSyncOperation(request: request, expiresAt: nil, localCardID: nil))
+        await mediaTransfer.cancelAllProfileTransfersAndWait()
+        guard isCurrentDeletion(record, epoch: deletionEpoch) else { return false }
+        guard let apiClient else { return finishLocalOnlyDeletion(record) }
+        let request = SyncRequest(operation: .deleteProfile, operationID: record.operationID)
         do {
             _ = try await apiClient.sync(request)
-            guard profileOperationEpoch.isCurrent(deletionEpoch) else { return false }
-            try finishDeletion(operationID: request.operationID)
+            guard isCurrentDeletion(record, epoch: deletionEpoch) else { return false }
+            try markDeletionServerAcknowledged(operationID: record.operationID)
+            guard let acknowledged = deletionRecord else { return false }
+            try finishDeletion(record: acknowledged, allowLocalOnly: false)
             return true
         } catch {
             return false
+        }
+    }
+
+    func reactivateAndStoreUserCreatedCard(_ card: PersonCard) throws {
+        guard let snapshotStore else { throw CoordinatorError.localStorageUnavailable }
+        guard profileLifecycle.state != .deleting else {
+            throw CoordinatorError.deletionInProgress
+        }
+        guard profileLifecycle.state == .terminal else {
+            try snapshotStore.writeOwnCard(card)
+            return
+        }
+
+        let previousLifecycle = profileLifecycle
+        var reactivatedLifecycle = profileLifecycle
+        try reactivatedLifecycle.reactivateForUserCreation()
+        profileLifecycle = reactivatedLifecycle
+        profileOperationEpoch.invalidate()
+        snapshotStore.profileDeletionRecord = nil
+        snapshotStore.profileDeletionPending = false
+        snapshotStore.profileTerminallyDeleted = false
+        do {
+            try snapshotStore.writeOwnCard(card)
+        } catch {
+            profileLifecycle = previousLifecycle
+            snapshotStore.profileTerminallyDeleted = true
+            throw error
         }
     }
 
@@ -376,7 +423,6 @@ final class SyncCoordinator {
             credential: credential
         )
         apiClient = client
-        snapshotStore?.profileTerminallyDeleted = false
         return client
     }
 
@@ -393,12 +439,11 @@ final class SyncCoordinator {
     }
 
     private var syncSuppressed: Bool {
-        snapshotStore?.profileDeletionPending == true
-            || snapshotStore?.profileTerminallyDeleted == true
+        profileLifecycle.suppressesSync
     }
 
     private func retryPendingOperations() async {
-        guard let apiClient, snapshotStore?.profileTerminallyDeleted != true else { return }
+        guard !syncSuppressed, let apiClient else { return }
         let retryEpoch = profileOperationEpoch.capture()
         let pending = snapshotStore?.pendingOperations ?? []
         for operation in pending {
@@ -409,8 +454,10 @@ final class SyncCoordinator {
                 snapshotStore?.removePendingOperation(id: operation.id)
                 continue
             }
-            if snapshotStore?.profileDeletionPending == true,
-               operation.request.operation != .deleteProfile { continue }
+            if operation.request.operation == .deleteProfile {
+                snapshotStore?.removePendingOperation(id: operation.id)
+                continue
+            }
             if operation.request.operation == .claimExchange,
                let expiresAt = operation.expiresAt,
                expiresAt <= Date() {
@@ -421,10 +468,6 @@ final class SyncCoordinator {
                 let request = retrySafeRequest(operation.request)
                 let response = try await apiClient.sync(request)
                 guard profileOperationEpoch.isCurrent(retryEpoch) else { return }
-                if operation.request.operation == .deleteProfile {
-                    try finishDeletion(operationID: operation.id)
-                    return
-                }
                 guard !syncSuppressed else { return }
                 try apply(response)
                 if operation.request.operation == .publishCard { bootstrapped = true }
@@ -437,8 +480,7 @@ final class SyncCoordinator {
 
     private func retryPushToken() async {
         guard bootstrapped,
-              snapshotStore?.profileDeletionPending != true,
-              snapshotStore?.profileTerminallyDeleted != true,
+              !syncSuppressed,
               let apiClient else { return }
         let operationEpoch = profileOperationEpoch.capture()
         let removal = snapshotStore?.pendingAPNSRemoval == true
@@ -498,12 +540,83 @@ final class SyncCoordinator {
         )
     }
 
-    private func finishDeletion(operationID: String?) throws {
-        if let operationID { snapshotStore?.removePendingOperation(id: operationID) }
+    private func persistDeletionRecord(_ record: ProfileDeletionRecord) {
+        deletionRecord = record
+        snapshotStore?.profileDeletionRecord = record
+        snapshotStore?.profileDeletionPending = true
+    }
+
+    private func markDeletionServerAcknowledged(operationID: String) throws {
+        guard var record = deletionRecord, record.operationID == operationID else {
+            throw CoordinatorError.deletionInProgress
+        }
+        record.markServerAcknowledged()
+        persistDeletionRecord(record)
+    }
+
+    private func isCurrentDeletion(
+        _ record: ProfileDeletionRecord,
+        epoch: ProfileOperationEpoch.Snapshot
+    ) -> Bool {
+        profileLifecycle.state == .deleting
+            && deletionRecord?.operationID == record.operationID
+            && profileOperationEpoch.isCurrent(epoch)
+    }
+
+    private func finishLocalOnlyDeletion(_ record: ProfileDeletionRecord) -> Bool {
+        do {
+            try finishDeletion(record: record, allowLocalOnly: true)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func resumeDeletionIfNeeded() async {
+        guard !deletionRequestInFlight else { return }
+        guard let record = deletionRecord else { return }
+        deletionRequestInFlight = true
+        defer { deletionRequestInFlight = false }
+        profileOperationEpoch.invalidate()
+        let deletionEpoch = profileOperationEpoch.capture()
+        snapshotStore?.clearUserData()
+        snapshotStore?.profileDeletionPending = true
+        onProfileDeleted?()
+        await mediaTransfer.cancelAllProfileTransfersAndWait()
+        guard isCurrentDeletion(record, epoch: deletionEpoch) else { return }
+        if record.serverAcknowledged {
+            try? finishDeletion(record: record, allowLocalOnly: false)
+            return
+        }
+        guard let apiClient else {
+            _ = finishLocalOnlyDeletion(record)
+            return
+        }
+        let request = SyncRequest(operation: .deleteProfile, operationID: record.operationID)
+        do {
+            _ = try await apiClient.sync(request)
+            guard isCurrentDeletion(record, epoch: deletionEpoch) else { return }
+            try markDeletionServerAcknowledged(operationID: record.operationID)
+            guard let acknowledged = deletionRecord else { return }
+            try finishDeletion(record: acknowledged, allowLocalOnly: false)
+        } catch {
+            // The dedicated record remains durable for the next foreground retry.
+        }
+    }
+
+    private func finishDeletion(
+        record: ProfileDeletionRecord,
+        allowLocalOnly: Bool
+    ) throws {
+        var lifecycle = profileLifecycle
+        try lifecycle.finishDeletion(record: record, allowLocalOnly: allowLocalOnly)
         snapshotStore?.clearUserData()
         try credentialStore.deleteCredential()
         snapshotStore?.profileDeletionPending = false
         snapshotStore?.profileTerminallyDeleted = true
+        snapshotStore?.profileDeletionRecord = nil
+        deletionRecord = nil
+        profileLifecycle = lifecycle
         apiClient = nil
         bootstrapped = false
     }

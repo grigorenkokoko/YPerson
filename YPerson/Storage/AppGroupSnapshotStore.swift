@@ -15,6 +15,7 @@ final class AppGroupSnapshotStore {
         static let pendingAPNSToken = "yperson.v2.pending_apns_token"
         static let pendingAPNSRemoval = "yperson.v2.pending_apns_removal"
         static let profileTerminallyDeleted = "yperson.v2.profile_terminally_deleted"
+        static let profileDeletionRecord = "yperson.v3.profile_deletion_record"
 
         enum Legacy {
             static let ownCard = "own_card"
@@ -203,6 +204,20 @@ final class AppGroupSnapshotStore {
     var profileTerminallyDeleted: Bool {
         get { defaults.bool(forKey: Key.profileTerminallyDeleted) }
         set { defaults.set(newValue, forKey: Key.profileTerminallyDeleted) }
+    }
+
+    var profileDeletionRecord: ProfileDeletionRecord? {
+        get {
+            guard let data = defaults.data(forKey: Key.profileDeletionRecord) else { return nil }
+            return try? decoder.decode(ProfileDeletionRecord.self, from: data)
+        }
+        set {
+            if let newValue {
+                defaults.set(try? encoder.encode(newValue), forKey: Key.profileDeletionRecord)
+            } else {
+                defaults.removeObject(forKey: Key.profileDeletionRecord)
+            }
+        }
     }
 
     func clearUserData() {

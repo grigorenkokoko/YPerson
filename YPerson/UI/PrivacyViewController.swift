@@ -69,8 +69,6 @@ final class PrivacyViewController: YPBaseViewController {
 #endif
 
     private func performDeletion() {
-        audio.delete()
-        analytics.setConsent(false)
         Task { [weak self] in
             guard let self else { return }
             if await syncCoordinator.deleteProfile() {
@@ -79,6 +77,10 @@ final class PrivacyViewController: YPBaseViewController {
                 showMessage("Локальные данные удалены", "Запрос на удаление облачной карточки сохранён и будет повторён при следующем запуске с сетью.")
             }
         }
+    }
+
+    func applyProfileDeletion() {
+        analyticsSwitch.setOn(false, animated: false)
     }
 }
 
